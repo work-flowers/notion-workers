@@ -8,8 +8,8 @@ Two managed databases, two syncs:
 
 | Database | Sync | Schedule | Mode | Description |
 |---|---|---|---|---|
-| **Buttondown email analytics** | `emailAnalyticsSync` | `1h` | `replace` | One row per sent email with recipients, deliveries, opens, clicks, open/click rate, failures, unsubscriptions, complaints, replies. |
-| **Buttondown subscriber counts** | `subscriberCountsSync` | `1d` | `incremental` | One row per day with total, active, and per-status subscriber counts (regular, premium, churned, etc.). |
+| **Buttondown email analytics** | `emailAnalyticsSync` | `6h` | `replace` | One row per sent email with recipients, deliveries, opens, clicks, open/click rate, failures, unsubscriptions, complaints, replies. |
+| **Buttondown subscriber counts** | `subscriberCountsSync` | `6h` | `incremental` | One row per day with total, active, and per-status subscriber counts (regular, premium, churned, etc.). |
 
 Plus a standalone script for historical subscriber counts — see below.
 

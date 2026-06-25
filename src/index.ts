@@ -121,7 +121,7 @@ function titleCase(s: string) {
 worker.sync("subscriberCountsSync", {
 	database: subscriberCounts,
 	mode: "incremental",
-	schedule: "1d",
+	schedule: "6h",
 	execute: async () => {
 		const counts: Record<SubscriberType, number> = Object.fromEntries(
 			SUBSCRIBER_TYPES.map((t) => [t, 0]),
@@ -164,7 +164,7 @@ worker.sync("subscriberCountsSync", {
 worker.sync("emailAnalyticsSync", {
 	database: emails,
 	mode: "replace",
-	schedule: "1h",
+	schedule: "6h",
 	execute: async (state: { page?: number } | undefined) => {
 		const page = state?.page ?? 1;
 		const list = await bd(`/emails?status=sent&page=${page}`);
