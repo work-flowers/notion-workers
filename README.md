@@ -3,7 +3,7 @@
 A [Notion Worker](https://developers.notion.com/workers) that fetches the
 **Notion developer changelog**, parses out each entry, and syncs them as rows
 into a managed Notion database — **one row per sub-entry** (each `###` section
-within a date becomes its own page), refreshed once a day.
+within a date becomes its own page), refreshed every 12 hours.
 
 There is no official changelog API or RSS feed, so the Worker fetches the page
 and parses it. It targets the machine-readable markdown twin
@@ -49,7 +49,7 @@ truncated.
 
 ### Sync behavior
 
-- **Sync key:** `changelogSync`. **Mode:** `incremental`. **Schedule:** `1d`.
+- **Sync key:** `changelogSync`. **Mode:** `incremental`. **Schedule:** `12h`.
 - **One row per `###` section:** a date with multiple sub-entries (e.g. June 25,
   2026) becomes multiple pages. A date with no heading, or only a generic
   "What's new" heading, becomes a single page named by the date; any preamble
@@ -100,13 +100,13 @@ write rows for this sync. It is **not** read by application code.
 #    ntn workers env set NOTION_API_TOKEN=$(op read "op://Work/Notion PAT/credential")
 ntn workers env set NOTION_API_TOKEN=ntn_xxx
 
-# 2. Deploy — creates the managed database and registers the daily sync
+# 2. Deploy — creates the managed database and registers the sync
 ntn workers deploy
 
 # 3. Preview end to end — runs the sync, writes NOTHING to the database
 ntn workers sync trigger changelogSync --preview
 
-# 4. First real populate (or just wait for the daily schedule)
+# 4. First real populate (or just wait for the 12-hour schedule)
 ntn workers sync trigger changelogSync
 
 # Observe
