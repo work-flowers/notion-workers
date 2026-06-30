@@ -285,11 +285,11 @@ worker.sync("pagesPathBackfill", {
 	}),
 });
 
-// Delta: refresh the most recent days every hour. Incremental — never deletes.
+// Delta: refresh the most recent days every 6 hours. Incremental — never deletes.
 worker.sync("pagesPathDelta", {
 	database: pagesDb,
 	mode: "incremental",
-	schedule: "1h",
+	schedule: "6h",
 	execute: makeGA4Execute({
 		config: pagesReportConfig,
 		mapRow: mapPagesRow,
@@ -339,7 +339,7 @@ worker.sync("trafficSourceMediumBackfill", {
 worker.sync("trafficSourceMediumDelta", {
 	database: trafficDb,
 	mode: "incremental",
-	schedule: "1h",
+	schedule: "6h",
 	execute: makeGA4Execute({
 		config: trafficReportConfig,
 		mapRow: mapTrafficRow,
