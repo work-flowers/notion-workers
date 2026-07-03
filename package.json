@@ -1,0 +1,24 @@
+{
+  "name": "notion-worker-luma-guest-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Notion Worker that syncs the latest Luma guest-export CSV from a Google Drive folder (via the Zapier SDK) into a managed Notion database.",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "deploy": "ntn workers deploy",
+    "sync:preview": "ntn workers sync trigger lumaGuestSync --preview",
+    "sync:trigger": "ntn workers sync trigger lumaGuestSync"
+  },
+  "dependencies": {
+    "@notionhq/workers": "latest",
+    "@zapier/zapier-sdk": "^0.40.1",
+    "csv-parse": "^5.5.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.0"
+  }
+}
