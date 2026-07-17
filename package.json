@@ -1,0 +1,30 @@
+{
+	"name": "@work-flowers/notion-worker-shared",
+	"version": "0.1.0",
+	"description": "Shared helpers for work.flowers Notion Workers: contact resolution, internal user lookup, raw data-source API calls.",
+	"repository": "github:work-flowers/notion-worker-shared",
+	"license": "MIT",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc",
+		"check": "tsc --noEmit",
+		"prepare": "npm run build"
+	},
+	"engines": {
+		"node": ">=22.0.0"
+	},
+	"peerDependencies": {
+		"@notionhq/client": "^2.3.0",
+		"@zapier/zapier-sdk": ">=0.50.0"
+	},
+	"devDependencies": {
+		"@notionhq/client": "^2.3.0",
+		"@types/node": "^22.9.0",
+		"@zapier/zapier-sdk": "^0.53.0",
+		"typescript": "^5.8.0"
+	}
+}
