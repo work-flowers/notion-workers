@@ -6,7 +6,7 @@ A [Notion Worker](https://developers.notion.com/workers) that enriches newly cre
 
 When a page is added to the Emails data source (`1e491b07-11ac-80ce-8b86-000b29ba4f68`), a Notion DB automation calls this Worker's webhook. The Worker then:
 
-1. Polls the page (up to ~90s) for its `mail` block. Mail blocks are **not exposed by the public Notion API**, so the page is fetched through Notion MCP via the *MCP Client by Zapier* app (Zapier SDK) — the same route the original Zap used.
+1. Polls the page (up to ~90s) for its `mail` block. Mail blocks are **not exposed by the public Notion API** (they come back as `unsupported`), so the page is fetched through Notion MCP via the *MCP Client by Zapier* app (Zapier SDK) — the same route the original Zap used. This is a deliberate stopgap: when the API adds mail-block support, `mailBlock.ts` should switch to `blocks.children` and the MCP dependency goes away.
 2. Parses the latest message in the thread: `From`, `To`, `Cc`, `Subject`, `MessageId`; `Gmail Thread ID` and `Date Received` come from the page's own properties, with mail-header fallback for the date.
 3. Resolves email addresses via [`@work-flowers/notion-worker-shared`](https://github.com/work-flowers/notion-worker-shared):
    - External addresses → **Contacts** page IDs, matching on **Primary Email or Secondary Email**. Unknown addresses are classified with AI by Zapier (individual vs. service account, with a Zapier-table blocklist) and new Contact pages are created for individuals (capped at 10 per run, `Primary Email` only).
