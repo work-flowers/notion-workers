@@ -1,0 +1,9 @@
+.env
+.env.*
+dist/
+node_modules/
+workers.*.json
+workers.json
+
+# Local Claude Code settings (machine-specific permissions, not shared)
+.claude/settings.local.json
