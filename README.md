@@ -16,12 +16,19 @@ Each worker directory is a self-contained npm workspace with its own `package.js
 
 ## Working with a worker
 
-All `ntn` commands run from inside the worker's directory (the CLI finds `workers.json` by CWD lookup):
+Deploy via the wrapper script from the repo root:
+
+```sh
+./scripts/deploy.sh <worker-name>
+```
+
+For workers without the shared dependency this is a plain `ntn workers deploy`. For workers that depend on `@work-flowers/notion-worker-shared`, the script packs the shared package into a `vendor/` tarball inside the worker, temporarily points the dependency at it, deploys with `--no-git`, and restores everything — because the ntn cloud build uploads only the worker directory and runs its own `npm install`, which can't see unpublished workspace packages.
+
+All other `ntn` commands run from inside the worker's directory (the CLI finds `workers.json` by CWD lookup):
 
 ```sh
 cd workers/<worker-name>
 npm run check          # typecheck
-ntn workers deploy     # deploy (create or update)
 ntn workers runs list  # inspect recent runs
 ```
 

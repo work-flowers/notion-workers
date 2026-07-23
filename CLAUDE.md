@@ -14,8 +14,8 @@ One Notion Worker per directory under `workers/`; shared helpers in `packages/sh
 
 Run all `ntn workers` commands from inside the worker's directory — it resolves `workers.json` by CWD lookup.
 
-- Deploy: `ntn workers deploy` (cloud build by default; `--local-build` bundles locally, `--no-git` switches file discovery from git to filesystem walking)
-- Typecheck before deploying: `npm run check`
+- **Deploy: always `./scripts/deploy.sh <worker-name>` from the repo root**, never bare `ntn workers deploy` for workers that use the shared package. The ntn cloud build uploads only the worker directory and runs `npm install` in a sandbox, so it cannot resolve unpublished workspace packages; the script vendors a tarball of `packages/shared` for the duration of the deploy. `--local-build` also does not work in a workspace (workers have no local `node_modules`).
+- Typecheck before deploying: `npm run check --workspace=<package-name>` from the root
 - Secrets: `ntn workers env` — never commit secrets
 
 ## Worker-specific docs
