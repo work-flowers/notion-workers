@@ -26,14 +26,17 @@ if [ "$uses_shared" = "no" ]; then
 fi
 
 echo "Vendoring @work-flowers/notion-worker-shared for cloud build..."
-rm -rf "$worker/.deploy"
-mkdir -p "$worker/.deploy"
-(cd "$root/packages/shared" && npm run build >/dev/null && npm pack --pack-destination "$worker/.deploy" >/dev/null)
-tgz="$(basename "$(ls "$worker/.deploy"/*.tgz)")"
+rm -rf "$worker/vendor"
+mkdir -p "$worker/vendor"
+(cd "$root/packages/shared" && npm run build >/dev/null && npm pack --pack-destination "$worker/vendor" >/dev/null)
+tgz="$(basename "$(ls "$worker/vendor"/*.tgz)")"
 
-restore() { git -C "$root" checkout --quiet -- "workers/$name/package.json"; }
+restore() {
+	git -C "$root" checkout --quiet -- "workers/$name/package.json"
+	rm -rf "$worker/vendor"
+}
 trap restore EXIT
 
 cd "$worker"
-npm pkg set "dependencies.@work-flowers/notion-worker-shared=file:.deploy/$tgz"
+npm pkg set "dependencies.@work-flowers/notion-worker-shared=file:vendor/$tgz"
 ntn workers deploy --no-git "$@"
