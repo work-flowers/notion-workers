@@ -3,7 +3,6 @@
 dist/
 node_modules/
 workers.*.json
-workers.json
 
 # Local Claude Code settings (personal, not shared)
 .claude/settings.local.json

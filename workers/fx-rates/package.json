@@ -1,6 +1,6 @@
 {
-	"name": "notion-workers-fx-rates",
-	"version": "0.0.0",
+	"name": "notion-worker-fx-rates",
+	"version": "0.1.0",
 	"private": true,
 	"scripts": {
 		"build": "tsc",
