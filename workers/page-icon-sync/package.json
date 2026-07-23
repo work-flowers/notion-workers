@@ -1,6 +1,6 @@
 {
-	"name": "@notionhq/workers-template",
-	"version": "0.0.0",
+	"name": "notion-worker-page-icon-sync",
+	"version": "0.1.0",
 	"private": true,
 	"scripts": {
 		"build": "tsc",
