@@ -18,6 +18,23 @@ Run all `ntn workers` commands from inside the worker's directory — it resolve
 - Typecheck before deploying: `npm run check --workspace=<package-name>` from the root
 - Secrets: `ntn workers env` — never commit secrets
 
+## Notion automation webhooks
+
+Workers that receive **Notion database automation** webhooks (via `worker.webhook()`) get Notion's default envelope, **not** a flat body. The triggering page is nested under `data`:
+
+```json
+{
+  "source": { "type": "automation", "automation_id": "…", "event_id": "…" },
+  "data":   { "object": "page", "id": "<page-id>", "properties": { … } }
+}
+```
+
+- **The page id is at `data.id`** (with `data.object === "page"`) — Notion always includes it. Parsing only top-level keys will miss it and silently fall back to whatever lookup you coded, which is a real ambiguity source when records share a value (e.g. two contacts on one email). Always resolve by `data.id` and act on the exact edited page.
+- `data.properties` holds the page's property values, so the property that fired the automation is readable straight off the payload — no extra fetch needed for simple cases.
+- The structured `event.pageId` / `event.pageData` shape shown in `.examples/automation-example.ts` is only for the **alpha `worker.automation()`** capability. A raw `worker.webhook()` receives the JSON above and must dig it out itself.
+
+See `workers/link-contact-to-company/src/index.ts` (`extractContactPageId`) for a reference parser.
+
 ## Worker-specific docs
 
 Each worker keeps its own `CLAUDE.md` for worker-specific context (what it syncs, which databases/data sources it touches, quirks of the upstream API). Scaffold-generated boilerplate that duplicates this file can be deleted from worker CLAUDE.mds when touched.
