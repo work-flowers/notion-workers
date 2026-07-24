@@ -380,6 +380,18 @@ The `execute` function receives an array of `WebhookEvent` objects:
 | `headers` | `Record<string, string>` | Request headers (lowercased names). |
 | `method` | `string` | HTTP method (webhook URLs accept `POST`). |
 
+> [!IMPORTANT]
+> **Notion database automations post a nested envelope, not a flat body.** When a Notion "Send webhook" automation fires, `event.body` looks like:
+>
+> ```json
+> {
+>   "source": { "type": "automation", "automation_id": "…", "event_id": "…" },
+>   "data":   { "object": "page", "id": "<page-id>", "properties": { … } }
+> }
+> ```
+>
+> The triggering page id is **`data.id`** (Notion always includes it) and its property values are under `data.properties`. Parse the page id out of `data` — do **not** rely on top-level keys, or you'll miss it and fall back to a lookup that can act on the wrong record when a value (e.g. an email) is shared. This worker's `extractContactPageId` is a reference parser. (The structured `event.pageId` / `event.pageData` shape only exists for the alpha `worker.automation()` capability, not raw `worker.webhook()`.)
+
 ### Verifying requests
 
 Most webhook providers sign requests with a shared secret. Verify using `event.rawBody` and `event.headers`, and throw `WebhookVerificationError` when verification fails:
