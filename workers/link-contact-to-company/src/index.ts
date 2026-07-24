@@ -11,14 +11,17 @@ export default worker;
  *
  * Trigger: a Notion database automation on the Contacts data source fires a
  * "Send webhook" action when a contact's Primary or Secondary Email changes.
- * The automation posts a small JSON body containing the contact's email(s)
- * (see the recommended payload in the project notes).
+ * The automation should post the edited contact's page id (e.g.
+ * `{ "pageId": "{{Page id}}" }`); an email-only payload is still accepted for
+ * backwards compatibility.
  *
  * Behaviour (mirrors the old zap, minus the Zapier-Tables dependency):
- *   1. Collect the email address(es) from the webhook payload.
- *   2. Pick the first *business* email domain (skip personal providers).
- *   3. Resolve the contact page (by explicit id if provided, else by looking
- *      the email up directly in the Contacts data source).
+ *   1. Resolve the contact page: by explicit page id if the payload carries
+ *      one (acts on exactly the edited record), else by looking the email up
+ *      in the Contacts data source.
+ *   2. Determine the email(s): read straight off the resolved page when we had
+ *      a page id (source of truth), else use the payload's email(s).
+ *   3. Pick the first *business* email domain (skip personal providers).
  *   4. Find a Company whose Website matches that domain; create one if none.
  *   5. Link the contact to the company (append to "Related Company" if not
  *      already linked).
@@ -189,25 +192,82 @@ function collectEmails(body: Record<string, unknown>, rawBody: string): string[]
 	return [...new Set(ordered)];
 }
 
-/** An explicit contact page id, if the payload happens to carry one. Optional. */
-function extractContactPageId(body: Record<string, unknown>): string | null {
-	for (const key of [
-		"contactPageId",
-		"contactId",
-		"pageId",
-		"page_id",
-		"pageUrl",
-		"contactUrl",
-		"url",
-		"id",
-	]) {
-		const value = body[key];
+/**
+ * Read the contact's email address(es) directly off a retrieved page, in
+ * priority order (Primary first, then Secondary). This is the source of truth
+ * when the webhook resolves a contact by page id, so the automation only needs
+ * to send the page id — not the email. Mirrors the Contacts schema: "Primary
+ * Email" is an `email` property, "Secondary Email" is a `multi_select` whose
+ * option names are addresses.
+ */
+function emailsFromContactPage(page: any): string[] {
+	const props = page?.properties ?? {};
+	const ordered: string[] = [];
+
+	const primary = props["Primary Email"]?.email;
+	if (typeof primary === "string") {
+		const m = primary.match(EMAIL_RE);
+		if (m) for (const email of m) ordered.push(email.toLowerCase());
+	}
+
+	const secondary = props["Secondary Email"]?.multi_select;
+	if (Array.isArray(secondary)) {
+		for (const option of secondary) {
+			if (typeof option?.name !== "string") continue;
+			const m = option.name.match(EMAIL_RE);
+			if (m) for (const email of m) ordered.push(email.toLowerCase());
+		}
+	}
+
+	return [...new Set(ordered)];
+}
+
+const CONTACT_ID_KEYS = [
+	"contactPageId",
+	"contactId",
+	"pageId",
+	"page_id",
+	"pageUrl",
+	"contactUrl",
+	"url",
+	"id",
+];
+
+/** First value under `keys` that contains a UUID, normalized. */
+function pageIdFromRecord(
+	record: Record<string, unknown>,
+	keys: string[],
+): string | null {
+	for (const key of keys) {
+		const value = record[key];
 		if (typeof value === "string") {
 			const m = value.match(UUID_RE);
 			if (m) return normalizeUuid(m[0]);
 		}
 	}
 	return null;
+}
+
+/**
+ * The triggering contact's page id. Notion's automation "Send webhook" action
+ * nests the page under `data` ({ "object": "page", "id": "<page-id>", ... }),
+ * so we check there first; a custom body may instead carry the id at the top
+ * level (e.g. `{ "pageId": "..." }`). Returns null if no page id is present.
+ */
+function extractContactPageId(body: Record<string, unknown>): string | null {
+	// Notion's default envelope: the triggering page lives under `data`.
+	const data = body["data"];
+	if (data && typeof data === "object" && !Array.isArray(data)) {
+		const d = data as Record<string, unknown>;
+		if (d["object"] === "page" && typeof d["id"] === "string") {
+			const m = d["id"].match(UUID_RE);
+			if (m) return normalizeUuid(m[0]);
+		}
+		const nested = pageIdFromRecord(d, ["pageId", "page_id", "contactPageId"]);
+		if (nested) return nested;
+	}
+	// A custom automation body may put the id at the top level instead.
+	return pageIdFromRecord(body, CONTACT_ID_KEYS);
 }
 
 // --- CRM operations --------------------------------------------------------
@@ -232,6 +292,9 @@ async function findContactPages(
 			console.warn(`Could not retrieve page ${explicitId}: ${String(err)}`);
 		}
 	}
+	// No page id (or its retrieval failed): fall back to an email lookup. With
+	// no emails there's nothing to look up — avoid an empty-OR filter.
+	if (emails.length === 0) return [];
 	const res = await queryDataSource(CONTACTS_DS, contactEmailFilter(emails), 25);
 	return res.results ?? [];
 }
@@ -300,12 +363,36 @@ async function handleEvent(event: {
 	rawBody: string;
 }): Promise<void> {
 	const tag = `[${event.deliveryId}]`;
-	const emails = collectEmails(event.body ?? {}, event.rawBody ?? "");
 	const explicitId = extractContactPageId(event.body ?? {});
+	const payloadEmails = collectEmails(event.body ?? {}, event.rawBody ?? "");
+
+	// Structural log (no values) to confirm the webhook envelope shape.
+	const data = (event.body ?? {})["data"];
+	console.log(
+		`${tag} bodyKeys=${JSON.stringify(Object.keys(event.body ?? {}))}` +
+			(data && typeof data === "object"
+				? ` dataKeys=${JSON.stringify(Object.keys(data as object))}`
+				: ""),
+	);
+
+	// Resolve the contact first. With a page id we act on exactly the edited
+	// page; without one we fall back to an email lookup against the payload.
+	const contacts = await findContactPages(payloadEmails, explicitId);
+	if (contacts.length === 0) {
+		console.log(`${tag} no matching contact found — skipping`);
+		return;
+	}
+
+	// Emails used to resolve the company domain. When we resolved by page id the
+	// page itself is the source of truth (the payload need only carry the id);
+	// otherwise the payload emails are all we have.
+	const emails = explicitId
+		? contacts.flatMap(emailsFromContactPage)
+		: payloadEmails;
 	console.log(`${tag} emails=${JSON.stringify(emails)} pageId=${explicitId ?? "none"}`);
 
 	if (emails.length === 0) {
-		console.log(`${tag} no email in payload — skipping`);
+		console.log(`${tag} no email found on contact — skipping`);
 		return;
 	}
 
@@ -323,12 +410,6 @@ async function handleEvent(event: {
 		return;
 	}
 	console.log(`${tag} business domain = ${domain}`);
-
-	const contacts = await findContactPages(emails, explicitId);
-	if (contacts.length === 0) {
-		console.log(`${tag} no matching contact found — skipping`);
-		return;
-	}
 
 	let company = await findCompanyByDomain(domain);
 	if (company) {
