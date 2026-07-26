@@ -4,6 +4,7 @@ import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
+import { SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
 import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
@@ -17,10 +18,11 @@ import {
 	type WorkflowRun,
 } from "./runs.js";
 import {
+	connectionAliases,
 	countActionCallSites,
 	countSteps,
+	createAppResolver,
 	editorUrl,
-	formatConnections,
 	formatDependencies,
 	getWorkflowVersion,
 	listWorkflows,
@@ -29,6 +31,7 @@ import {
 
 const worker = new Worker();
 export default worker;
+
 
 // -- Managed database -------------------------------------------------------
 // One row per *deployed* durable. The row set is exactly what `listWorkflows`
@@ -57,7 +60,11 @@ const zaps = worker.database("zaps", {
 			"GitHub URL": Schema.url(),
 			"Version ID": Schema.richText(),
 			"Durable Version": Schema.richText(),
-			Connections: Schema.richText(),
+			// Multi-select rather than comma-separated text, so the database can
+			// be filtered and grouped by them. Options are seeded from what is
+			// live today; Notion creates any new option on write.
+			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES),
+			Apps: Schema.multiSelect(SEEDED_APPS),
 			Dependencies: Schema.richText(),
 			// Static complexity, counted off source_files (no extra API call).
 			// Call sites, not executions — and they nest, so do not sum them.
@@ -115,9 +122,8 @@ const githubApi = worker.pacer("githubApi", { allowedRequests: 30, intervalMs: 6
 const zapierApi = worker.pacer("zapierApi", { allowedRequests: 30, intervalMs: 60_000 });
 const notionApi = worker.pacer("notionApi", { allowedRequests: 30, intervalMs: 60_000 });
 
-// Content hashes keyed by workflow id. The hash covers the page body and every
-// synced property, so any upstream edit — including a README-only edit —
-// produces a new hash.
+// Content hashes keyed by workflow id, covering the page body only — see the
+// note at the point of use for why properties are deliberately excluded.
 type SyncState = { hashes?: Record<string, string> };
 
 function contentHash(value: unknown): string {
@@ -139,6 +145,9 @@ worker.sync("zapsSync", {
 	execute: async (state: SyncState | undefined) => {
 		const previousHashes = state?.hashes ?? {};
 		const resolveCreatorEmail = createUserResolver(notionApi);
+		// Both lookups behind it are cached for the whole cycle: one
+		// listConnections, and one getApp per distinct app key.
+		const resolveApps = createAppResolver(zapierApi);
 
 		// A throw fails the run without committing nextState, so the next run
 		// retries from the last good state rather than half-writing.
@@ -173,7 +182,8 @@ worker.sync("zapsSync", {
 				githubUrl: repoZap?.htmlUrl ?? "",
 				versionId: workflow.current_version_id ?? "",
 				durableVersion: version?.zapier_durable_version ?? "",
-				connections: formatConnections(version),
+				connections: connectionAliases(version),
+				apps: await resolveApps(trigger?.selected_api, version),
 				dependencies: formatDependencies(version),
 				steps: countSteps(version),
 				actionCallSites: countActionCallSites(version),
@@ -184,13 +194,23 @@ worker.sync("zapsSync", {
 				body: body ?? "",
 			};
 
-			const hash = contentHash(fields);
+			// Hash the **body alone**, not the whole row.
+			//
+			// `pageContentMarkdown` replaces the entire page body, and verified
+			// 2026-07-26 that includes anything a person added by hand: an
+			// appended block is wiped, and a child page is moved to trash.
+			//
+			// So the body must be re-sent as rarely as possible. Hashing every
+			// field meant any property change re-sent it — and `Updated` moves
+			// whenever the Zap is edited, `Version ID` / `Durable Version` /
+			// `Dependencies` on every republish — so hand-added blocks rarely
+			// survived a day. Keyed on the body, they survive until the README
+			// itself changes.
+			//
+			// Properties are still emitted every cycle: replace mode sweeps any
+			// row it does not see, so skipping one would delete it.
+			const hash = contentHash(fields.body);
 			nextHashes[workflow.id] = hash;
-
-			// Replace mode sweeps anything not emitted, so an unchanged row must
-			// still be emitted — skipping it would delete it. The hash therefore
-			// only gates re-sending the page body, which is the expensive part of
-			// the write and the part that replaces rather than merges.
 			const bodyUnchanged = previousHashes[workflow.id] === hash;
 
 			changes.push({
@@ -208,7 +228,8 @@ worker.sync("zapsSync", {
 					"Editor URL": Builder.url(editorUrl(workflow.id)),
 					"Version ID": Builder.richText(fields.versionId),
 					"Durable Version": Builder.richText(fields.durableVersion),
-					Connections: Builder.richText(fields.connections),
+					Connections: Builder.multiSelect(...fields.connections),
+					Apps: Builder.multiSelect(...fields.apps),
 					Dependencies: Builder.richText(fields.dependencies),
 					Steps: Builder.number(fields.steps),
 					"Action Call Sites": Builder.number(fields.actionCallSites),

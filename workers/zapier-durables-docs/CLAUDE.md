@@ -77,6 +77,24 @@ whole-file, one unbalanced quote inside a multi-line template literal spanned
 thousands of characters and silently deleted real code — it took
 `notion-newsletter-to-buttondown` from 7 steps to 0. There is a regression test.
 
+**`pageContentMarkdown` replaces the whole page body, including hand-added
+content.** Verified: an appended block is wiped and a child page is moved to
+trash. That is why the content hash covers the body alone — hashing properties
+too meant `Updated` moving re-sent the body and destroyed anything a person had
+added. Do not widen that hash back out. There is no partial-body update in the
+sync API; genuine preservation would mean abandoning `pageContentMarkdown` for
+block surgery via the Notion REST API, which does not accept markdown, so it
+would also mean writing our own markdown-to-blocks conversion and losing mermaid
+and table support.
+
+**There is no single field for which apps a durable touches.**
+`current_version.app_versions` is null on every workflow observed. `Apps` is
+assembled from the trigger's `selected_api` plus the `app_key` of each bound
+connection (via `listConnections`), then resolved to titles with `getApp` —
+private apps have keys like `App243984CLIAPI` that mean nothing to a reader.
+Strip only the trailing version from a title: `(Unofficial)` distinguishes
+genuinely different apps and must stay.
+
 **`input` is intentionally not synced** — the whole trigger payload, up to
 ~10.6 KB, containing full Notion page objects for the webhook durables.
 
@@ -88,6 +106,19 @@ comment — mermaid `<br/>` normalisation and wholesale pipe-table conversion we
 both considered and are both *unnecessary*, and two plausible fixes for the
 escaped-pipe bug (HTML entity, lookalike glyph) are wrong for reasons that are
 not obvious.
+
+Notion makes **one block per source line**, which is the single root cause of
+all three markdown fixes. For ordinary prose that means hard-wrapped paragraphs
+must be reflowed onto one line — `joinSoftWraps` does this, and it tracks fences
+itself because `fixBlockquotes` lifts fences out of quotes *after*
+`splitOnFences` has already run. A test covers that ordering.
+
+The same rule makes **every `>` line its own quote block**, which is why a whole quote
+is collapsed onto one `>` line with `<br>` carrying the internal breaks. Do not
+"tidy" that back into separate lines — it re-creates the stack of one-line bars.
+`<br>` is genuinely parsed; two trailing spaces and `\` line breaks were both
+tested and do not work. Lifting fenced code *out* of quotes is also deliberate:
+Notion cannot nest a code block inside a quote and destroys it otherwise.
 
 Re-test against the live converter rather than reasoning about it: create a page
 with the Notion MCP `create-pages` tool, then fetch it back. The round-trip

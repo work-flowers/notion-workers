@@ -20,6 +20,8 @@ Runs** (one row per run, related back to its Zap).
    appear.
 2. `getWorkflow()` per durable for `current_version` — the only place
    `connections`, `dependencies` and `zapier_durable_version` are exposed.
+   Plus, once per cycle, `listConnections` and one `getApp` per distinct app
+   key, to resolve the `Apps` column.
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
@@ -122,6 +124,19 @@ documentation value.
   `Zapier User ID` so far; keeping the raw id visible makes an unresolved
   creator obvious rather than silently blank. The lookup returns an *email*
   because `Builder.people()` takes email addresses.
+- **`Connections` and `Apps` are multi-selects.** `Connections` holds the alias
+  each connection is bound to in the source (`notion_wf`, `apollo`); `Apps`
+  holds the apps the durable actually touches, which has no single source
+  field — `current_version.app_versions` is null on every workflow, so it is
+  assembled from the trigger's `selected_api` plus the `app_key` of every bound
+  connection, then resolved to display titles via `getApp` (a private app's key
+  is `App243984CLIAPI`, whose title is "Ninjapear (Unofficial)"). Both lookups
+  are cached for the whole cycle. The schema seeds the options observed on
+  2026-07-26; Notion creates any new option on write, so a new app needs no code
+  change — it just gets an arbitrary colour until it is added to
+  `src/options.ts`. Colours there are per app, roughly following brand, and a
+  connection alias **takes the colour of the app it binds**, so `apollo` and
+  `Apollo` read as a pair across the two columns.
 - **`Steps` and `Action Call Sites` are complexity, not usage.** They count
   *call sites* — places in the source where a call is written — off
   `current_version.source_files`, so they cost no extra API call. A `ctx.step()`
@@ -129,9 +144,14 @@ documentation value.
   or more actions, so the two columns nest and must not be summed. Zapier
   exposes no per-run task or step counts, so there is nothing better to derive
   usage from; treat these as "which Zaps are heavy", not as billing.
-- **Content hashes gate the page body only.** Replace mode sweeps anything not
-  emitted, so every row is emitted every cycle; the hash decides whether to
-  re-send the README, which is the expensive part of the write.
+- **The content hash covers the page body alone.** `pageContentMarkdown`
+  replaces the *entire* page body, and that includes anything a person added by
+  hand — verified 2026-07-26: an appended block is wiped and a child page is
+  moved to trash. So the body must be re-sent as rarely as possible. Hashing
+  every field meant any property change re-sent it, and `Updated` moves whenever
+  the Zap is edited, so hand-added blocks rarely survived a day. Keyed on the
+  body, they survive until the README itself changes. Properties are still
+  emitted every cycle, because replace mode deletes any row it does not see.
 
 ## Markdown handling
 
@@ -139,11 +159,54 @@ Notion's markdown conversion was tested empirically rather than assumed. Mermaid
 fences are verbatim (`<br/>` is fine), pipe tables convert to real Notion
 tables, and code spans, bold and links inside cells become genuine annotations.
 
-The one real defect is `\|` inside a table cell: it splits the cell, drops
-content and shifts every later column. All five READMEs with tables contain
-exactly one. `src/markdown.ts` re-emits only those tables as native table XML,
-where a literal `|` is safe. See its header comment for the two rejected
-alternatives and why they fail.
+Three real defects are fixed in `src/markdown.ts`; see its header comments for
+the tested behaviour and the alternatives that were rejected. All three share
+one root cause: **Notion makes one block per source line.**
+
+**Soft line wraps.** A hard-wrapped README paragraph arrives as a stack of
+one-line paragraph blocks, and the blank line between two paragraphs is lost
+entirely; list continuations split off from their item. Standard Markdown treats
+a single newline inside a paragraph as a soft wrap, so paragraphs and list items
+are reflowed onto one line each. Headings, rules, table markup, raw HTML and
+indented code are never reflowed. On `enrich-contact-records` this takes 178
+source lines to 135.
+
+**Escaped pipes in tables.** `\|` inside a cell splits the cell, drops content
+and shifts every later column. All five READMEs with tables contain exactly one.
+Only affected tables are re-emitted as native table XML, where a literal `|` is
+safe.
+
+**Blockquotes.** Notion turns *every* `>` line into its own quote block, so a
+soft-wrapped paragraph shatters into a stack of one-line bars, a bare `>`
+renders as a visible "Empty quote", and a fenced code block inside a quote is
+destroyed — the ``` collapses to an escaped backtick and the code becomes
+quoted prose.
+
+A whole quote is therefore collapsed onto **one `>` line**, with its internal
+structure carried by `<br>`: a single break between logical lines, a double
+between paragraphs. That renders as one quote block rather than a stack.
+`<br>` is a real line break, not literal text — the serializer round-trips
+literal markup escaped (`\<br\>`, `&lt;br&gt;`) and parsed markup bare, and a
+bare `<br>` stays bare. Two trailing spaces and a backslash line break were both
+tested and rejected: the first collapses back to separate lines, the second is
+escaped to visible text.
+
+Fenced code is lifted out of the quote to top level, since Notion cannot nest a
+code block in a quote. Six of the READMEs use blockquotes;
+`internal-user-ids-to-table-and-notion` was worst hit, with 4 bare separators
+and 4 fences inside quotes — its five quote blocks collapse to two.
+
+## Adding your own content to a Zap page
+
+**Don't — it will be lost when the README changes.** The page body belongs to
+the sync. Tested: an appended block is deleted and a child page is trashed the
+next time the body is written.
+
+The hash change above means that only happens when the README itself changes
+rather than on every property update, so notes can survive a while. But nothing
+inside a synced page is safe long term. Put durable commentary in the README
+itself (it is the source of truth and syncs automatically), or in a separate
+page that links to the Zap row rather than living inside it.
 
 ## Configuration
 

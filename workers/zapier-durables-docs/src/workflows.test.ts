@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { countActionCallSites, countSteps, type WorkflowVersion } from "./workflows.js";
+import {
+	appKeyFromSelectedApi,
+	appKeyToLabel,
+	appTitleWithoutVersion,
+	connectionAliases,
+	connectionIds,
+	countActionCallSites,
+	countSteps,
+	type WorkflowVersion,
+} from "./workflows.js";
 
 const version = (source: string): WorkflowVersion => ({ source_files: { "workflow.ts": source } });
 
@@ -102,4 +111,36 @@ test("an unbalanced quote cannot wipe out later lines", () => {
 	].join("\n");
 	assert.equal(countSteps(version(src)), 2);
 	assert.equal(countActionCallSites(version(src)), 2);
+});
+
+test("connection aliases are sorted and default to empty", () => {
+	const v = { connections: { notion_wf: { connection_id: "a" }, apollo: { connection_id: "b" } } };
+	assert.deepEqual(connectionAliases(v), ["apollo", "notion_wf"]);
+	assert.deepEqual(connectionAliases(undefined), []);
+	assert.deepEqual(connectionAliases({}), []);
+});
+
+test("connection ids skip entries with no id", () => {
+	const v = { connections: { a: { connection_id: "x" }, b: {}, c: { connection_id: "y" } } };
+	assert.deepEqual(connectionIds(v).sort(), ["x", "y"]);
+});
+
+test("the trigger's app key drops its version", () => {
+	assert.equal(appKeyFromSelectedApi("LumaCLIAPI@6.1.0"), "LumaCLIAPI");
+	assert.equal(appKeyFromSelectedApi("WebHookCLIAPI"), "WebHookCLIAPI");
+	assert.equal(appKeyFromSelectedApi(undefined), undefined);
+});
+
+test("an app title loses its trailing version but keeps qualifiers", () => {
+	assert.equal(appTitleWithoutVersion("Notion (2.39.1)"), "Notion");
+	assert.equal(appTitleWithoutVersion("Ninjapear (Unofficial) (1.0.0)"), "Ninjapear (Unofficial)");
+	// "(Unofficial)" distinguishes genuinely different apps — never strip it.
+	assert.equal(appTitleWithoutVersion("Buttondown (Unofficial)"), "Buttondown (Unofficial)");
+	assert.equal(appTitleWithoutVersion("Slack"), "Slack");
+});
+
+test("the fallback label strips the CLIAPI suffix", () => {
+	assert.equal(appKeyToLabel("LumaCLIAPI"), "Luma");
+	assert.equal(appKeyToLabel("App243984CLIAPI"), "App243984");
+	assert.equal(appKeyToLabel("Weird"), "Weird");
 });
