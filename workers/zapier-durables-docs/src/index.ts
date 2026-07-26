@@ -16,6 +16,8 @@ import {
 	type WorkflowRun,
 } from "./runs.js";
 import {
+	countActionCallSites,
+	countSteps,
 	editorUrl,
 	formatConnections,
 	formatDependencies,
@@ -56,6 +58,10 @@ const zaps = worker.database("zaps", {
 			"Durable Version": Schema.richText(),
 			Connections: Schema.richText(),
 			Dependencies: Schema.richText(),
+			// Static complexity, counted off source_files (no extra API call).
+			// Call sites, not executions — and they nest, so do not sum them.
+			Steps: Schema.number(),
+			"Action Call Sites": Schema.number(),
 			Creator: Schema.people(),
 			"Creator ID": Schema.richText(),
 			Created: Schema.date(),
@@ -163,6 +169,8 @@ worker.sync("zapsSync", {
 				durableVersion: version?.zapier_durable_version ?? "",
 				connections: formatConnections(version),
 				dependencies: formatDependencies(version),
+				steps: countSteps(version),
+				actionCallSites: countActionCallSites(version),
 				creatorId,
 				creatorEmail: creatorEmail ?? "",
 				created: workflow.created_at ?? "",
@@ -196,6 +204,8 @@ worker.sync("zapsSync", {
 					"Durable Version": Builder.richText(fields.durableVersion),
 					Connections: Builder.richText(fields.connections),
 					Dependencies: Builder.richText(fields.dependencies),
+					Steps: Builder.number(fields.steps),
+					"Action Call Sites": Builder.number(fields.actionCallSites),
 					// `people` takes emails, not user ids. An unresolved creator
 					// leaves this empty and "Creator ID" carries the raw id.
 					Creator: Builder.people(...(creatorEmail ? [creatorEmail] : [])),

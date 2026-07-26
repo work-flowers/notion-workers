@@ -59,6 +59,17 @@ observed (~20s, as the run reaches `finished`), so the delta re-scans a one-hour
 overlap and re-upserts. Narrowing that window will freeze runs at whatever
 status they held mid-flight.
 
+**`Steps` / `Action Call Sites` count call sites, not executions.** Do not
+relabel them as usage or task counts — Zapier exposes no per-run step or task
+data anywhere in the SDK (`getWorkflowRun` adds only `output`), so there is
+nothing to validate such a claim against. The two also nest and must not be
+summed.
+
+**Quote stripping in `stripNonCode` is per line on purpose.** Applied
+whole-file, one unbalanced quote inside a multi-line template literal spanned
+thousands of characters and silently deleted real code — it took
+`notion-newsletter-to-buttondown` from 7 steps to 0. There is a regression test.
+
 **`input` is intentionally not synced** — the whole trigger payload, up to
 ~10.6 KB, containing full Notion page objects for the webhook durables.
 

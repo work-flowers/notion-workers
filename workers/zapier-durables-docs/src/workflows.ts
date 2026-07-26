@@ -33,6 +33,9 @@ export type WorkflowVersion = {
 	zapier_durable_version?: string | null;
 	dependencies?: Record<string, string> | null;
 	connections?: Record<string, { connection_id?: string }> | null;
+	/** Filename -> source. Already returned by getWorkflow, so counting call
+	 *  sites off it costs no extra request. */
+	source_files?: Record<string, string> | null;
 };
 
 export type WorkflowDetail = WorkflowSummary & { current_version?: WorkflowVersion | null };
@@ -104,4 +107,77 @@ export function formatDependencies(version: WorkflowVersion | undefined): string
 /** The durables editor, which is safe to publish. Never the trigger URL. */
 export function editorUrl(workflowId: string): string {
 	return `https://zapier.com/durables-editor/${workflowId}`;
+}
+
+// -- Static complexity ------------------------------------------------------
+//
+// These count **call sites** — places in the source where a call is written —
+// not executions. A `ctx.step()` inside a loop is one call site and N
+// executions, so these are a complexity signal and a floor on work done, never
+// a prediction of usage or billing. They also nest: a step commonly wraps one
+// or more actions, so the two counts must not be added together.
+//
+// Derived from `current_version.source_files`, which getWorkflow already
+// returns, so this costs no extra API call.
+
+/**
+ * Strip comments and string literals so a `step(` written in prose is not
+ * counted.
+ *
+ * Quote stripping runs **per line**, deliberately. Applied across the whole
+ * file, a single unbalanced quote — easily produced by a multi-line template
+ * literal containing a `"` — makes the regex span thousands of characters and
+ * silently delete real code. That happened: it took
+ * `notion-newsletter-to-buttondown` from 7 steps to 0. Per line, an unbalanced
+ * quote can only affect the rest of that one line.
+ *
+ * Template literals are left alone. Step names are routinely built with them
+ * (`${stepPrefix}-create`), and stripping them would not change the count
+ * anyway, since the match is on the call and not its argument.
+ */
+function stripNonCode(source: string): string {
+	return source
+		.replace(/\/\*[\s\S]*?\*\//g, " ") // block comments
+		.split("\n")
+		.map((line) =>
+			line
+				.replace(/(^|[^:])\/\/.*$/, "$1 ") // line comment, sparing "https://"
+				.replace(/'(?:\\.|[^'\\])*'/g, "''")
+				.replace(/"(?:\\.|[^"\\])*"/g, '""'),
+		)
+		.join("\n");
+}
+
+function allSource(version: WorkflowVersion | undefined): string {
+	const files = version?.source_files;
+	if (!files) return "";
+	return stripNonCode(Object.values(files).join("\n"));
+}
+
+/** Named durable checkpoints — `ctx.step("name", …)`. The unit Zapier itself
+ *  names in failure messages. */
+export function countSteps(version: WorkflowVersion | undefined): number {
+	return (allSource(version).match(/\.step\s*\(/g) ?? []).length;
+}
+
+/**
+ * Zapier connector invocations — `sdk.runAction({…})` plus the app-proxy form.
+ *
+ * The proxy is matched on its action-type accessor (`.write.x()`, `.search.x()`,
+ * `.read.x()`) rather than on `zapier.apps.…`, because the proxy is normally
+ * bound to a variable first and then called on a later line:
+ *
+ *   const notion = zapier.apps.notion({ connectionId: connections.notion });
+ *   await notion.write.create_database_item({ … });
+ *
+ * Matching the `zapier.apps` chain would miss every call written that way.
+ *
+ * Raw `sdk.fetch` HTTP is deliberately *not* counted: it is a different kind of
+ * call and very likely meters differently.
+ */
+export function countActionCallSites(version: WorkflowVersion | undefined): number {
+	const source = allSource(version);
+	const runActions = (source.match(/\brunAction\s*\(/g) ?? []).length;
+	const proxied = (source.match(/\.(?:write|search|read)\.\w+\s*\(/g) ?? []).length;
+	return runActions + proxied;
 }

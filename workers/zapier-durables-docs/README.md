@@ -94,6 +94,13 @@ documentation value.
   `Zapier User ID` so far; keeping the raw id visible makes an unresolved
   creator obvious rather than silently blank. The lookup returns an *email*
   because `Builder.people()` takes email addresses.
+- **`Steps` and `Action Call Sites` are complexity, not usage.** They count
+  *call sites* — places in the source where a call is written — off
+  `current_version.source_files`, so they cost no extra API call. A `ctx.step()`
+  inside a loop is one call site and N executions, and a step usually wraps one
+  or more actions, so the two columns nest and must not be summed. Zapier
+  exposes no per-run task or step counts, so there is nothing better to derive
+  usage from; treat these as "which Zaps are heavy", not as billing.
 - **Content hashes gate the page body only.** Replace mode sweeps anything not
   emitted, so every row is emitted every cycle; the hash decides whether to
   re-send the README, which is the expensive part of the write.
