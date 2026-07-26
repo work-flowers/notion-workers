@@ -139,11 +139,22 @@ Notion's markdown conversion was tested empirically rather than assumed. Mermaid
 fences are verbatim (`<br/>` is fine), pipe tables convert to real Notion
 tables, and code spans, bold and links inside cells become genuine annotations.
 
-The one real defect is `\|` inside a table cell: it splits the cell, drops
-content and shifts every later column. All five READMEs with tables contain
-exactly one. `src/markdown.ts` re-emits only those tables as native table XML,
-where a literal `|` is safe. See its header comment for the two rejected
-alternatives and why they fail.
+Two real defects are fixed in `src/markdown.ts`; see its header comments for the
+tested behaviour and the alternatives that were rejected.
+
+**Escaped pipes in tables.** `\|` inside a cell splits the cell, drops content
+and shifts every later column. All five READMEs with tables contain exactly one.
+Only affected tables are re-emitted as native table XML, where a literal `|` is
+safe.
+
+**Blockquotes.** Notion turns *every* `>` line into its own quote block, so a
+soft-wrapped paragraph shatters, a bare `>` renders as a visible "Empty quote",
+and a fenced code block inside a quote is destroyed — the ``` collapses to an
+escaped backtick and the code becomes quoted prose. Quotes are rewritten to one
+`>` line per paragraph or list item, separators dropped, and any fenced code
+lifted out of the quote to top level where it survives intact. Six of the
+READMEs use blockquotes; `internal-user-ids-to-table-and-notion` was the worst
+hit, with 4 bare separators and 4 fences inside quotes.
 
 ## Configuration
 

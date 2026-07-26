@@ -89,6 +89,11 @@ both considered and are both *unnecessary*, and two plausible fixes for the
 escaped-pipe bug (HTML entity, lookalike glyph) are wrong for reasons that are
 not obvious.
 
+Notion makes **every `>` line its own quote block**, which is why blockquotes
+are rewritten to one line per paragraph. Lifting fenced code *out* of quotes is
+deliberate: Notion cannot nest a code block inside a quote and destroys it
+otherwise. Do not "restore" the original nesting.
+
 Re-test against the live converter rather than reasoning about it: create a page
 with the Notion MCP `create-pages` tool, then fetch it back. The round-trip
 distinguishes real annotations from literal text by escaping — a literal

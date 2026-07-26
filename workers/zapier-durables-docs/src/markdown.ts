@@ -153,6 +153,111 @@ function splitOnFences(markdown: string): Array<{ code: boolean; text: string }>
  */
 export function toNotionMarkdown(markdown: string): string {
 	return splitOnFences(markdown)
-		.map((segment) => (segment.code ? segment.text : fixTables(segment.text)))
+		.map((segment) => (segment.code ? segment.text : fixBlockquotes(fixTables(segment.text))))
 		.join("");
+}
+
+// -- Blockquotes ------------------------------------------------------------
+//
+// Notion turns **every `>` line into its own quote block**. Tested 2026-07-26:
+//
+// - A soft-wrapped quote paragraph shatters into one block per source line.
+// - A bare `>` separator becomes a visible "Empty quote" block.
+// - A fenced code block inside a quote is destroyed — the ``` collapses to a
+//   single escaped backtick and the code becomes quoted prose.
+// - A list continuation line loses its indent and splits off on its own.
+//
+// So a quote is rewritten to **one `>` line per logical paragraph or list
+// item**, with separators dropped, and any fenced code lifted out of the quote
+// to top level, where it survives intact. Lifting is a structural change, but
+// the alternative is losing the code entirely.
+
+/** A line inside a quote that begins a list item. */
+function isListItem(line: string): boolean {
+	return /^\s*(?:[-*+]\s|\d+[.)]\s)/.test(line);
+}
+
+type QuoteSegment = { kind: "quote"; lines: string[] } | { kind: "code"; lines: string[] };
+
+/** Group a quote's inner lines into quote paragraphs and lifted code fences. */
+function segmentQuote(inner: string[]): QuoteSegment[] {
+	const segments: QuoteSegment[] = [];
+	let paragraph: string[] = [];
+	let fence: string[] | undefined;
+	let fenceMarker = "";
+
+	const flushParagraph = () => {
+		if (paragraph.length) segments.push({ kind: "quote", lines: paragraph });
+		paragraph = [];
+	};
+
+	for (const line of inner) {
+		const fenceMatch = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+
+		if (fence) {
+			fence.push(line);
+			if (fenceMatch && fenceMatch[1].startsWith(fenceMarker[0]) && !fenceMatch[2].trim()) {
+				segments.push({ kind: "code", lines: fence });
+				fence = undefined;
+			}
+			continue;
+		}
+
+		if (fenceMatch) {
+			flushParagraph();
+			fenceMarker = fenceMatch[1];
+			fence = [line];
+			continue;
+		}
+
+		if (!line.trim()) {
+			// Bare `>` — a paragraph break, not content. Dropped so it does not
+			// render as an "Empty quote" block.
+			flushParagraph();
+			continue;
+		}
+
+		// Continuation of the previous logical line, unless it starts a list
+		// item or the paragraph is empty.
+		if (paragraph.length && !isListItem(line)) {
+			paragraph[paragraph.length - 1] = `${paragraph[paragraph.length - 1]} ${line.trim()}`;
+		} else {
+			paragraph.push(line.trim());
+		}
+	}
+
+	// An unterminated fence keeps its content rather than dropping it.
+	if (fence) segments.push({ kind: "code", lines: fence });
+	flushParagraph();
+	return segments;
+}
+
+/** Rewrite every blockquote so Notion renders it as intended. */
+function fixBlockquotes(text: string): string {
+	const lines = text.split("\n");
+	const out: string[] = [];
+
+	for (let i = 0; i < lines.length; i++) {
+		if (!/^\s*>/.test(lines[i])) {
+			out.push(lines[i]);
+			continue;
+		}
+
+		let end = i;
+		while (end + 1 < lines.length && /^\s*>/.test(lines[end + 1])) end++;
+
+		// Strip the marker and at most one following space.
+		const inner = lines.slice(i, end + 1).map((l) => l.replace(/^\s*>\s?/, ""));
+		const segments = segmentQuote(inner);
+
+		segments.forEach((segment, index) => {
+			if (index > 0) out.push("");
+			if (segment.kind === "code") out.push(...segment.lines);
+			else out.push(...segment.lines.map((l) => `> ${l}`));
+		});
+
+		i = end;
+	}
+
+	return out.join("\n");
 }

@@ -99,3 +99,69 @@ test("surrounding prose is preserved around a converted table", () => {
 	assert.ok(out.startsWith("## Heading"));
 	assert.ok(out.trimEnd().endsWith("Trailing prose."));
 });
+
+test("a soft-wrapped quote paragraph becomes one quote line", () => {
+	const input = ["> First line of a wrapped", "> paragraph that continues here."].join("\n");
+	assert.equal(toNotionMarkdown(input), "> First line of a wrapped paragraph that continues here.");
+});
+
+test("bare > separators are dropped, not left as Empty quote blocks", () => {
+	const input = ["> Para one.", ">", "> Para two."].join("\n");
+	const out = toNotionMarkdown(input);
+	assert.ok(!/^>\s*$/m.test(out), "no bare > should survive");
+	assert.ok(out.includes("> Para one."));
+	assert.ok(out.includes("> Para two."));
+});
+
+test("a fenced code block inside a quote is lifted out intact", () => {
+	const input = [
+		"> Before the fence.",
+		">",
+		"> ```",
+		"> https://hooks.zapier.com/hooks/catch/123/abc/",
+		"> ```",
+		">",
+		"> After the fence.",
+	].join("\n");
+	const out = toNotionMarkdown(input);
+	assert.ok(out.includes("```\nhttps://hooks.zapier.com/hooks/catch/123/abc/\n```"), "fence unquoted and intact");
+	assert.ok(!out.includes("> ```"), "no quoted fence marker survives");
+	assert.ok(out.includes("> Before the fence."));
+	assert.ok(out.includes("> After the fence."));
+});
+
+test("list items in a quote stay one item per line, continuations joined", () => {
+	const input = [
+		"> Two traps:",
+		"> - It is **not** at the top level of `get-workflow` — it lives at",
+		">   `triggers[0].details.webhook_url`.",
+		"> - The second trap.",
+	].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out.length, 3, "intro plus exactly two list items");
+	assert.ok(out[1].includes("it lives at `triggers[0].details.webhook_url`."), "continuation joined");
+	assert.ok(out[2].startsWith("> - The second trap."));
+});
+
+test("a single-line quote is unchanged", () => {
+	assert.equal(toNotionMarkdown("> Just one line."), "> Just one line.");
+});
+
+test("blockquote handling is idempotent", () => {
+	const input = ["> Para one.", ">", "> ```", "> code", "> ```", ">", "> Para two."].join("\n");
+	const once = toNotionMarkdown(input);
+	assert.equal(toNotionMarkdown(once), once);
+});
+
+test("a quote inside a fenced code block is untouched", () => {
+	const input = ["```md", "> quoted line one", "> quoted line two", "```"].join("\n");
+	assert.equal(toNotionMarkdown(input), input);
+});
+
+test("prose around a quote is preserved", () => {
+	const input = ["## Heading", "", "> a", "> b", "", "After."].join("\n");
+	const out = toNotionMarkdown(input);
+	assert.ok(out.startsWith("## Heading"));
+	assert.ok(out.includes("> a b"));
+	assert.ok(out.trimEnd().endsWith("After."));
+});
