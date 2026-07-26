@@ -80,7 +80,7 @@ const zaps = worker.database("zaps", {
 
 // -- Run history ------------------------------------------------------------
 // One row per workflow run, related back to its Zap. Two syncs write here:
-// `runsBackfill` (manual, walks all history) and `runsDelta` (hourly, re-scans
+// `runsBackfill` (manual, walks all history) and `runsDelta` (every 6h, re-scans
 // the recent window). Both are incremental — see the note on runsBackfill for
 // why this deliberately departs from the usual replace-mode backfill.
 const runs = worker.database("runs", {
@@ -135,13 +135,12 @@ function contentHash(value: unknown): string {
 // handle a deleted Zap, and a full listing is one call either way. Everything
 // is fetched in a single execution, so hasMore is always false.
 //
-// Hourly. A cycle is ~32 upstream calls (1 workflow listing + 9 getWorkflow, 1
-// repo listing + 2 files per directory, 1 cached People query), so this is well
-// inside GitHub's authenticated 5000/hour even with the pacers throttling it.
+// Every 6 hours. A cycle is ~3 upstream calls per durable plus a repo listing
+// and the app lookups, so well inside GitHub's authenticated 5000/hour.
 worker.sync("zapsSync", {
 	database: zaps,
 	mode: "replace",
-	schedule: "1h",
+	schedule: "6h",
 	execute: async (state: SyncState | undefined) => {
 		const previousHashes = state?.hashes ?? {};
 		const resolveCreatorEmail = createUserResolver(notionApi);
@@ -381,7 +380,7 @@ worker.sync("runsBackfill", {
 	},
 });
 
-// Delta: hourly re-scan of the recent window for every durable.
+// Delta: six-hourly re-scan of the recent window for every durable.
 //
 // There is no server-side date filter, so this pages newest-first and stops as
 // soon as it passes the watermark minus the overlap. At current volumes that is
@@ -389,7 +388,7 @@ worker.sync("runsBackfill", {
 worker.sync("runsDelta", {
 	database: runs,
 	mode: "incremental",
-	schedule: "1h",
+	schedule: "6h",
 	execute: async (state: RunsState | undefined) => {
 		const workflows = await listWorkflows(zapierApi);
 		const watermarks = { ...(state?.watermarks ?? {}) };
