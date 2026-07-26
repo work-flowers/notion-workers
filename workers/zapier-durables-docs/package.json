@@ -6,7 +6,7 @@
 	"scripts": {
 		"build": "tsc",
 		"check": "tsc --noEmit",
-		"test": "node --import tsx --test src/markdown.test.ts"
+		"test": "node --import tsx --test src/*.test.ts"
 	},
 	"engines": {
 		"node": ">=22.0.0",

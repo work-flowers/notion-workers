@@ -11,7 +11,10 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
   directory. Read-only, via the Zapier GitHub connection.
 - **Notion People** data source `a0791b07-11ac-8364-9113-07ea21165718` —
   read-only, to resolve a creator.
+- **Zapier Code Workflow runs** (`listWorkflowRuns`) — read-only.
 - **Managed database "Zapier Zaps"** — written only through `zapsSync`.
+- **Managed database "Zapier Zap Runs"** — written through `runsBackfill` and
+  `runsDelta`.
 
 ## Non-obvious constraints
 
@@ -40,6 +43,43 @@ property exposes `person.email` on the query response.
 
 **Never sync `trigger_url`** — it embeds a secret token.
 
+**The run syncs are incremental, not replace — do not "fix" this.** Zapier ages
+runs out of its own history, so a replace-mode pass would mark-and-sweep exactly
+the records the database exists to preserve. Neither run sync ever emits a
+delete, which is a deliberate departure from the repo's usual backfill+delta
+shape.
+
+**`listWorkflowRuns` ignores every filter except `pageSize`.** `limit`,
+`status`, `since` and `updatedAfter` are all accepted and silently ignored —
+each returns the full unfiltered set. Do not add one expecting it to work. The
+delta relies on rows being newest-first and stops client-side.
+
+**Runs mutate after creation.** `updated_at != created_at` on every row
+observed (~20s, as the run reaches `finished`), so the delta re-scans a one-hour
+overlap and re-upserts. Narrowing that window will freeze runs at whatever
+status they held mid-flight.
+
+**Run intensity comes from `getDurableRun`, not `getWorkflowRun`.** Keyed on
+`durable_run_id`. It returns the operations journal — one entry per executed
+step or wait, with per-operation `retry_count` and an execution summary — *and*
+`output`, so Output/Operations/Retries/Attempts all cost one call between them.
+`getWorkflowRun` returns only `output`; do not switch back to it. This journal
+is the only per-run intensity data Zapier exposes anywhere.
+
+**`Steps` / `Action Call Sites` count call sites, not executions.** Do not
+relabel them as usage or task counts. For what actually ran, use the runs
+database's `Operations` column — the static and runtime numbers genuinely
+differ (6 static steps vs 4-5 executed, because of branching). The two static
+columns also nest and must not be summed.
+
+**Quote stripping in `stripNonCode` is per line on purpose.** Applied
+whole-file, one unbalanced quote inside a multi-line template literal spanned
+thousands of characters and silently deleted real code — it took
+`notion-newsletter-to-buttondown` from 7 steps to 0. There is a regression test.
+
+**`input` is intentionally not synced** — the whole trigger payload, up to
+~10.6 KB, containing full Notion page objects for the webhook durables.
+
 ## Markdown
 
 `src/markdown.ts` is deliberately minimal and its header comment records what
@@ -58,6 +98,7 @@ backtick comes back as `` \` ``, a real code span as a bare backtick.
 
 ```shell
 npm run check --workspace=notion-worker-zapier-durables-docs
-npm test --workspace=notion-worker-zapier-durables-docs      # markdown unit tests
-ntn workers sync trigger zapsSync --preview             # end to end, no writes
+npm test --workspace=notion-worker-zapier-durables-docs      # markdown + runs unit tests
+ntn workers sync trigger zapsSync --preview              # end to end, no writes
+ntn workers sync trigger runsDelta --preview             # run history, no writes
 ```

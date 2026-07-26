@@ -1,0 +1,118 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+	fetchRunDetail,
+	formatRunOutput,
+	normaliseStatus,
+	RUN_STATUS_OPTIONS,
+	runDurationSeconds,
+	runErrorText,
+	type WorkflowRun,
+} from "./runs.js";
+
+const baseRun: WorkflowRun = {
+	id: "019f9c34-56b7-741e-9219-73b004267798",
+	status: "finished",
+	created_at: "2026-07-26T02:15:03.602Z",
+	updated_at: "2026-07-26T02:15:26.280Z",
+};
+
+test("known statuses pass through", () => {
+	for (const status of ["finished", "failed", "running", "queued"]) {
+		assert.equal(normaliseStatus(status), status);
+	}
+});
+
+test("unknown or missing status collapses to unknown", () => {
+	assert.equal(normaliseStatus("something_new"), "unknown");
+	assert.equal(normaliseStatus(undefined), "unknown");
+	assert.equal(normaliseStatus(""), "unknown");
+});
+
+test("every value normaliseStatus can return is a declared select option", () => {
+	// The select schema is built from RUN_STATUS_OPTIONS, so any value the
+	// normaliser emits must be in it or the write would reference a missing option.
+	const names = RUN_STATUS_OPTIONS.map((o) => o.name);
+	const options = new Set(names);
+	for (const status of [...names, "surprise", "", undefined]) {
+		assert.ok(options.has(normaliseStatus(status as string)), `missing: ${status}`);
+	}
+});
+
+test("a successful run has no error text", () => {
+	assert.equal(runErrorText(null), "");
+	assert.equal(runErrorText(undefined), "");
+});
+
+test("error text flattens the real failure shape", () => {
+	// Exactly the shape the API returned for a failed run.
+	const text = runErrorText({
+		code: "execution_failed",
+		message: 'Step "update-contact-record" exhausted all retry attempts.',
+		details: {
+			name: "StepExhaustedError",
+			message: 'Step "update-contact-record" exhausted all retry attempts.',
+		},
+	});
+	assert.ok(text.includes("execution_failed"));
+	assert.ok(text.includes("StepExhaustedError"));
+	assert.ok(text.includes("exhausted all retry attempts"));
+});
+
+test("error text copes with a code and nothing else", () => {
+	assert.equal(runErrorText({ code: "execution_failed" }), "execution_failed");
+});
+
+test("duration is created -> last update, in seconds", () => {
+	assert.equal(runDurationSeconds(baseRun), 23);
+});
+
+test("duration is undefined rather than negative or NaN", () => {
+	assert.equal(runDurationSeconds({ ...baseRun, updated_at: "not a date" }), undefined);
+	assert.equal(
+		runDurationSeconds({ ...baseRun, created_at: "2026-07-26T03:00:00.000Z" }),
+		undefined,
+		"an update before creation is nonsense, not a negative duration",
+	);
+});
+
+test("output formats as compact JSON", () => {
+	assert.equal(
+		formatRunOutput({ pageId: "abc", source: "apollo", enriched: true }),
+		'{"pageId":"abc","source":"apollo","enriched":true}',
+	);
+});
+
+test("absent or empty output yields an empty string", () => {
+	assert.equal(formatRunOutput(undefined), "");
+	assert.equal(formatRunOutput(null), "");
+	assert.equal(formatRunOutput({}), "");
+});
+
+test("oversized output is truncated visibly, under Notion's rich text cap", () => {
+	const out = formatRunOutput({ blob: "x".repeat(5000) });
+	assert.ok(out.length < 2000, "must fit Notion's 2000-char rich text limit");
+	assert.ok(out.endsWith("… (truncated)"), "truncation must be visible, not silent");
+});
+
+test("a string output passes through rather than being JSON-quoted", () => {
+	assert.equal(formatRunOutput("done"), "done");
+});
+
+test("run detail is undefined without a durable_run_id", async () => {
+	// Documented state before the durable run is created — not an error.
+	assert.equal(await fetchRunDetail(undefined), undefined);
+	assert.equal(await fetchRunDetail(null), undefined);
+	assert.equal(await fetchRunDetail(""), undefined);
+});
+
+test("every status option carries a colour, and they are near-distinct", () => {
+	for (const option of RUN_STATUS_OPTIONS) {
+		assert.ok(option.color, `${option.name} has no colour`);
+	}
+	// finished and failed are the two anyone scans for — they must not collide.
+	const byName = Object.fromEntries(RUN_STATUS_OPTIONS.map((o) => [o.name, o.color]));
+	assert.equal(byName.finished, "green");
+	assert.equal(byName.failed, "red");
+	assert.notEqual(byName.finished, byName.failed);
+});
