@@ -6,7 +6,7 @@ from [`work-flowers/zapier-sdk`](https://github.com/work-flowers/zapier-sdk) as
 the page body.
 
 Feasibility notes and the empirical testing behind these design decisions live
-in [`docs/zapier-zap-docs-worker.md`](../../docs/zapier-zap-docs-worker.md).
+in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worker.md).
 
 ## What it does
 
@@ -82,8 +82,8 @@ cannot see work.flowers databases.
 ## Develop
 
 ```shell
-npm run check --workspace=notion-worker-zapier-zap-docs
-npm test --workspace=notion-worker-zapier-zap-docs
+npm run check --workspace=notion-worker-zapier-durables-docs
+npm test --workspace=notion-worker-zapier-durables-docs
 ```
 
 ## Deploy
@@ -91,7 +91,7 @@ npm test --workspace=notion-worker-zapier-zap-docs
 Always from the repo root, never bare `ntn workers deploy`:
 
 ```shell
-./scripts/deploy.sh zapier-zap-docs
+./scripts/deploy.sh zapier-durables-docs
 ```
 
 Then preview before letting it write:

@@ -2,7 +2,7 @@
  * Notion-flavored Markdown fix-ups for GitHub READMEs.
  *
  * Empirically tested against Notion's server-side converter on 2026-07-26
- * (see docs/zapier-zap-docs-worker.md). Almost everything passes through
+ * (see docs/zapier-durables-docs-worker.md). Almost everything passes through
  * correctly and needs no help:
  *
  * - Mermaid fences are verbatim — `<br/>` and `<br>` both survive untouched.

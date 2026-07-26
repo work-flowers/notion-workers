@@ -1,4 +1,4 @@
-# zapier-zap-docs — worker context
+# zapier-durables-docs — worker context
 
 Repo-wide conventions live in the root `CLAUDE.md`; general Workers SDK guidance
 is in `AGENTS.md`. This file covers only what is specific to this worker.
@@ -57,7 +57,7 @@ backtick comes back as `` \` ``, a real code span as a bare backtick.
 ## Testing
 
 ```shell
-npm run check --workspace=notion-worker-zapier-zap-docs
-npm test --workspace=notion-worker-zapier-zap-docs      # markdown unit tests
+npm run check --workspace=notion-worker-zapier-durables-docs
+npm test --workspace=notion-worker-zapier-durables-docs      # markdown unit tests
 ntn workers sync trigger zapsSync --preview             # end to end, no writes
 ```
