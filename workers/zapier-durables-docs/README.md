@@ -20,6 +20,8 @@ Runs** (one row per run, related back to its Zap).
    appear.
 2. `getWorkflow()` per durable for `current_version` — the only place
    `connections`, `dependencies` and `zapier_durable_version` are exposed.
+   Plus, once per cycle, `listConnections` and one `getApp` per distinct app
+   key, to resolve the `Apps` column.
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
@@ -122,6 +124,16 @@ documentation value.
   `Zapier User ID` so far; keeping the raw id visible makes an unresolved
   creator obvious rather than silently blank. The lookup returns an *email*
   because `Builder.people()` takes email addresses.
+- **`Connections` and `Apps` are multi-selects.** `Connections` holds the alias
+  each connection is bound to in the source (`notion_wf`, `apollo`); `Apps`
+  holds the apps the durable actually touches, which has no single source
+  field — `current_version.app_versions` is null on every workflow, so it is
+  assembled from the trigger's `selected_api` plus the `app_key` of every bound
+  connection, then resolved to display titles via `getApp` (a private app's key
+  is `App243984CLIAPI`, whose title is "Ninjapear (Unofficial)"). Both lookups
+  are cached for the whole cycle. The schema seeds the options observed on
+  2026-07-26; Notion creates any new option on write, so a new app needs no code
+  change.
 - **`Steps` and `Action Call Sites` are complexity, not usage.** They count
   *call sites* — places in the source where a call is written — off
   `current_version.source_files`, so they cost no extra API call. A `ctx.step()`

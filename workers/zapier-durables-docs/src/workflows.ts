@@ -1,4 +1,4 @@
-import { experimentalSdk, type Pacer } from "./zapier.js";
+import { experimentalSdk, type Pacer, sdk } from "./zapier.js";
 
 /**
  * Deployed Zapier Durables, via the experimental Code Workflows surface.
@@ -87,11 +87,21 @@ export function triggerAppName(selectedApi: string | undefined): string {
 	return selectedApi.split("@")[0].replace(/CLIAPI$/, "") || selectedApi;
 }
 
-/** Stable, human-readable summary of a version's connection aliases. */
-export function formatConnections(version: WorkflowVersion | undefined): string {
-	const connections = version?.connections;
-	if (!connections) return "";
-	return Object.keys(connections).sort().join(", ");
+/** The alias each connection is bound to in the workflow source, sorted. */
+export function connectionAliases(version: WorkflowVersion | undefined): string[] {
+	return Object.keys(version?.connections ?? {}).sort();
+}
+
+/** Connection ids the version binds, for resolving which apps it touches. */
+export function connectionIds(version: WorkflowVersion | undefined): string[] {
+	return Object.values(version?.connections ?? {})
+		.map((c) => c?.connection_id)
+		.filter((id): id is string => typeof id === "string");
+}
+
+/** `"LumaCLIAPI@6.1.0"` -> `"LumaCLIAPI"`. */
+export function appKeyFromSelectedApi(selectedApi: string | undefined): string | undefined {
+	return selectedApi ? selectedApi.split("@")[0] : undefined;
 }
 
 /** `"zod@4.4.3, @zapier/zapier-sdk@0.79.0"`, sorted for a stable content hash. */
@@ -180,4 +190,92 @@ export function countActionCallSites(version: WorkflowVersion | undefined): numb
 	const runActions = (source.match(/\brunAction\s*\(/g) ?? []).length;
 	const proxied = (source.match(/\.(?:write|search|read)\.\w+\s*\(/g) ?? []).length;
 	return runActions + proxied;
+}
+
+// -- Apps -------------------------------------------------------------------
+//
+// Which apps a durable actually touches. There is no single field for this:
+// `current_version.app_versions` is null on every workflow observed, so it is
+// assembled from two places —
+//
+//   1. the trigger's `selected_api` (`LumaCLIAPI@6.1.0`), and
+//   2. the `app_key` of every connection the version binds, which requires
+//      resolving connection ids through `listConnections`.
+//
+// App keys are then resolved to display titles via `getApp`, because private
+// apps have keys like `App243984CLIAPI` that mean nothing to a reader — that
+// one is "Ninjapear (Unofficial)".
+
+/** `"Ninjapear (Unofficial) (1.0.0)"` -> `"Ninjapear (Unofficial)"`. */
+export function appTitleWithoutVersion(title: string): string {
+	return title.replace(/\s*\(\d+(?:\.\d+)*\)\s*$/, "").trim();
+}
+
+/** Last-resort label when an app cannot be resolved: `"LumaCLIAPI"` -> `"Luma"`. */
+export function appKeyToLabel(appKey: string): string {
+	return appKey.replace(/CLIAPI$/, "") || appKey;
+}
+
+/**
+ * Resolves the apps a workflow touches, caching both lookups for the whole
+ * sync cycle: one `listConnections` call total, and one `getApp` per distinct
+ * app key. Failures degrade to the stripped key rather than failing the cycle.
+ */
+export function createAppResolver(pacer?: Pacer) {
+	let connectionApps: Map<string, string> | undefined;
+	const titles = new Map<string, string>();
+
+	async function connectionAppKeys(): Promise<Map<string, string>> {
+		if (connectionApps) return connectionApps;
+		connectionApps = new Map();
+		try {
+			if (pacer) await pacer.wait();
+			const response: any = await (sdk() as any).listConnections();
+			for (const connection of response?.data ?? []) {
+				if (connection?.id && connection?.app_key) {
+					connectionApps.set(connection.id, connection.app_key);
+				}
+			}
+		} catch (error) {
+			console.warn(
+				"listConnections failed; Apps will cover the trigger only:",
+				error instanceof Error ? error.message : error,
+			);
+		}
+		return connectionApps;
+	}
+
+	async function label(appKey: string): Promise<string> {
+		const cached = titles.get(appKey);
+		if (cached) return cached;
+		let resolved = appKeyToLabel(appKey);
+		try {
+			if (pacer) await pacer.wait();
+			const response: any = await (sdk() as any).getApp({ app: appKey });
+			const title = response?.data?.title;
+			if (typeof title === "string" && title.trim()) resolved = appTitleWithoutVersion(title);
+		} catch {
+			// Keep the stripped key — a missing title is cosmetic.
+		}
+		titles.set(appKey, resolved);
+		return resolved;
+	}
+
+	return async function appsFor(
+		selectedApi: string | undefined,
+		version: WorkflowVersion | undefined,
+	): Promise<string[]> {
+		const keys = new Set<string>();
+		const triggerKey = appKeyFromSelectedApi(selectedApi);
+		if (triggerKey) keys.add(triggerKey);
+
+		const byConnection = await connectionAppKeys();
+		for (const id of connectionIds(version)) {
+			const appKey = byConnection.get(id);
+			if (appKey) keys.add(appKey);
+		}
+
+		const labels = await Promise.all([...keys].map(label));
+		return [...new Set(labels)].sort();
+	};
 }

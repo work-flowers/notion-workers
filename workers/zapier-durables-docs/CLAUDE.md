@@ -87,6 +87,14 @@ block surgery via the Notion REST API, which does not accept markdown, so it
 would also mean writing our own markdown-to-blocks conversion and losing mermaid
 and table support.
 
+**There is no single field for which apps a durable touches.**
+`current_version.app_versions` is null on every workflow observed. `Apps` is
+assembled from the trigger's `selected_api` plus the `app_key` of each bound
+connection (via `listConnections`), then resolved to titles with `getApp` —
+private apps have keys like `App243984CLIAPI` that mean nothing to a reader.
+Strip only the trailing version from a title: `(Unofficial)` distinguishes
+genuinely different apps and must stay.
+
 **`input` is intentionally not synced** — the whole trigger payload, up to
 ~10.6 KB, containing full Notion page objects for the webhook durables.
 

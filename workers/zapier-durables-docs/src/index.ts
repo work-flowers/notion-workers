@@ -17,10 +17,11 @@ import {
 	type WorkflowRun,
 } from "./runs.js";
 import {
+	connectionAliases,
 	countActionCallSites,
 	countSteps,
+	createAppResolver,
 	editorUrl,
-	formatConnections,
 	formatDependencies,
 	getWorkflowVersion,
 	listWorkflows,
@@ -29,6 +30,25 @@ import {
 
 const worker = new Worker();
 export default worker;
+
+// Seed options for the two multi-selects, from the 14 durables live on
+// 2026-07-26. These only pre-populate the property; a value outside the list is
+// created by Notion on write, so a new app or connection alias needs no code
+// change. Kept so a freshly created database has sensible options from the off.
+const SEEDED_CONNECTION_ALIASES = ["apollo", "buttondown", "enrichment", "notion_wf"];
+const SEEDED_APPS = [
+	"Apollo",
+	"Buttondown (Unofficial)",
+	"Contrast",
+	"Harvest",
+	"Luma",
+	"Ninjapear (Unofficial)",
+	"Notion",
+	"Notion (Unofficial by work.flowers)",
+	"Slack",
+	"Webhooks by Zapier",
+	"Zapier Manager",
+];
 
 // -- Managed database -------------------------------------------------------
 // One row per *deployed* durable. The row set is exactly what `listWorkflows`
@@ -57,7 +77,11 @@ const zaps = worker.database("zaps", {
 			"GitHub URL": Schema.url(),
 			"Version ID": Schema.richText(),
 			"Durable Version": Schema.richText(),
-			Connections: Schema.richText(),
+			// Multi-select rather than comma-separated text, so the database can
+			// be filtered and grouped by them. Options are seeded from what is
+			// live today; Notion creates any new option on write.
+			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES.map((name) => ({ name }))),
+			Apps: Schema.multiSelect(SEEDED_APPS.map((name) => ({ name }))),
 			Dependencies: Schema.richText(),
 			// Static complexity, counted off source_files (no extra API call).
 			// Call sites, not executions — and they nest, so do not sum them.
@@ -138,6 +162,9 @@ worker.sync("zapsSync", {
 	execute: async (state: SyncState | undefined) => {
 		const previousHashes = state?.hashes ?? {};
 		const resolveCreatorEmail = createUserResolver(notionApi);
+		// Both lookups behind it are cached for the whole cycle: one
+		// listConnections, and one getApp per distinct app key.
+		const resolveApps = createAppResolver(zapierApi);
 
 		// A throw fails the run without committing nextState, so the next run
 		// retries from the last good state rather than half-writing.
@@ -172,7 +199,8 @@ worker.sync("zapsSync", {
 				githubUrl: repoZap?.htmlUrl ?? "",
 				versionId: workflow.current_version_id ?? "",
 				durableVersion: version?.zapier_durable_version ?? "",
-				connections: formatConnections(version),
+				connections: connectionAliases(version),
+				apps: await resolveApps(trigger?.selected_api, version),
 				dependencies: formatDependencies(version),
 				steps: countSteps(version),
 				actionCallSites: countActionCallSites(version),
@@ -217,7 +245,8 @@ worker.sync("zapsSync", {
 					"Editor URL": Builder.url(editorUrl(workflow.id)),
 					"Version ID": Builder.richText(fields.versionId),
 					"Durable Version": Builder.richText(fields.durableVersion),
-					Connections: Builder.richText(fields.connections),
+					Connections: Builder.multiSelect(...fields.connections),
+					Apps: Builder.multiSelect(...fields.apps),
 					Dependencies: Builder.richText(fields.dependencies),
 					Steps: Builder.number(fields.steps),
 					"Action Call Sites": Builder.number(fields.actionCallSites),
