@@ -59,11 +59,18 @@ observed (~20s, as the run reaches `finished`), so the delta re-scans a one-hour
 overlap and re-upserts. Narrowing that window will freeze runs at whatever
 status they held mid-flight.
 
+**Run intensity comes from `getDurableRun`, not `getWorkflowRun`.** Keyed on
+`durable_run_id`. It returns the operations journal — one entry per executed
+step or wait, with per-operation `retry_count` and an execution summary — *and*
+`output`, so Output/Operations/Retries/Attempts all cost one call between them.
+`getWorkflowRun` returns only `output`; do not switch back to it. This journal
+is the only per-run intensity data Zapier exposes anywhere.
+
 **`Steps` / `Action Call Sites` count call sites, not executions.** Do not
-relabel them as usage or task counts — Zapier exposes no per-run step or task
-data anywhere in the SDK (`getWorkflowRun` adds only `output`), so there is
-nothing to validate such a claim against. The two also nest and must not be
-summed.
+relabel them as usage or task counts. For what actually ran, use the runs
+database's `Operations` column — the static and runtime numbers genuinely
+differ (6 static steps vs 4-5 executed, because of branching). The two static
+columns also nest and must not be summed.
 
 **Quote stripping in `stripNonCode` is per line on purpose.** Applied
 whole-file, one unbalanced quote inside a multi-line template literal spanned

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	fetchRunDetail,
 	formatRunOutput,
 	normaliseStatus,
 	RUN_STATUS_OPTIONS,
@@ -95,4 +96,11 @@ test("oversized output is truncated visibly, under Notion's rich text cap", () =
 
 test("a string output passes through rather than being JSON-quoted", () => {
 	assert.equal(formatRunOutput("done"), "done");
+});
+
+test("run detail is undefined without a durable_run_id", async () => {
+	// Documented state before the durable run is created — not an error.
+	assert.equal(await fetchRunDetail(undefined), undefined);
+	assert.equal(await fetchRunDetail(null), undefined);
+	assert.equal(await fetchRunDetail(""), undefined);
 });

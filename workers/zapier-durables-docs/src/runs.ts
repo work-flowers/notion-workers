@@ -64,27 +64,64 @@ export async function listRunsPage(
 }
 
 /**
- * A run's return value, from `getWorkflowRun` — the one field the detail view
- * adds over the list row. Unlike `input` it is small and genuinely descriptive
- * (e.g. `{"pageId":"…","source":"apollo","enriched":true}`), so it is worth the
- * extra call per run. Costs one API call, hence delta-only; see index.ts.
+ * Per-run detail, from `getDurableRun` — keyed on `durable_run_id`, not the
+ * workflow run id.
  *
- * Returns undefined rather than throwing: a missing output degrades one cell,
- * and is not worth failing a cycle over.
+ * This is the only place Zapier exposes what a run *actually did*: an
+ * operations journal, one entry per executed step or wait, each with its own
+ * `retry_count`. It is the real answer to "how intense was this run", and it
+ * differs from the static call-site count because of branching — e.g.
+ * `enrich-contact-records` has 6 step call sites but observed runs execute 4-5.
+ *
+ * `getWorkflowRun` was used here previously and returns only `output`. This one
+ * returns `output` *and* the journal for the same single call, so the extra
+ * numbers are free.
+ *
+ * The response is large (~12 KB average, 26 KB observed) because each
+ * operation embeds its full result. Everything except the counts and `output`
+ * is discarded immediately — nothing large is stored.
  */
-export async function fetchRunOutput(
-	workflowId: string,
-	runId: string,
+export type RunDetail = {
+	output?: unknown;
+	/** Executed operations — steps and waits. Zero is legitimate: a run can fail
+	 *  before any step runs. */
+	operations: number;
+	/** Summed `retry_count` across operations. */
+	retries: number;
+	/** `execution.summary.total_attempts` — whole-execution retries, distinct
+	 *  from per-operation retries, and >1 even on some successful runs. */
+	attempts: number;
+};
+
+type DurableOperation = { type?: string; retry_count?: number };
+
+/**
+ * Returns undefined rather than throwing: missing detail degrades a few cells
+ * and is not worth failing a cycle over. Also returns undefined when the run
+ * has no `durable_run_id`, which is the documented state before the durable run
+ * is created.
+ */
+export async function fetchRunDetail(
+	durableRunId: string | null | undefined,
 	pacer?: Pacer,
-): Promise<unknown | undefined> {
+): Promise<RunDetail | undefined> {
+	if (!durableRunId) return undefined;
 	const sdk = experimentalSdk() as any;
 	if (pacer) await pacer.wait();
 	try {
-		const response = await sdk.getWorkflowRun({ workflow: workflowId, run: runId });
-		return response?.data?.output ?? undefined;
+		const response = await sdk.getDurableRun({ run: durableRunId });
+		const data = response?.data;
+		const execution = data?.execution;
+		const operations: DurableOperation[] = execution?.operations ?? [];
+		return {
+			output: data?.output ?? undefined,
+			operations: operations.length,
+			retries: operations.reduce((sum, op) => sum + (op.retry_count ?? 0), 0),
+			attempts: execution?.summary?.total_attempts ?? 0,
+		};
 	} catch (error) {
 		console.warn(
-			`getWorkflowRun failed for ${runId}; row will omit Output:`,
+			`getDurableRun failed for ${durableRunId}; row will omit Output and counts:`,
 			error instanceof Error ? error.message : error,
 		);
 		return undefined;

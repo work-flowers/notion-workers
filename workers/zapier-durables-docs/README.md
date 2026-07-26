@@ -66,12 +66,40 @@ ages runs out of its own history. A replace-mode pass would then delete exactly
 the records this database exists to preserve. Nothing in either sync ever emits
 a delete.
 
-`Output` (the run's return value, from `getWorkflowRun`) **is** synced, but only
-by the delta — it costs one extra call per run, which is fine for the ~12 rows a
-steady-state cycle emits but would add one call per historical run to a
-backfill. Backfilled rows therefore have an empty `Output`. On a cold delta the
-fetch is capped at the newest 60 rows per execution, and the shortfall is logged
-rather than passing silently.
+#### Run intensity — the operations journal
+
+`getDurableRun` (keyed on `durable_run_id`, not the workflow run id) is the only
+place Zapier exposes what a run *actually did*: an operations journal, one entry
+per executed step or wait, each with its own `retry_count`, plus an execution
+summary. It returns `output` in the same call, so four columns come from one
+request:
+
+| Column | Source |
+|---|---|
+| `Output` | the run's return value |
+| `Operations` | executed operations — steps and waits |
+| `Retries` | summed `retry_count` across operations |
+| `Attempts` | `execution.summary.total_attempts` — whole-execution retries |
+
+**This is the closest thing to a usage signal Zapier exposes**, and unlike the
+Zaps database's static call-site counts it varies run to run:
+
+| Zap | Ops per run (3 samples) | Static `Steps` |
+|---|---|---|
+| `enrich-contact-records` | 5, 4, 4 | 6 |
+| `luma-guest-updated` | 2, 4, 2 | 7 |
+| `luma-guest-registered` | 6, 6, 6 | 12 |
+
+The gap is branching: a Zap with 6 step call sites runs 4–5 of them depending on
+which path it takes. Zero operations is legitimate — a run can fail before any
+step executes.
+
+Delta-only. One call per run is fine for the ~12 rows a steady-state cycle
+emits but would add one call per historical run to a backfill, so backfilled
+rows leave these columns empty. On a cold delta the fetch is capped at the
+newest 60 rows per execution and the shortfall is logged rather than passing
+silently. The response averages ~12 KB (26 KB observed) since each operation
+embeds its full result; everything but the counts is discarded.
 
 `input` is **not** synced. It carries the whole trigger payload — up to ~10.6 KB,
 and for the Notion-webhook durables it is full page objects including property
