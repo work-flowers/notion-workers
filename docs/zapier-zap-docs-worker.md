@@ -20,14 +20,44 @@ entry point. The experimental surface also exposes `getWorkflow`,
 `listWorkflowVersions`, `getWorkflowVersion`, `listWorkflowRuns`,
 `getWorkflowRun`.
 
+**Version matters, and the earlier note missed it.** The workflow surface does
+not exist at all in `@zapier/zapier-sdk@0.53.0`, which is what every other
+worker in this repo pins via `^0.53.0` (a caret on a `0.x` version locks the
+minor, so it resolves to `0.53.x`). Introspecting the SDK there returns no
+workflow members and `sdk.listWorkflows` is `undefined`.
+
+- **Pin `^0.91.0`.** Verified: the experimental surface exposes `listWorkflows`,
+  `getWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`,
+  `listWorkflowRuns`, `getWorkflowRun`, plus create/update/enable/disable.
+- **Do not go to 1.x.** `@zapier/zapier-sdk@1.1.0` removes the `./experimental`
+  subpath from its `exports` map entirely — importing it throws
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+
+Also worth recording so it is not re-derived: the same method names exist as
+**Zapier MCP tools** (`list_workflows`, `get_workflow`, …). That is almost
+certainly where the original field list came from. A Worker cannot call MCP
+tools, and the underlying REST host (`code-substrate-workflows.zapier.com/api/v0`)
+rejects both plain and `sdk.fetch` requests with
+`401 Expected valid JWT in authorization header`. The versioned SDK is the only
+route that works from a worker.
+
 This auth pattern already runs in five workers off `ZAPIER_CLIENT_ID` /
 `ZAPIER_CLIENT_SECRET`: `bq-sync`, `buttondown-tools`, `email-db-updates`,
 `luma-guest-sync`, `xero-invoice-sync`.
 
-`listWorkflows` returns `id`, `name`, `description`, `enabled`,
-`disabled_reason`, `is_private`, `created_by_user_id`, `created_at`,
-`updated_at`, `current_version_id`, `triggers[]`. `getWorkflow` adds
-`source_files`, `dependencies`, `zapier_durable_version`, `connections`.
+`listWorkflows()` returns `{ data, nextCursor }`. Each row: `id`, `name`,
+`description`, `trigger_url`, `enabled`, `disabled_reason`, `is_private`,
+`created_by_user_id`, `current_version_id`, `triggers[]`, `created_at`,
+`updated_at`.
+
+`created_by_user_id` is a **string** (`"20495893"`), which is exactly the
+rich-text form stored in People — the join needs no coercion.
+
+`getWorkflow({ workflow })` adds a single key, `current_version`, and the
+useful fields are nested inside it (the earlier note listed them as top-level):
+`source_files`, `zapier_durable_version`, `dependencies`, `trigger`,
+`connections`, `app_versions`. So `connections` and `dependencies` cost one
+extra call per workflow — nine per cycle.
 
 Nine durables deployed today — eight enabled, `contrast-registrations-to-event-attendance`
 disabled.
@@ -126,10 +156,24 @@ contains exactly one `\|`:
 | luma-guest-registered-to-event-attendance | 3 | 1 | 0 | 0 |
 | luma-guest-updated-to-event-attendance | 3 | 1 | 0 | 0 |
 
-So the worker's only required markdown fix-up is **escaped pipes**: replace
-`\|` in table cells with a character Notion will not split on (`&#124;` or a
-plain `/`) before handing the body to `pageContentMarkdown`. Everything else
-passes through correctly.
+#### The fix: re-emit affected tables as native table XML
+
+Notion's `<table><tr><td>` form accepts a **literal** `|` in a cell — no escape
+needed, so nothing splits. Verified end to end: the real
+`enrich-contact-records` connection table converts to a 4×4 XML table with
+`` `work.flowers | Dennis` `` intact in a single cell, code spans and all.
+
+Only tables that actually contain a `\|` are rewritten. Clean pipe tables are
+left exactly as they are — they already convert correctly, and rewriting them
+would be risk for no gain.
+
+Two alternatives were tried first and **both are wrong**:
+
+- **`&#124;`** — Notion does not decode HTML entities. Confirmed with a control:
+  `&amp;` round-trips as `&amp;`, not `&`. The reader would literally see
+  "&#124;".
+- **A lookalike glyph** (U+2502 `│`, U+FF5C `｜`) — survives and does not split,
+  but silently swaps the character the README author wrote.
 
 ### Minor
 
@@ -142,9 +186,13 @@ passes through correctly.
   diagram — repo rule drift, not a worker problem.
 
 Probe pages (private, still in the workspace — delete when done):
-`3a991b07-11ac-8145-b87e-eded022166c9`,
-`3a991b07-11ac-819d-823b-fd46a8602ea0`,
-`3a991b07-11ac-817f-b4b7-def866c8bd7f`.
+`3a991b07-11ac-8145-b87e-eded022166c9` (br / pipe tables),
+`3a991b07-11ac-819d-823b-fd46a8602ea0` (cell contents),
+`3a991b07-11ac-817f-b4b7-def866c8bd7f` (code span vs literal),
+`3a991b07-11ac-8196-8eb3-e093bad95315` (entity fix vs bug control),
+`3a991b07-11ac-8192-b4e8-fa0fa4ecef6c` (entity decoding),
+`3a991b07-11ac-811b-8dc7-cdafd40d25f4` (table XML with raw pipes),
+`3a991b07-11ac-8191-9db5-facb555a1074` (real converted README table).
 
 ## User mapping
 
@@ -185,20 +233,32 @@ write to People is required.
 
 | Route | Verified | Extra credential |
 |---|---|---|
-| Zapier SDK `fetch` + Notion connection `02b73654-…` | 200 on `2025-09-03` and `2026-03-11` | **none** |
-| Internal integration token over REST | 200 once shared | `NOTION_API_TOKEN` |
+| Zapier SDK `fetch` + Notion connection `02b73654-…` | 200 on `2025-09-03` and `2026-03-11` | none |
+| Internal integration token over REST | 200 once shared | none — `NOTION_API_TOKEN` is already required |
 
-Prefer the Zapier route. The worker must carry `ZAPIER_CLIENT_ID` /
-`ZAPIER_CLIENT_SECRET` anyway for `listWorkflows`, so this adds nothing, and
-`workers/xero-invoice-sync/src/notion.ts` already implements exactly this
-client. It also sidesteps the per-token sharing chore that the internal
-integration needs.
+**Correction:** an earlier draft of these notes argued the Zapier route "adds no
+credential" while the REST route does. That is wrong. **`NOTION_API_TOKEN` is
+required either way** — the platform uses it to write rows for *any* sync, not
+just to back `context.notion`. Confirmed: the deployed `api-changelog-sync`
+worker has it set, and its README states the platform uses it to write rows even
+though no application code reads it. So both routes are credential-neutral and
+the choice is on other grounds:
 
-Note that `context.notion` **cannot** do this lookup: the platform pins it to an
-older API version that 404s on data-source endpoints (see the comment at the top
-of `workers/harvest-sync/src/notion-lookup.ts`). So "the worker already has a
-Notion client" is not an argument for the REST route — either way it is an
-explicit client.
+- **Zapier route** — no need to share People with the worker's own integration;
+  one more layer of indirection; the connection id is workspace-specific, so a
+  client redeploy needs a Notion connection in *their* Zapier account.
+- **REST route** — simplest and most direct, and exactly what
+  `workers/harvest-sync/src/notion-lookup.ts` already does; requires People to be
+  shared with the integration behind `NOTION_API_TOKEN` (already done for
+  `notion-worker-automations`).
+
+Going with the Zapier route, kept behind a single `resolveNotionUserId()` so
+switching is a one-function change.
+
+Note that `context.notion` **cannot** do this lookup either way: the platform
+pins it to an older API version that 404s on data-source endpoints (see the
+comment at the top of `workers/harvest-sync/src/notion-lookup.ts`). Whichever
+route is chosen, it is an explicit client — not `context.notion`.
 
 #### Corrections to earlier rounds
 
@@ -257,12 +317,17 @@ Optional: a Last Run date from `listWorkflowRuns` — nine extra calls per cycle
 and it turns the database from documentation into something worth checking.
 
 Markdown pre-processing before `pageContentMarkdown` is one step, not four:
-replace `\|` inside table cells. Mermaid, pipe tables, and inline formatting all
-pass through untouched.
+re-emit tables containing `\|` as native table XML. Mermaid, clean pipe tables,
+and inline formatting all pass through untouched.
 
-Credentials: `ZAPIER_CLIENT_ID`, `ZAPIER_CLIENT_SECRET`, and three connection
-ids (Notion, GitHub, and — only if the People lookup falls back — the Zapier
-Table). No `NOTION_API_TOKEN`, no GitHub PAT.
+The People lookup returns an **email**, not a user id — `Builder.people()` takes
+email addresses. The People row's `Person` property exposes `person.email` on
+the query response, so this is one field deeper, not another call.
+
+Credentials: `NOTION_API_TOKEN` (required by the platform to write sync rows,
+not read by application code), `ZAPIER_CLIENT_ID`, `ZAPIER_CLIENT_SECRET`, and
+two connection ids (Notion, GitHub). **No GitHub PAT** — that is the one
+credential the Zapier routing genuinely removes.
 
 ## Environment notes
 
@@ -282,7 +347,6 @@ Notion:
 - Data-source endpoints need `Notion-Version: 2025-09-03` or later; both
   `2025-09-03` and `2026-03-11` were verified against People.
 
-Consequence for portability: with both Notion and GitHub routed through Zapier
-connections, the worker's entire secret footprint is the Zapier client id and
-secret plus three connection ids. Redeploying for a client means swapping the
-connection ids, not provisioning new Notion integrations or GitHub PATs.
+Consequence for portability: redeploying for a client means a `NOTION_API_TOKEN`
+for their workspace (unavoidable — the platform needs it to write sync rows) plus
+swapping two connection ids. No GitHub PAT to provision.
