@@ -105,12 +105,12 @@ test("a soft-wrapped quote paragraph becomes one quote line", () => {
 	assert.equal(toNotionMarkdown(input), "> First line of a wrapped paragraph that continues here.");
 });
 
-test("bare > separators are dropped, not left as Empty quote blocks", () => {
+test("paragraphs collapse into one quote block separated by a double break", () => {
 	const input = ["> Para one.", ">", "> Para two."].join("\n");
 	const out = toNotionMarkdown(input);
-	assert.ok(!/^>\s*$/m.test(out), "no bare > should survive");
-	assert.ok(out.includes("> Para one."));
-	assert.ok(out.includes("> Para two."));
+	assert.ok(!/^>\s*$/m.test(out), "no bare > should survive as an Empty quote");
+	assert.equal(out, "> Para one.<br><br>Para two.");
+	assert.equal(out.split("\n").length, 1, "one line means one quote block");
 });
 
 test("a fenced code block inside a quote is lifted out intact", () => {
@@ -130,17 +130,18 @@ test("a fenced code block inside a quote is lifted out intact", () => {
 	assert.ok(out.includes("> After the fence."));
 });
 
-test("list items in a quote stay one item per line, continuations joined", () => {
+test("a quoted list becomes one block, one <br> per item", () => {
 	const input = [
 		"> Two traps:",
 		"> - It is **not** at the top level of `get-workflow` — it lives at",
 		">   `triggers[0].details.webhook_url`.",
 		"> - The second trap.",
 	].join("\n");
-	const out = toNotionMarkdown(input).split("\n");
-	assert.equal(out.length, 3, "intro plus exactly two list items");
-	assert.ok(out[1].includes("it lives at `triggers[0].details.webhook_url`."), "continuation joined");
-	assert.ok(out[2].startsWith("> - The second trap."));
+	const out = toNotionMarkdown(input);
+	assert.equal(out.split("\n").length, 1, "one line means one quote block");
+	assert.equal((out.match(/<br>/g) ?? []).length, 2, "one break per list item");
+	assert.ok(out.includes("it lives at `triggers[0].details.webhook_url`."), "continuation joined");
+	assert.ok(out.includes("<br>- The second trap."));
 });
 
 test("a single-line quote is unchanged", () => {
@@ -164,4 +165,13 @@ test("prose around a quote is preserved", () => {
 	assert.ok(out.startsWith("## Heading"));
 	assert.ok(out.includes("> a b"));
 	assert.ok(out.trimEnd().endsWith("After."));
+});
+
+test("<br> is emitted bare so Notion parses it as a break", () => {
+	// The serializer escapes literal markup (\<br\>) and leaves parsed markup
+	// bare, so an escaped or entity-encoded break would render as visible text.
+	const out = toNotionMarkdown(["> one", ">", "> two"].join("\n"));
+	assert.ok(out.includes("<br><br>"));
+	assert.ok(!out.includes("\\<br"), "must not be escaped");
+	assert.ok(!out.includes("&lt;br"), "must not be entity-encoded");
 });

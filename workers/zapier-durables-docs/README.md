@@ -148,13 +148,24 @@ Only affected tables are re-emitted as native table XML, where a literal `|` is
 safe.
 
 **Blockquotes.** Notion turns *every* `>` line into its own quote block, so a
-soft-wrapped paragraph shatters, a bare `>` renders as a visible "Empty quote",
-and a fenced code block inside a quote is destroyed — the ``` collapses to an
-escaped backtick and the code becomes quoted prose. Quotes are rewritten to one
-`>` line per paragraph or list item, separators dropped, and any fenced code
-lifted out of the quote to top level where it survives intact. Six of the
-READMEs use blockquotes; `internal-user-ids-to-table-and-notion` was the worst
-hit, with 4 bare separators and 4 fences inside quotes.
+soft-wrapped paragraph shatters into a stack of one-line bars, a bare `>`
+renders as a visible "Empty quote", and a fenced code block inside a quote is
+destroyed — the ``` collapses to an escaped backtick and the code becomes
+quoted prose.
+
+A whole quote is therefore collapsed onto **one `>` line**, with its internal
+structure carried by `<br>`: a single break between logical lines, a double
+between paragraphs. That renders as one quote block rather than a stack.
+`<br>` is a real line break, not literal text — the serializer round-trips
+literal markup escaped (`\<br\>`, `&lt;br&gt;`) and parsed markup bare, and a
+bare `<br>` stays bare. Two trailing spaces and a backslash line break were both
+tested and rejected: the first collapses back to separate lines, the second is
+escaped to visible text.
+
+Fenced code is lifted out of the quote to top level, since Notion cannot nest a
+code block in a quote. Six of the READMEs use blockquotes;
+`internal-user-ids-to-table-and-notion` was worst hit, with 4 bare separators
+and 4 fences inside quotes — its five quote blocks collapse to two.
 
 ## Configuration
 

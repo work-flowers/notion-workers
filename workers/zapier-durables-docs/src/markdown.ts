@@ -167,28 +167,46 @@ export function toNotionMarkdown(markdown: string): string {
 //   single escaped backtick and the code becomes quoted prose.
 // - A list continuation line loses its indent and splits off on its own.
 //
-// So a quote is rewritten to **one `>` line per logical paragraph or list
-// item**, with separators dropped, and any fenced code lifted out of the quote
-// to top level, where it survives intact. Lifting is a structural change, but
-// the alternative is losing the code entirely.
+// So a whole quote is collapsed onto **one `>` line**, with its internal
+// structure carried by `<br>`: single break between logical lines, double
+// between paragraphs. That yields one quote block instead of a stack of them.
+//
+// `<br>` is a genuine line break, not literal text. Confirmed by the escaping
+// tell: the serializer round-trips literal markup escaped (`\<br\>`,
+// `&lt;br&gt;`) and parsed markup bare, and a bare `<br>` survives bare. Two
+// rejected alternatives, both tested: two trailing spaces collapse back to
+// separate lines, and a backslash line break is escaped to literal text.
+//
+// Fenced code is lifted out of the quote to top level, where it survives
+// intact. That is a structural change, but Notion cannot nest a code block in
+// a quote and destroys it otherwise.
 
 /** A line inside a quote that begins a list item. */
 function isListItem(line: string): boolean {
 	return /^\s*(?:[-*+]\s|\d+[.)]\s)/.test(line);
 }
 
-type QuoteSegment = { kind: "quote"; lines: string[] } | { kind: "code"; lines: string[] };
+type QuoteSegment =
+	/** Paragraphs of logical lines; joined onto a single `>` line when emitted. */
+	| { kind: "quote"; paragraphs: string[][] }
+	| { kind: "code"; lines: string[] };
 
-/** Group a quote's inner lines into quote paragraphs and lifted code fences. */
+/** Group a quote's inner lines into quote runs and lifted code fences. */
 function segmentQuote(inner: string[]): QuoteSegment[] {
 	const segments: QuoteSegment[] = [];
+	let paragraphs: string[][] = [];
 	let paragraph: string[] = [];
 	let fence: string[] | undefined;
 	let fenceMarker = "";
 
-	const flushParagraph = () => {
-		if (paragraph.length) segments.push({ kind: "quote", lines: paragraph });
+	const endParagraph = () => {
+		if (paragraph.length) paragraphs.push(paragraph);
 		paragraph = [];
+	};
+	const flushParagraph = () => {
+		endParagraph();
+		if (paragraphs.length) segments.push({ kind: "quote", paragraphs });
+		paragraphs = [];
 	};
 
 	for (const line of inner) {
@@ -211,9 +229,9 @@ function segmentQuote(inner: string[]): QuoteSegment[] {
 		}
 
 		if (!line.trim()) {
-			// Bare `>` — a paragraph break, not content. Dropped so it does not
-			// render as an "Empty quote" block.
-			flushParagraph();
+			// Bare `>` — a paragraph break, not content. Becomes a double <br>
+			// rather than an "Empty quote" block.
+			endParagraph();
 			continue;
 		}
 
@@ -252,8 +270,12 @@ function fixBlockquotes(text: string): string {
 
 		segments.forEach((segment, index) => {
 			if (index > 0) out.push("");
-			if (segment.kind === "code") out.push(...segment.lines);
-			else out.push(...segment.lines.map((l) => `> ${l}`));
+			if (segment.kind === "code") {
+				out.push(...segment.lines);
+			} else {
+				// One quote block: <br> between lines, <br><br> between paragraphs.
+				out.push(`> ${segment.paragraphs.map((p) => p.join("<br>")).join("<br><br>")}`);
+			}
 		});
 
 		i = end;
