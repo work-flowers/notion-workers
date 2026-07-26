@@ -129,9 +129,14 @@ documentation value.
   or more actions, so the two columns nest and must not be summed. Zapier
   exposes no per-run task or step counts, so there is nothing better to derive
   usage from; treat these as "which Zaps are heavy", not as billing.
-- **Content hashes gate the page body only.** Replace mode sweeps anything not
-  emitted, so every row is emitted every cycle; the hash decides whether to
-  re-send the README, which is the expensive part of the write.
+- **The content hash covers the page body alone.** `pageContentMarkdown`
+  replaces the *entire* page body, and that includes anything a person added by
+  hand — verified 2026-07-26: an appended block is wiped and a child page is
+  moved to trash. So the body must be re-sent as rarely as possible. Hashing
+  every field meant any property change re-sent it, and `Updated` moves whenever
+  the Zap is edited, so hand-added blocks rarely survived a day. Keyed on the
+  body, they survive until the README itself changes. Properties are still
+  emitted every cycle, because replace mode deletes any row it does not see.
 
 ## Markdown handling
 
@@ -166,6 +171,18 @@ Fenced code is lifted out of the quote to top level, since Notion cannot nest a
 code block in a quote. Six of the READMEs use blockquotes;
 `internal-user-ids-to-table-and-notion` was worst hit, with 4 bare separators
 and 4 fences inside quotes — its five quote blocks collapse to two.
+
+## Adding your own content to a Zap page
+
+**Don't — it will be lost when the README changes.** The page body belongs to
+the sync. Tested: an appended block is deleted and a child page is trashed the
+next time the body is written.
+
+The hash change above means that only happens when the README itself changes
+rather than on every property update, so notes can survive a while. But nothing
+inside a synced page is safe long term. Put durable commentary in the README
+itself (it is the source of truth and syncs automatically), or in a separate
+page that links to the Zap row rather than living inside it.
 
 ## Configuration
 

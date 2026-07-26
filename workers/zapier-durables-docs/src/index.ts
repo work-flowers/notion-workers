@@ -115,9 +115,8 @@ const githubApi = worker.pacer("githubApi", { allowedRequests: 30, intervalMs: 6
 const zapierApi = worker.pacer("zapierApi", { allowedRequests: 30, intervalMs: 60_000 });
 const notionApi = worker.pacer("notionApi", { allowedRequests: 30, intervalMs: 60_000 });
 
-// Content hashes keyed by workflow id. The hash covers the page body and every
-// synced property, so any upstream edit — including a README-only edit —
-// produces a new hash.
+// Content hashes keyed by workflow id, covering the page body only — see the
+// note at the point of use for why properties are deliberately excluded.
 type SyncState = { hashes?: Record<string, string> };
 
 function contentHash(value: unknown): string {
@@ -184,13 +183,23 @@ worker.sync("zapsSync", {
 				body: body ?? "",
 			};
 
-			const hash = contentHash(fields);
+			// Hash the **body alone**, not the whole row.
+			//
+			// `pageContentMarkdown` replaces the entire page body, and verified
+			// 2026-07-26 that includes anything a person added by hand: an
+			// appended block is wiped, and a child page is moved to trash.
+			//
+			// So the body must be re-sent as rarely as possible. Hashing every
+			// field meant any property change re-sent it — and `Updated` moves
+			// whenever the Zap is edited, `Version ID` / `Durable Version` /
+			// `Dependencies` on every republish — so hand-added blocks rarely
+			// survived a day. Keyed on the body, they survive until the README
+			// itself changes.
+			//
+			// Properties are still emitted every cycle: replace mode sweeps any
+			// row it does not see, so skipping one would delete it.
+			const hash = contentHash(fields.body);
 			nextHashes[workflow.id] = hash;
-
-			// Replace mode sweeps anything not emitted, so an unchanged row must
-			// still be emitted — skipping it would delete it. The hash therefore
-			// only gates re-sending the page body, which is the expensive part of
-			// the write and the part that replaces rather than merges.
 			const bodyUnchanged = previousHashes[workflow.id] === hash;
 
 			changes.push({

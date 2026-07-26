@@ -77,6 +77,16 @@ whole-file, one unbalanced quote inside a multi-line template literal spanned
 thousands of characters and silently deleted real code — it took
 `notion-newsletter-to-buttondown` from 7 steps to 0. There is a regression test.
 
+**`pageContentMarkdown` replaces the whole page body, including hand-added
+content.** Verified: an appended block is wiped and a child page is moved to
+trash. That is why the content hash covers the body alone — hashing properties
+too meant `Updated` moving re-sent the body and destroyed anything a person had
+added. Do not widen that hash back out. There is no partial-body update in the
+sync API; genuine preservation would mean abandoning `pageContentMarkdown` for
+block surgery via the Notion REST API, which does not accept markdown, so it
+would also mean writing our own markdown-to-blocks conversion and losing mermaid
+and table support.
+
 **`input` is intentionally not synced** — the whole trigger payload, up to
 ~10.6 KB, containing full Notion page objects for the webhook durables.
 
