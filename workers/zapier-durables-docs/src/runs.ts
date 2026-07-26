@@ -64,6 +64,45 @@ export async function listRunsPage(
 }
 
 /**
+ * A run's return value, from `getWorkflowRun` — the one field the detail view
+ * adds over the list row. Unlike `input` it is small and genuinely descriptive
+ * (e.g. `{"pageId":"…","source":"apollo","enriched":true}`), so it is worth the
+ * extra call per run. Costs one API call, hence delta-only; see index.ts.
+ *
+ * Returns undefined rather than throwing: a missing output degrades one cell,
+ * and is not worth failing a cycle over.
+ */
+export async function fetchRunOutput(
+	workflowId: string,
+	runId: string,
+	pacer?: Pacer,
+): Promise<unknown | undefined> {
+	const sdk = experimentalSdk() as any;
+	if (pacer) await pacer.wait();
+	try {
+		const response = await sdk.getWorkflowRun({ workflow: workflowId, run: runId });
+		return response?.data?.output ?? undefined;
+	} catch (error) {
+		console.warn(
+			`getWorkflowRun failed for ${runId}; row will omit Output:`,
+			error instanceof Error ? error.message : error,
+		);
+		return undefined;
+	}
+}
+
+/** Notion rich text caps at 2000 characters per value. */
+const OUTPUT_MAX_CHARS = 1900;
+
+/** Compact JSON, truncated with a visible marker rather than silently clipped. */
+export function formatRunOutput(output: unknown): string {
+	if (output === undefined || output === null) return "";
+	const text = typeof output === "string" ? output : JSON.stringify(output);
+	if (!text || text === "{}") return "";
+	return text.length > OUTPUT_MAX_CHARS ? `${text.slice(0, OUTPUT_MAX_CHARS)}… (truncated)` : text;
+}
+
+/**
  * Statuses seen in the wild are `finished` and `failed`, but the enum is not
  * documented and an unattended hourly sync must not hard-fail the first time
  * Zapier emits something new. Unknown values collapse to "unknown" and are

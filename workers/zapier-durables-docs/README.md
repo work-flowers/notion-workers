@@ -23,8 +23,10 @@ Runs** (one row per run, related back to its Zap).
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
-Nine durables today, so a cycle is roughly 32 upstream calls — comfortably
-inside GitHub's authenticated 5000/hour even running every hour.
+A cycle is roughly 3 upstream calls per durable plus a repo listing — twelve
+durables at the time of writing, so ~40 calls, comfortably inside GitHub's
+authenticated 5000/hour even running every hour. The count moves as Zaps are
+added; nothing is hardcoded to it.
 
 ### `runsBackfill` / `runsDelta` — run history
 
@@ -49,7 +51,8 @@ observed, typically ~20s later as it reaches `finished`. So the delta re-scans a
 one-hour overlap and re-upserts, rather than taking only strictly newer rows;
 otherwise runs would freeze at whatever status they held mid-flight.
 
-Measured against live data (211 runs across nine durables):
+Measured against live data (211 runs across the nine durables deployed at the
+time; the figures scale with run volume, not with this snapshot):
 
 | Scenario | Rows emitted | API calls |
 |---|---|---|
@@ -62,6 +65,13 @@ backfill pattern uses replace mode so mark-and-sweep cleans up drift, but Zapier
 ages runs out of its own history. A replace-mode pass would then delete exactly
 the records this database exists to preserve. Nothing in either sync ever emits
 a delete.
+
+`Output` (the run's return value, from `getWorkflowRun`) **is** synced, but only
+by the delta — it costs one extra call per run, which is fine for the ~12 rows a
+steady-state cycle emits but would add one call per historical run to a
+backfill. Backfilled rows therefore have an empty `Output`. On a cold delta the
+fetch is capped at the newest 60 rows per execution, and the shortfall is logged
+rather than passing silently.
 
 `input` is **not** synced. It carries the whole trigger payload — up to ~10.6 KB,
 and for the Notion-webhook durables it is full page objects including property
@@ -134,11 +144,16 @@ npm test --workspace=notion-worker-zapier-durables-docs
 
 ## Deploy
 
-Always from the repo root, never bare `ntn workers deploy`:
+Use the script rather than a bare `ntn workers deploy` — the script resolves the
+repo root from its own path, so it works from any directory:
 
 ```shell
-./scripts/deploy.sh zapier-durables-docs
+./scripts/deploy.sh zapier-durables-docs          # from the repo root
+../../scripts/deploy.sh zapier-durables-docs      # from this worker directory
 ```
+
+The `ntn workers sync ...` commands below must run **inside** this worker
+directory — `ntn` finds `workers.json` by walking up from the CWD.
 
 Then preview before letting anything write:
 

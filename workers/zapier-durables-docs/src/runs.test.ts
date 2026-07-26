@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	formatRunOutput,
 	normaliseStatus,
 	RUN_STATUS_OPTIONS,
 	runDurationSeconds,
@@ -71,4 +72,27 @@ test("duration is undefined rather than negative or NaN", () => {
 		undefined,
 		"an update before creation is nonsense, not a negative duration",
 	);
+});
+
+test("output formats as compact JSON", () => {
+	assert.equal(
+		formatRunOutput({ pageId: "abc", source: "apollo", enriched: true }),
+		'{"pageId":"abc","source":"apollo","enriched":true}',
+	);
+});
+
+test("absent or empty output yields an empty string", () => {
+	assert.equal(formatRunOutput(undefined), "");
+	assert.equal(formatRunOutput(null), "");
+	assert.equal(formatRunOutput({}), "");
+});
+
+test("oversized output is truncated visibly, under Notion's rich text cap", () => {
+	const out = formatRunOutput({ blob: "x".repeat(5000) });
+	assert.ok(out.length < 2000, "must fit Notion's 2000-char rich text limit");
+	assert.ok(out.endsWith("… (truncated)"), "truncation must be visible, not silent");
+});
+
+test("a string output passes through rather than being JSON-quoted", () => {
+	assert.equal(formatRunOutput("done"), "done");
 });

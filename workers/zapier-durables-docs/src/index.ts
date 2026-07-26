@@ -6,6 +6,8 @@ import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
 import { createUserResolver } from "./people.js";
 import {
+	fetchRunOutput,
+	formatRunOutput,
 	listRunsPage,
 	normaliseStatus,
 	RUN_STATUS_OPTIONS,
@@ -84,6 +86,7 @@ const runs = worker.database("runs", {
 			"Trigger ID": Schema.richText(),
 			"Durable Run ID": Schema.richText(),
 			Error: Schema.richText(),
+			Output: Schema.richText(),
 			"Duration (s)": Schema.number(),
 			Started: Schema.date(),
 			Updated: Schema.date(),
@@ -222,11 +225,24 @@ const RUN_OVERLAP_MS = 60 * 60 * 1000;
 const RUN_PAGE_SIZE = 100;
 const MAX_PAGES_PER_EXECUTION = 20;
 
+/**
+ * `Output` costs one `getWorkflowRun` call per run, so only the delta fetches
+ * it — a backfill would add one call per historical run for no added value on
+ * rows nobody is watching.
+ *
+ * In steady state the delta emits ~12 rows, so this cap never binds. It exists
+ * for the cold-start case (no watermarks, ~211 rows), where fetching an output
+ * for every row would run the execution into its timeout. When it binds, the
+ * newest rows win and the shortfall is logged rather than passing silently.
+ */
+const MAX_OUTPUT_FETCHES_PER_EXECUTION = 60;
+
 type RunsState = { watermarks?: Record<string, string>; index?: number; cursor?: string };
 
-function runRow(run: WorkflowRun, workflowId: string, zapName: string) {
+function runRow(run: WorkflowRun, workflowId: string, zapName: string, output?: unknown) {
 	const duration = runDurationSeconds(run);
 	const errorText = runErrorText(run.error);
+	const outputText = formatRunOutput(output);
 	return {
 		type: "upsert" as const,
 		key: run.id,
@@ -241,6 +257,7 @@ function runRow(run: WorkflowRun, workflowId: string, zapName: string) {
 			"Trigger ID": Builder.richText(run.trigger_id ?? ""),
 			"Durable Run ID": Builder.richText(run.durable_run_id ?? ""),
 			Error: Builder.richText(errorText),
+			Output: Builder.richText(outputText),
 			...(duration === undefined ? {} : { "Duration (s)": Builder.number(duration) }),
 			...(run.created_at ? { Started: Builder.dateTime(run.created_at) } : {}),
 			...(run.updated_at ? { Updated: Builder.dateTime(run.updated_at) } : {}),
@@ -314,7 +331,7 @@ worker.sync("runsDelta", {
 	execute: async (state: RunsState | undefined) => {
 		const workflows = await listWorkflows(zapierApi);
 		const watermarks = { ...(state?.watermarks ?? {}) };
-		const changes = [];
+		const pending: Array<{ run: WorkflowRun; workflowId: string; zapName: string }> = [];
 
 		for (const workflow of workflows) {
 			const previous = watermarks[workflow.id];
@@ -341,7 +358,7 @@ worker.sync("runsDelta", {
 						done = true; // newest-first, so everything after this is older
 						continue;
 					}
-					changes.push(runRow(run, workflow.id, workflow.name));
+					pending.push({ run, workflowId: workflow.id, zapName: workflow.name });
 					if (run.updated_at > highest) highest = run.updated_at;
 				}
 				cursor = page.nextCursor;
@@ -351,6 +368,26 @@ worker.sync("runsDelta", {
 			} while (cursor && !done && pages < MAX_PAGES_PER_EXECUTION);
 
 			if (highest) watermarks[workflow.id] = highest;
+		}
+
+		// Newest first, so if the cap binds it keeps the runs someone is most
+		// likely to be looking at.
+		pending.sort((a, b) => b.run.updated_at.localeCompare(a.run.updated_at));
+		if (pending.length > MAX_OUTPUT_FETCHES_PER_EXECUTION) {
+			console.warn(
+				`${pending.length} runs to emit; fetching Output for the newest ` +
+					`${MAX_OUTPUT_FETCHES_PER_EXECUTION}. The remainder keep an empty Output ` +
+					`until they are re-emitted.`,
+			);
+		}
+
+		const changes = [];
+		for (const [i, { run, workflowId, zapName }] of pending.entries()) {
+			const output =
+				i < MAX_OUTPUT_FETCHES_PER_EXECUTION
+					? await fetchRunOutput(workflowId, run.id, zapierApi)
+					: undefined;
+			changes.push(runRow(run, workflowId, zapName, output));
 		}
 
 		return { changes, hasMore: false, nextState: { watermarks } };
