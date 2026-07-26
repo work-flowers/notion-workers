@@ -6,6 +6,14 @@ import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
 import { createUserResolver } from "./people.js";
 import {
+	listRunsPage,
+	normaliseStatus,
+	RUN_STATUS_OPTIONS,
+	runDurationSeconds,
+	runErrorText,
+	type WorkflowRun,
+} from "./runs.js";
+import {
 	editorUrl,
 	formatConnections,
 	formatDependencies,
@@ -49,6 +57,35 @@ const zaps = worker.database("zaps", {
 			Creator: Schema.people(),
 			"Creator ID": Schema.richText(),
 			Created: Schema.date(),
+			Updated: Schema.date(),
+		},
+	},
+});
+
+// -- Run history ------------------------------------------------------------
+// One row per workflow run, related back to its Zap. Two syncs write here:
+// `runsBackfill` (manual, walks all history) and `runsDelta` (hourly, re-scans
+// the recent window). Both are incremental — see the note on runsBackfill for
+// why this deliberately departs from the usual replace-mode backfill.
+const runs = worker.database("runs", {
+	type: "managed",
+	initialTitle: "Zapier Zap Runs",
+	primaryKeyProperty: "Run ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"Run ID": Schema.richText(),
+			// Matches on the Zaps primary key, which is "Workflow ID" — so the
+			// relation sets itself with no lookup.
+			Zap: Schema.relation("zaps", { twoWay: true, relatedPropertyName: "Runs" }),
+			Status: Schema.select(RUN_STATUS_OPTIONS.map((name) => ({ name }))),
+			"Workflow ID": Schema.richText(),
+			"Version ID": Schema.richText(),
+			"Trigger ID": Schema.richText(),
+			"Durable Run ID": Schema.richText(),
+			Error: Schema.richText(),
+			"Duration (s)": Schema.number(),
+			Started: Schema.date(),
 			Updated: Schema.date(),
 		},
 	},
@@ -171,5 +208,151 @@ worker.sync("zapsSync", {
 		}
 
 		return { changes, hasMore: false, nextState: { hashes: nextHashes } };
+	},
+});
+
+// -- Run history syncs ------------------------------------------------------
+
+/** Zapier reports a run's status ~20s after creating it, and there is no
+ * server-side date filter, so the delta re-scans this far back on every cycle
+ * and re-upserts. Generous because the cost is a page we would fetch anyway. */
+const RUN_OVERLAP_MS = 60 * 60 * 1000;
+
+/** Newest-first pages let us stop early; this bounds one execution's work. */
+const RUN_PAGE_SIZE = 100;
+const MAX_PAGES_PER_EXECUTION = 20;
+
+type RunsState = { watermarks?: Record<string, string>; index?: number; cursor?: string };
+
+function runRow(run: WorkflowRun, workflowId: string, zapName: string) {
+	const duration = runDurationSeconds(run);
+	const errorText = runErrorText(run.error);
+	return {
+		type: "upsert" as const,
+		key: run.id,
+		properties: {
+			Name: Builder.title(`${zapName} · ${run.created_at}`),
+			"Run ID": Builder.richText(run.id),
+			// Relates by the Zaps row's primary key value.
+			Zap: [Builder.relation(workflowId)],
+			Status: Builder.select(normaliseStatus(run.status)),
+			"Workflow ID": Builder.richText(workflowId),
+			"Version ID": Builder.richText(run.workflow_version_id ?? ""),
+			"Trigger ID": Builder.richText(run.trigger_id ?? ""),
+			"Durable Run ID": Builder.richText(run.durable_run_id ?? ""),
+			Error: Builder.richText(errorText),
+			...(duration === undefined ? {} : { "Duration (s)": Builder.number(duration) }),
+			...(run.created_at ? { Started: Builder.dateTime(run.created_at) } : {}),
+			...(run.updated_at ? { Updated: Builder.dateTime(run.updated_at) } : {}),
+		},
+	};
+}
+
+// Backfill: walks every run of every durable, one workflow per execution chain.
+//
+// Incremental, *not* replace. The usual backfill pattern uses replace mode so
+// mark-and-sweep cleans up drift, but Zapier ages runs out of its own history —
+// a replace-mode pass would then delete exactly the records this database
+// exists to preserve. Nothing here ever emits a delete.
+//
+//   ntn workers sync state reset runsBackfill && ntn workers sync trigger runsBackfill
+worker.sync("runsBackfill", {
+	database: runs,
+	mode: "incremental",
+	schedule: "manual",
+	execute: async (state: RunsState | undefined) => {
+		const workflows = await listWorkflows(zapierApi);
+		const index = state?.index ?? 0;
+		const watermarks = { ...(state?.watermarks ?? {}) };
+
+		if (index >= workflows.length) {
+			return { changes: [], hasMore: false, nextState: { watermarks } };
+		}
+
+		const workflow = workflows[index];
+		const changes = [];
+		let cursor = state?.cursor;
+		let pages = 0;
+		let highest = watermarks[workflow.id] ?? "";
+
+		do {
+			const page = await listRunsPage(
+				workflow.id,
+				{ cursor, pageSize: RUN_PAGE_SIZE },
+				zapierApi,
+			);
+			for (const run of page.runs) {
+				changes.push(runRow(run, workflow.id, workflow.name));
+				if (run.updated_at > highest) highest = run.updated_at;
+			}
+			cursor = page.nextCursor;
+			pages++;
+		} while (cursor && pages < MAX_PAGES_PER_EXECUTION);
+
+		watermarks[workflow.id] = highest;
+
+		// Resume mid-workflow if it paged out, otherwise advance to the next.
+		return {
+			changes,
+			hasMore: true,
+			nextState: cursor
+				? { watermarks, index, cursor }
+				: { watermarks, index: index + 1, cursor: undefined },
+		};
+	},
+});
+
+// Delta: hourly re-scan of the recent window for every durable.
+//
+// There is no server-side date filter, so this pages newest-first and stops as
+// soon as it passes the watermark minus the overlap. At current volumes that is
+// one page per durable.
+worker.sync("runsDelta", {
+	database: runs,
+	mode: "incremental",
+	schedule: "1h",
+	execute: async (state: RunsState | undefined) => {
+		const workflows = await listWorkflows(zapierApi);
+		const watermarks = { ...(state?.watermarks ?? {}) };
+		const changes = [];
+
+		for (const workflow of workflows) {
+			const previous = watermarks[workflow.id];
+			// No watermark yet means the backfill has not covered this durable
+			// (a Zap created since). Take the first page so it is not invisible
+			// until someone remembers to re-run the backfill.
+			const floor = previous
+				? new Date(Date.parse(previous) - RUN_OVERLAP_MS).toISOString()
+				: undefined;
+
+			let cursor: string | undefined;
+			let pages = 0;
+			let highest = previous ?? "";
+			let done = false;
+
+			do {
+				const page = await listRunsPage(
+					workflow.id,
+					{ cursor, pageSize: RUN_PAGE_SIZE },
+					zapierApi,
+				);
+				for (const run of page.runs) {
+					if (floor && run.updated_at < floor) {
+						done = true; // newest-first, so everything after this is older
+						continue;
+					}
+					changes.push(runRow(run, workflow.id, workflow.name));
+					if (run.updated_at > highest) highest = run.updated_at;
+				}
+				cursor = page.nextCursor;
+				pages++;
+				// Without a watermark, take one page only — the backfill owns history.
+				if (!floor) break;
+			} while (cursor && !done && pages < MAX_PAGES_PER_EXECUTION);
+
+			if (highest) watermarks[workflow.id] = highest;
+		}
+
+		return { changes, hasMore: false, nextState: { watermarks } };
 	},
 });

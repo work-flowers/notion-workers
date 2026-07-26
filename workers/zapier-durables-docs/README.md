@@ -8,9 +8,12 @@ the page body.
 Feasibility notes and the empirical testing behind these design decisions live
 in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worker.md).
 
+Two databases: **Zapier Zaps** (one row per deployed durable) and **Zapier Zap
+Runs** (one row per run, related back to its Zap).
+
 ## What it does
 
-`zapsSync` — replace mode, hourly:
+### `zapsSync` — replace mode, hourly
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -22,6 +25,48 @@ in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worke
 
 Nine durables today, so a cycle is roughly 32 upstream calls — comfortably
 inside GitHub's authenticated 5000/hour even running every hour.
+
+### `runsBackfill` / `runsDelta` — run history
+
+`runsBackfill` (manual) walks all history, one durable per execution chain.
+`runsDelta` (hourly) re-scans the recent window. Both write to **Zapier Zap
+Runs**, and the `Zap` relation sets itself: it matches on the Zaps primary key,
+which is `Workflow ID`.
+
+Three things about `listWorkflowRuns` drive the design, all probed rather than
+assumed:
+
+- **`workflow` is required** — no account-wide listing, so every cycle makes at
+  least one call per durable.
+- **Only `pageSize` is honoured.** `limit`, `status`, `since` and `updatedAfter`
+  are accepted and then silently ignored, each returning the full unfiltered
+  set. There is no server-side date filter.
+- **Rows come back newest-first**, which is what makes the previous point
+  workable: the delta pages from the newest end and stops client-side.
+
+A run also mutates after creation — `updated_at != created_at` on every row
+observed, typically ~20s later as it reaches `finished`. So the delta re-scans a
+one-hour overlap and re-upserts, rather than taking only strictly newer rows;
+otherwise runs would freeze at whatever status they held mid-flight.
+
+Measured against live data (211 runs across nine durables):
+
+| Scenario | Rows emitted | API calls |
+|---|---|---|
+| Cold start, no watermarks | 211 | 9 |
+| Warm, watermarks set | 12 | 9 |
+| Watermarks 30 days stale | 211 (full recovery) | 9 |
+
+**Both run syncs are incremental, not replace — deliberately.** The usual
+backfill pattern uses replace mode so mark-and-sweep cleans up drift, but Zapier
+ages runs out of its own history. A replace-mode pass would then delete exactly
+the records this database exists to preserve. Nothing in either sync ever emits
+a delete.
+
+`input` is **not** synced. It carries the whole trigger payload — up to ~10.6 KB,
+and for the Notion-webhook durables it is full page objects including property
+values. Mirroring that would duplicate CRM content into a second place for no
+documentation value.
 
 ## Design decisions worth knowing
 
@@ -95,8 +140,25 @@ Always from the repo root, never bare `ntn workers deploy`:
 ./scripts/deploy.sh zapier-durables-docs
 ```
 
-Then preview before letting it write:
+Then preview before letting anything write:
 
 ```shell
-ntn workers sync trigger zapsSync --preview
+ntn workers sync trigger zapsSync   --preview
+ntn workers sync trigger runsDelta  --preview
+```
+
+> Preview renders **properties only** — page content is never shown, so an empty
+> body in a preview is not a bug. Verified against `api-changelog-sync`, which
+> definitely writes bodies and previews the same way.
+
+Run history needs one manual backfill before the hourly delta is meaningful:
+
+```shell
+ntn workers sync trigger runsBackfill
+```
+
+To redo it from scratch:
+
+```shell
+ntn workers sync state reset runsBackfill && ntn workers sync trigger runsBackfill
 ```
