@@ -94,12 +94,12 @@ The gap is branching: a Zap with 6 step call sites runs 4–5 of them depending 
 which path it takes. Zero operations is legitimate — a run can fail before any
 step executes.
 
-Delta-only. One call per run is fine for the ~12 rows a steady-state cycle
-emits but would add one call per historical run to a backfill, so backfilled
-rows leave these columns empty. On a cold delta the fetch is capped at the
-newest 60 rows per execution and the shortfall is logged rather than passing
-silently. The response averages ~12 KB (26 KB observed) since each operation
-embeds its full result; everything but the counts is discarded.
+The delta caps the fetch at the newest 60 rows per execution and logs the
+shortfall rather than passing silently. The **backfill fetches detail for every
+row**, so a one-off re-run populates these columns across all history — at the
+cost of one extra call and ~12 KB per run (26 KB observed), which is why it
+takes a small page (25) one page at a time and spreads the work over more
+executions. Everything but the counts and `output` is discarded.
 
 `input` is **not** synced. It carries the whole trigger payload — up to ~10.6 KB,
 and for the Notion-webhook durables it is full page objects including property
@@ -201,7 +201,9 @@ ntn workers sync trigger runsDelta  --preview
 > body in a preview is not a bug. Verified against `api-changelog-sync`, which
 > definitely writes bodies and previews the same way.
 
-Run history needs one manual backfill before the hourly delta is meaningful:
+Run history needs one manual backfill before the hourly delta is meaningful.
+The backfill also populates `Output`/`Operations`/`Retries`/`Attempts` on every
+historical row, so re-run it after a deploy that adds those columns:
 
 ```shell
 ntn workers sync trigger runsBackfill

@@ -32,8 +32,9 @@ test("unknown or missing status collapses to unknown", () => {
 test("every value normaliseStatus can return is a declared select option", () => {
 	// The select schema is built from RUN_STATUS_OPTIONS, so any value the
 	// normaliser emits must be in it or the write would reference a missing option.
-	const options = new Set(RUN_STATUS_OPTIONS);
-	for (const status of [...RUN_STATUS_OPTIONS, "surprise", "", undefined]) {
+	const names = RUN_STATUS_OPTIONS.map((o) => o.name);
+	const options = new Set(names);
+	for (const status of [...names, "surprise", "", undefined]) {
 		assert.ok(options.has(normaliseStatus(status as string)), `missing: ${status}`);
 	}
 });
@@ -103,4 +104,15 @@ test("run detail is undefined without a durable_run_id", async () => {
 	assert.equal(await fetchRunDetail(undefined), undefined);
 	assert.equal(await fetchRunDetail(null), undefined);
 	assert.equal(await fetchRunDetail(""), undefined);
+});
+
+test("every status option carries a colour, and they are near-distinct", () => {
+	for (const option of RUN_STATUS_OPTIONS) {
+		assert.ok(option.color, `${option.name} has no colour`);
+	}
+	// finished and failed are the two anyone scans for — they must not collide.
+	const byName = Object.fromEntries(RUN_STATUS_OPTIONS.map((o) => [o.name, o.color]));
+	assert.equal(byName.finished, "green");
+	assert.equal(byName.failed, "red");
+	assert.notEqual(byName.finished, byName.failed);
 });

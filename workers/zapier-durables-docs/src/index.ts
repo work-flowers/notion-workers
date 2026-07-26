@@ -87,7 +87,7 @@ const runs = worker.database("runs", {
 			// Matches on the Zaps primary key, which is "Workflow ID" — so the
 			// relation sets itself with no lookup.
 			Zap: Schema.relation("zaps", { twoWay: true, relatedPropertyName: "Runs" }),
-			Status: Schema.select(RUN_STATUS_OPTIONS.map((name) => ({ name }))),
+			Status: Schema.select(RUN_STATUS_OPTIONS),
 			"Workflow ID": Schema.richText(),
 			"Version ID": Schema.richText(),
 			"Trigger ID": Schema.richText(),
@@ -242,6 +242,15 @@ const RUN_PAGE_SIZE = 100;
 const MAX_PAGES_PER_EXECUTION = 20;
 
 /**
+ * The backfill fetches run detail for every row, which is one extra call and
+ * ~12 KB per run. One modest page per execution keeps each execution well
+ * inside its timeout and lets the sync cycle resume from the cursor; the whole
+ * history is still covered, just across more executions.
+ */
+const BACKFILL_PAGE_SIZE = 25;
+const BACKFILL_PAGES_PER_EXECUTION = 1;
+
+/**
  * `Output`, `Operations`, `Retries` and `Attempts` all come from one
  * `getDurableRun` call per run, so only the delta fetches them — a backfill
  * would add one call per historical run for no added value on rows nobody is
@@ -292,7 +301,11 @@ function runRow(run: WorkflowRun, workflowId: string, zapName: string, detail?: 
 	};
 }
 
-// Backfill: walks every run of every durable, one workflow per execution chain.
+// Backfill: walks every run of every durable, one page per execution.
+//
+// Unlike the delta this fetches run detail for *every* row, so a one-off
+// backfill also populates Output/Operations/Retries/Attempts on historical
+// runs. That is ~2 calls and ~12 KB per run, hence the small page size.
 //
 // Incremental, *not* replace. The usual backfill pattern uses replace mode so
 // mark-and-sweep cleans up drift, but Zapier ages runs out of its own history —
@@ -322,16 +335,17 @@ worker.sync("runsBackfill", {
 		do {
 			const page = await listRunsPage(
 				workflow.id,
-				{ cursor, pageSize: RUN_PAGE_SIZE },
+				{ cursor, pageSize: BACKFILL_PAGE_SIZE },
 				zapierApi,
 			);
 			for (const run of page.runs) {
-				changes.push(runRow(run, workflow.id, workflow.name));
+				const detail = await fetchRunDetail(run.durable_run_id, zapierApi);
+				changes.push(runRow(run, workflow.id, workflow.name, detail));
 				if (run.updated_at > highest) highest = run.updated_at;
 			}
 			cursor = page.nextCursor;
 			pages++;
-		} while (cursor && pages < MAX_PAGES_PER_EXECUTION);
+		} while (cursor && pages < BACKFILL_PAGES_PER_EXECUTION);
 
 		watermarks[workflow.id] = highest;
 

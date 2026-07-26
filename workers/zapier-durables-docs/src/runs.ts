@@ -1,3 +1,4 @@
+import type { SelectColor } from "@notionhq/workers/types";
 import { experimentalSdk, type Pacer } from "./zapier.js";
 
 /**
@@ -144,18 +145,30 @@ export function formatRunOutput(output: unknown): string {
  * documented and an unattended hourly sync must not hard-fail the first time
  * Zapier emits something new. Unknown values collapse to "unknown" and are
  * logged, rather than being passed through to a select that may reject them.
+ *
+ * Colours are keyed to how much attention a state deserves: green finished,
+ * red failed, blue in-flight, grey inert, orange/yellow for "ended badly but
+ * not an error".
  */
-const KNOWN_STATUSES = new Set([
-	"queued",
-	"running",
-	"finished",
-	"failed",
-	"cancelled",
-	"halted",
-	"timed_out",
-]);
+const STATUS_COLOURS = {
+	queued: "gray",
+	running: "blue",
+	finished: "green",
+	failed: "red",
+	cancelled: "brown",
+	halted: "orange",
+	timed_out: "yellow",
+	unknown: "default",
+} as const satisfies Record<string, SelectColor>;
 
-export const RUN_STATUS_OPTIONS = [...KNOWN_STATUSES, "unknown"];
+/** Everything except "unknown", which is this module's own fallback. */
+const KNOWN_STATUSES = new Set(
+	Object.keys(STATUS_COLOURS).filter((status) => status !== "unknown"),
+);
+
+export const RUN_STATUS_OPTIONS: Array<{ name: string; color: SelectColor }> = Object.entries(
+	STATUS_COLOURS,
+).map(([name, color]) => ({ name, color }));
 
 export function normaliseStatus(status: string | undefined | null): string {
 	if (!status) return "unknown";
