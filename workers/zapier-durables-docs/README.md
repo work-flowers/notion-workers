@@ -13,7 +13,7 @@ Runs** (one row per run, related back to its Zap).
 
 ## What it does
 
-### `zapsSync` — replace mode, hourly
+### `zapsSync` — replace mode, every 6 hours
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -27,13 +27,13 @@ Runs** (one row per run, related back to its Zap).
 
 A cycle is roughly 3 upstream calls per durable plus a repo listing — twelve
 durables at the time of writing, so ~40 calls, comfortably inside GitHub's
-authenticated 5000/hour even running every hour. The count moves as Zaps are
+authenticated 5000/hour at any sensible cadence. The count moves as Zaps are
 added; nothing is hardcoded to it.
 
 ### `runsBackfill` / `runsDelta` — run history
 
 `runsBackfill` (manual) walks all history, one durable per execution chain.
-`runsDelta` (hourly) re-scans the recent window. Both write to **Zapier Zap
+`runsDelta` (every 6 hours) re-scans the recent window. Both write to **Zapier Zap
 Runs**, and the `Zap` relation sets itself: it matches on the Zaps primary key,
 which is `Workflow ID`.
 
@@ -96,7 +96,8 @@ The gap is branching: a Zap with 6 step call sites runs 4–5 of them depending 
 which path it takes. Zero operations is legitimate — a run can fail before any
 step executes.
 
-The delta caps the fetch at the newest 60 rows per execution and logs the
+Run status is therefore up to 6 hours stale, which is the trade for the lighter
+cadence. The delta caps the fetch at the newest 60 rows per execution and logs the
 shortfall rather than passing silently. The **backfill fetches detail for every
 row**, so a one-off re-run populates these columns across all history — at the
 cost of one extra call and ~12 KB per run (26 KB observed), which is why it
@@ -264,7 +265,7 @@ ntn workers sync trigger runsDelta  --preview
 > body in a preview is not a bug. Verified against `api-changelog-sync`, which
 > definitely writes bodies and previews the same way.
 
-Run history needs one manual backfill before the hourly delta is meaningful.
+Run history needs one manual backfill before the delta is meaningful.
 The backfill also populates `Output`/`Operations`/`Retries`/`Attempts` on every
 historical row, so re-run it after a deploy that adds those columns:
 
