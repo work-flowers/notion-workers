@@ -133,7 +133,10 @@ documentation value.
   is `App243984CLIAPI`, whose title is "Ninjapear (Unofficial)"). Both lookups
   are cached for the whole cycle. The schema seeds the options observed on
   2026-07-26; Notion creates any new option on write, so a new app needs no code
-  change.
+  change — it just gets an arbitrary colour until it is added to
+  `src/options.ts`. Colours there are per app, roughly following brand, and a
+  connection alias **takes the colour of the app it binds**, so `apollo` and
+  `Apollo` read as a pair across the two columns.
 - **`Steps` and `Action Call Sites` are complexity, not usage.** They count
   *call sites* — places in the source where a call is written — off
   `current_version.source_files`, so they cost no extra API call. A `ctx.step()`

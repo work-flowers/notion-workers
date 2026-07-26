@@ -4,6 +4,7 @@ import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
+import { SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
 import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
@@ -31,24 +32,6 @@ import {
 const worker = new Worker();
 export default worker;
 
-// Seed options for the two multi-selects, from the 14 durables live on
-// 2026-07-26. These only pre-populate the property; a value outside the list is
-// created by Notion on write, so a new app or connection alias needs no code
-// change. Kept so a freshly created database has sensible options from the off.
-const SEEDED_CONNECTION_ALIASES = ["apollo", "buttondown", "enrichment", "notion_wf"];
-const SEEDED_APPS = [
-	"Apollo",
-	"Buttondown (Unofficial)",
-	"Contrast",
-	"Harvest",
-	"Luma",
-	"Ninjapear (Unofficial)",
-	"Notion",
-	"Notion (Unofficial by work.flowers)",
-	"Slack",
-	"Webhooks by Zapier",
-	"Zapier Manager",
-];
 
 // -- Managed database -------------------------------------------------------
 // One row per *deployed* durable. The row set is exactly what `listWorkflows`
@@ -80,8 +63,8 @@ const zaps = worker.database("zaps", {
 			// Multi-select rather than comma-separated text, so the database can
 			// be filtered and grouped by them. Options are seeded from what is
 			// live today; Notion creates any new option on write.
-			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES.map((name) => ({ name }))),
-			Apps: Schema.multiSelect(SEEDED_APPS.map((name) => ({ name }))),
+			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES),
+			Apps: Schema.multiSelect(SEEDED_APPS),
 			Dependencies: Schema.richText(),
 			// Static complexity, counted off source_files (no extra API call).
 			// Call sites, not executions — and they nest, so do not sum them.
