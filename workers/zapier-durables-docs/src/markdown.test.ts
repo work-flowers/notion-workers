@@ -175,3 +175,73 @@ test("<br> is emitted bare so Notion parses it as a break", () => {
 	assert.ok(!out.includes("\\<br"), "must not be escaped");
 	assert.ok(!out.includes("&lt;br"), "must not be entity-encoded");
 });
+
+test("a soft-wrapped paragraph reflows onto one line", () => {
+	const input = [
+		"Keeps the map in sync. One person, keyed on their",
+		"work email, gets a row in the **\"User IDs\" Table**",
+		"and the same IDs mirrored onto their row.",
+	].join("\n");
+	const out = toNotionMarkdown(input);
+	assert.equal(out.split("\n").length, 1, "one line means one paragraph block");
+	assert.ok(out.includes("keyed on their work email, gets a row"), "joined with a space");
+});
+
+test("a blank line still separates two paragraphs", () => {
+	const input = ["Para one line a", "line b", "", "Para two line a", "line b"].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out.length, 3, "paragraph, blank, paragraph");
+	assert.equal(out[0], "Para one line a line b");
+	assert.equal(out[2], "Para two line a line b");
+});
+
+test("list continuations join onto their item, items stay separate", () => {
+	const input = ["- First item that wraps onto", "  a second source line.", "- Second item."].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out.length, 2, "exactly two list items");
+	assert.equal(out[0], "- First item that wraps onto a second source line.");
+	assert.equal(out[1], "- Second item.");
+});
+
+test("numbered list continuations join, including tab-indented ones", () => {
+	const input = ["1. Repoint the webhook, then disable the", "\tclassic **Add New Linear User ID**.", "2. Second step."].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out.length, 2);
+	assert.ok(out[0].startsWith("1. Repoint the webhook, then disable the classic"));
+	assert.ok(out[1].startsWith("2. Second step."));
+});
+
+test("headings and rules are never absorbed into a paragraph", () => {
+	const input = ["# Title", "Body line one", "line two", "---", "After the rule"].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out[0], "# Title");
+	assert.equal(out[1], "Body line one line two");
+	assert.equal(out[2], "---");
+	assert.equal(out[3], "After the rule");
+});
+
+test("table markup is not reflowed", () => {
+	const input = ["| a | b |", "|---|---|", "| x | y |"].join("\n");
+	assert.equal(toNotionMarkdown(input), input, "clean pipe table untouched");
+	const withEscape = ["| a | b |", "|---|---|", "| x | y \\| z |"].join("\n");
+	const xml = toNotionMarkdown(withEscape);
+	assert.ok(xml.includes("<td>x</td>\n<td>y | z</td>"), "table XML keeps one cell per line");
+});
+
+test("an indented code block after a blank line is not reflowed", () => {
+	const input = ["Intro paragraph.", "", "    indented code line one", "    indented code line two"].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out[2], "    indented code line one");
+	assert.equal(out[3], "    indented code line two");
+});
+
+test("fenced code is still untouched by reflow", () => {
+	const input = ["```ts", "const a = 1;", "const b = 2;", "```"].join("\n");
+	assert.equal(toNotionMarkdown(input), input);
+});
+
+test("reflow is idempotent", () => {
+	const input = ["Para line a", "line b", "", "- item wrapping", "  onto here"].join("\n");
+	const once = toNotionMarkdown(input);
+	assert.equal(toNotionMarkdown(once), once);
+});

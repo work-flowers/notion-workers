@@ -153,7 +153,9 @@ function splitOnFences(markdown: string): Array<{ code: boolean; text: string }>
  */
 export function toNotionMarkdown(markdown: string): string {
 	return splitOnFences(markdown)
-		.map((segment) => (segment.code ? segment.text : fixBlockquotes(fixTables(segment.text))))
+		.map((segment) =>
+			segment.code ? segment.text : joinSoftWraps(fixBlockquotes(fixTables(segment.text))),
+		)
 		.join("");
 }
 
@@ -279,6 +281,96 @@ function fixBlockquotes(text: string): string {
 		});
 
 		i = end;
+	}
+
+	return out.join("\n");
+}
+
+// -- Soft line wraps --------------------------------------------------------
+//
+// Notion makes **one block per source line** outside code fences, so a
+// hard-wrapped README paragraph arrives as a stack of one-line paragraphs and
+// the blank line between two paragraphs is lost entirely. Tested 2026-07-26.
+//
+// Standard Markdown says a single newline inside a paragraph is a soft wrap, so
+// the fix is to reflow: join a paragraph's source lines back into one line, and
+// join a list item's continuation lines onto the item.
+//
+// Structural lines are never joined — headings, rules, quotes (already
+// collapsed by fixBlockquotes), table markup, and raw HTML each stay on their
+// own line, and an indented block that follows a blank line is treated as
+// indented code rather than a continuation.
+
+/** A line that must keep its own line and terminates any paragraph in progress. */
+function isStructuralLine(line: string): boolean {
+	const t = line.trim();
+	return (
+		/^#{1,6}\s/.test(t) || // heading
+		/^(?:[-*_]\s*){3,}$/.test(t) || // horizontal rule
+		t.startsWith(">") || // quote (already one line each)
+		t.startsWith("|") || // pipe table row
+		t.startsWith("<") // table XML or raw HTML
+	);
+}
+
+/**
+ * Reflow soft-wrapped paragraphs and list continuations onto single lines.
+ *
+ * Tracks fences itself rather than relying on `splitOnFences`, because
+ * `fixBlockquotes` lifts fences *out* of quotes after that split has already
+ * run — those lines are code and must not be reflowed.
+ */
+function joinSoftWraps(text: string): string {
+	const out: string[] = [];
+	// Whether the last emitted line can absorb a continuation.
+	let openLine = false;
+	let fenceMarker: string | undefined;
+
+	for (const line of text.split("\n")) {
+		const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+		if (fenceMarker) {
+			out.push(line);
+			if (fenceMatch && fenceMatch[1][0] === fenceMarker[0]) fenceMarker = undefined;
+			continue;
+		}
+		if (fenceMatch) {
+			out.push(line);
+			fenceMarker = fenceMatch[1];
+			openLine = false;
+			continue;
+		}
+
+		if (!line.trim()) {
+			out.push(line);
+			openLine = false;
+			continue;
+		}
+
+		if (isStructuralLine(line)) {
+			out.push(line);
+			openLine = false;
+			continue;
+		}
+
+		// An indented line that does not continue anything is indented code.
+		const indented = /^(?: {4,}|\t)/.test(line);
+		if (indented && !openLine) {
+			out.push(line);
+			continue;
+		}
+
+		if (isListItem(line)) {
+			out.push(line);
+			openLine = true;
+			continue;
+		}
+
+		if (openLine) {
+			out[out.length - 1] = `${out[out.length - 1]} ${line.trim()}`;
+		} else {
+			out.push(line);
+			openLine = true;
+		}
 	}
 
 	return out.join("\n");

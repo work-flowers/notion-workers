@@ -144,8 +144,17 @@ Notion's markdown conversion was tested empirically rather than assumed. Mermaid
 fences are verbatim (`<br/>` is fine), pipe tables convert to real Notion
 tables, and code spans, bold and links inside cells become genuine annotations.
 
-Two real defects are fixed in `src/markdown.ts`; see its header comments for the
-tested behaviour and the alternatives that were rejected.
+Three real defects are fixed in `src/markdown.ts`; see its header comments for
+the tested behaviour and the alternatives that were rejected. All three share
+one root cause: **Notion makes one block per source line.**
+
+**Soft line wraps.** A hard-wrapped README paragraph arrives as a stack of
+one-line paragraph blocks, and the blank line between two paragraphs is lost
+entirely; list continuations split off from their item. Standard Markdown treats
+a single newline inside a paragraph as a soft wrap, so paragraphs and list items
+are reflowed onto one line each. Headings, rules, table markup, raw HTML and
+indented code are never reflowed. On `enrich-contact-records` this takes 178
+source lines to 135.
 
 **Escaped pipes in tables.** `\|` inside a cell splits the cell, drops content
 and shifts every later column. All five READMEs with tables contain exactly one.

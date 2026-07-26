@@ -99,7 +99,13 @@ both considered and are both *unnecessary*, and two plausible fixes for the
 escaped-pipe bug (HTML entity, lookalike glyph) are wrong for reasons that are
 not obvious.
 
-Notion makes **every `>` line its own quote block**, which is why a whole quote
+Notion makes **one block per source line**, which is the single root cause of
+all three markdown fixes. For ordinary prose that means hard-wrapped paragraphs
+must be reflowed onto one line — `joinSoftWraps` does this, and it tracks fences
+itself because `fixBlockquotes` lifts fences out of quotes *after*
+`splitOnFences` has already run. A test covers that ordering.
+
+The same rule makes **every `>` line its own quote block**, which is why a whole quote
 is collapsed onto one `>` line with `<br>` carrying the internal breaks. Do not
 "tidy" that back into separate lines — it re-creates the stack of one-line bars.
 `<br>` is genuinely parsed; two trailing spaces and `\` line breaks were both
