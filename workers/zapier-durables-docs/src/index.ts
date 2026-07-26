@@ -76,10 +76,14 @@ function contentHash(value: unknown): string {
 // Replace mode: at nine durables, mark-and-sweep is the cheapest correct way to
 // handle a deleted Zap, and a full listing is one call either way. Everything
 // is fetched in a single execution, so hasMore is always false.
+//
+// Hourly. A cycle is ~32 upstream calls (1 workflow listing + 9 getWorkflow, 1
+// repo listing + 2 files per directory, 1 cached People query), so this is well
+// inside GitHub's authenticated 5000/hour even with the pacers throttling it.
 worker.sync("zapsSync", {
 	database: zaps,
 	mode: "replace",
-	schedule: "12h",
+	schedule: "1h",
 	execute: async (state: SyncState | undefined) => {
 		const previousHashes = state?.hashes ?? {};
 		const resolveCreatorEmail = createUserResolver(notionApi);

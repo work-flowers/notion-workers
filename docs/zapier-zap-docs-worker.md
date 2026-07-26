@@ -304,7 +304,7 @@ Remaining, and none of them block building:
 
 ## Proposed shape
 
-One worker, one managed database, **replace-mode** sync on a 6–12 hour
+One worker, one managed database, **replace-mode** sync on an hourly
 schedule — mark-and-sweep handles deleted Zaps for free at this record count —
 with content hashes in sync state so unchanged rows are skipped.
 

@@ -10,7 +10,7 @@ in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worke
 
 ## What it does
 
-`zapsSync` — replace mode, every 12 hours:
+`zapsSync` — replace mode, hourly:
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -20,7 +20,8 @@ in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worke
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
-Nine durables today, so a cycle is roughly 35 upstream calls.
+Nine durables today, so a cycle is roughly 32 upstream calls — comfortably
+inside GitHub's authenticated 5000/hour even running every hour.
 
 ## Design decisions worth knowing
 
