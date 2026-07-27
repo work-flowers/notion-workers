@@ -4,7 +4,7 @@ import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
-import { SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
+import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
 import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
@@ -61,8 +61,9 @@ const zaps = worker.database("zaps", {
 			"Version ID": Schema.richText(),
 			"Durable Version": Schema.richText(),
 			// Multi-select rather than comma-separated text, so the database can
-			// be filtered and grouped by them. Options are seeded from what is
-			// live today; Notion creates any new option on write.
+			// be filtered and grouped by them. The declared options are the whole
+			// allowed set — the platform silently drops anything else — so a new
+			// app or alias needs a change in src/options.ts and a deploy.
 			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES),
 			Apps: Schema.multiSelect(SEEDED_APPS),
 			Dependencies: Schema.richText(),
@@ -181,8 +182,14 @@ worker.sync("zapsSync", {
 				githubUrl: repoZap?.htmlUrl ?? "",
 				versionId: workflow.current_version_id ?? "",
 				durableVersion: version?.zapier_durable_version ?? "",
-				connections: connectionAliases(version),
-				apps: await resolveApps(trigger?.selected_api, version),
+				// Warns rather than filters: an undeclared value is dropped by the
+				// platform either way, and the log is what makes it visible.
+				connections: assertDeclared("Connections", connectionAliases(version), workflow.name),
+				apps: assertDeclared(
+					"Apps",
+					await resolveApps(trigger?.selected_api, version),
+					workflow.name,
+				),
 				dependencies: formatDependencies(version),
 				steps: countSteps(version),
 				actionCallSites: countActionCallSites(version),
@@ -272,14 +279,14 @@ const BACKFILL_PAGES_PER_EXECUTION = 1;
 
 /**
  * `Output`, `Operations`, `Retries` and `Attempts` all come from one
- * `getDurableRun` call per run, so only the delta fetches them — a backfill
- * would add one call per historical run for no added value on rows nobody is
- * watching.
+ * `getDurableRun` call per run.
  *
- * In steady state the delta emits ~12 rows, so this cap never binds. It exists
- * for the cold-start case (no watermarks, ~211 rows), where fetching an output
- * for every row would run the execution into its timeout. When it binds, the
- * newest rows win and the shortfall is logged rather than passing silently.
+ * The cap is per execution, and the delta now handles one durable per
+ * execution, so it bounds a single durable's newest runs rather than the whole
+ * cycle's.
+ *
+ * When it binds, the newest rows win and the shortfall is logged rather than
+ * passing silently.
  */
 const MAX_DETAIL_FETCHES_PER_EXECUTION = 60;
 
@@ -383,8 +390,14 @@ worker.sync("runsBackfill", {
 // Delta: six-hourly re-scan of the recent window for every durable.
 //
 // There is no server-side date filter, so this pages newest-first and stops as
-// soon as it passes the watermark minus the overlap. At current volumes that is
-// one page per durable.
+// soon as it passes the watermark minus the overlap.
+//
+// **One durable per execution**, chaining via hasMore until all are covered.
+// Doing all of them in a single execution timed out at ~300s once run volume
+// grew: 81 runs in a cycle meant ~75 API calls, and the zapierApi pacer is
+// shared across three syncs so each gets a fraction of its 30/min. Per durable
+// an execution is ~10 calls, which stays comfortably short however much the
+// volume grows — and the longer the gap between cycles, the more this matters.
 worker.sync("runsDelta", {
 	database: runs,
 	mode: "incremental",
@@ -392,65 +405,67 @@ worker.sync("runsDelta", {
 	execute: async (state: RunsState | undefined) => {
 		const workflows = await listWorkflows(zapierApi);
 		const watermarks = { ...(state?.watermarks ?? {}) };
-		const pending: Array<{ run: WorkflowRun; workflowId: string; zapName: string }> = [];
+		const index = state?.index ?? 0;
 
-		for (const workflow of workflows) {
-			const previous = watermarks[workflow.id];
-			// No watermark yet means the backfill has not covered this durable
-			// (a Zap created since). Take the first page so it is not invisible
-			// until someone remembers to re-run the backfill.
-			const floor = previous
-				? new Date(Date.parse(previous) - RUN_OVERLAP_MS).toISOString()
-				: undefined;
-
-			let cursor: string | undefined;
-			let pages = 0;
-			let highest = previous ?? "";
-			let done = false;
-
-			do {
-				const page = await listRunsPage(
-					workflow.id,
-					{ cursor, pageSize: RUN_PAGE_SIZE },
-					zapierApi,
-				);
-				for (const run of page.runs) {
-					if (floor && run.updated_at < floor) {
-						done = true; // newest-first, so everything after this is older
-						continue;
-					}
-					pending.push({ run, workflowId: workflow.id, zapName: workflow.name });
-					if (run.updated_at > highest) highest = run.updated_at;
-				}
-				cursor = page.nextCursor;
-				pages++;
-				// Without a watermark, take one page only — the backfill owns history.
-				if (!floor) break;
-			} while (cursor && !done && pages < MAX_PAGES_PER_EXECUTION);
-
-			if (highest) watermarks[workflow.id] = highest;
+		// Cycle complete. Dropping `index` resets it for the next scheduled run.
+		if (index >= workflows.length) {
+			return { changes: [], hasMore: false, nextState: { watermarks } };
 		}
+
+		const workflow = workflows[index];
+		const previous = watermarks[workflow.id];
+		// No watermark yet means the backfill has not covered this durable
+		// (a Zap created since). Take the first page so it is not invisible
+		// until someone remembers to re-run the backfill.
+		const floor = previous
+			? new Date(Date.parse(previous) - RUN_OVERLAP_MS).toISOString()
+			: undefined;
+
+		const pending: WorkflowRun[] = [];
+		let cursor = state?.cursor;
+		let pages = 0;
+		let highest = previous ?? "";
+		let done = false;
+
+		do {
+			const page = await listRunsPage(workflow.id, { cursor, pageSize: RUN_PAGE_SIZE }, zapierApi);
+			for (const run of page.runs) {
+				if (floor && run.updated_at < floor) {
+					done = true; // newest-first, so everything after this is older
+					continue;
+				}
+				pending.push(run);
+				if (run.updated_at > highest) highest = run.updated_at;
+			}
+			cursor = page.nextCursor;
+			pages++;
+			// Without a watermark, take one page only — the backfill owns history.
+			if (!floor) break;
+		} while (cursor && !done && pages < MAX_PAGES_PER_EXECUTION);
+
+		if (highest) watermarks[workflow.id] = highest;
 
 		// Newest first, so if the cap binds it keeps the runs someone is most
 		// likely to be looking at.
-		pending.sort((a, b) => b.run.updated_at.localeCompare(a.run.updated_at));
+		pending.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 		if (pending.length > MAX_DETAIL_FETCHES_PER_EXECUTION) {
 			console.warn(
-				`${pending.length} runs to emit; fetching run detail for the newest ` +
-					`${MAX_DETAIL_FETCHES_PER_EXECUTION}. The remainder omit Output and the ` +
+				`${workflow.name}: ${pending.length} runs to emit; fetching run detail for the ` +
+					`newest ${MAX_DETAIL_FETCHES_PER_EXECUTION}. The remainder omit Output and the ` +
 					`operation counts until they are re-emitted.`,
 			);
 		}
 
 		const changes = [];
-		for (const [i, { run, workflowId, zapName }] of pending.entries()) {
+		for (const [i, run] of pending.entries()) {
 			const detail =
 				i < MAX_DETAIL_FETCHES_PER_EXECUTION
 					? await fetchRunDetail(run.durable_run_id, zapierApi)
 					: undefined;
-			changes.push(runRow(run, workflowId, zapName, detail));
+			changes.push(runRow(run, workflow.id, workflow.name, detail));
 		}
 
-		return { changes, hasMore: false, nextState: { watermarks } };
+		// One durable per execution, chaining until all are done. See the header.
+		return { changes, hasMore: true, nextState: { watermarks, index: index + 1 } };
 	},
 });

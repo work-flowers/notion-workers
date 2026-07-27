@@ -132,12 +132,17 @@ documentation value.
   assembled from the trigger's `selected_api` plus the `app_key` of every bound
   connection, then resolved to display titles via `getApp` (a private app's key
   is `App243984CLIAPI`, whose title is "Ninjapear (Unofficial)"). Both lookups
-  are cached for the whole cycle. The schema seeds the options observed on
-  2026-07-26; Notion creates any new option on write, so a new app needs no code
-  change — it just gets an arbitrary colour until it is added to
-  `src/options.ts`. Colours there are per app, roughly following brand, and a
-  connection alias **takes the colour of the app it binds**, so `apollo` and
-  `Apollo` read as a pair across the two columns.
+  are cached for the whole cycle.
+
+  **The declared options in `src/options.ts` are the whole allowed set, not
+  seeds.** Verified 2026-07-26: the platform *silently drops* a multi-select
+  value that is not a declared option — no error, the cell is just written
+  empty. `gmail-attachments-to-drive-by-type` synced with both columns blank for
+  exactly this reason. So **a new app or connection alias needs a code change
+  and a deploy**; `assertDeclared` logs the offending value so the next one shows
+  up in the run logs rather than as a mystery blank cell. Colours are per app,
+  and a connection alias takes the colour of the app it binds, so `apollo` and
+  `Apollo` read as a pair.
 - **`Steps` and `Action Call Sites` are complexity, not usage.** They count
   *call sites* — places in the source where a call is written — off
   `current_version.source_files`, so they cost no extra API call. A `ctx.step()`
