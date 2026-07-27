@@ -10,47 +10,65 @@ const CONTACTS_RELATION_PROPERTY = "Contacts";
 // On Contact pages: the relation to Companies is called "Related Company" (singular).
 const CONTACT_TO_COMPANY_RELATION_PROPERTY = "Related Company";
 
+// Notion's API rate limit is ~3 requests/sec average; this webhook can receive
+// bursts of dozens of near-simultaneous deliveries (e.g. a bulk relation edit),
+// so every call must be paced to avoid tripping Notion's rate limiter.
+const notionApi = worker.pacer("notionApi", { allowedRequests: 3, intervalMs: 1000 });
+
 worker.webhook("syncIconFromCompany", {
 	title: "Sync page icon from related Company",
 	description:
 		"When a Meeting Note or Email is linked to a Company (directly or via a Contact), copy the Company's icon onto the source page.",
 	execute: async (events, { notion }) => {
 		for (const event of events) {
-			const pageId = extractPageId(event.body);
-			if (!pageId) {
-				console.warn("No page id in webhook payload", {
-					deliveryId: event.deliveryId,
-				});
-				continue;
+			try {
+				await syncOne(event, notion);
+			} catch (error) {
+				// One bad delivery must not take down the rest of the batch.
+				console.error("Failed to sync icon", { deliveryId: event.deliveryId, error });
 			}
-
-			const page = await notion.pages.retrieve({ page_id: pageId });
-			if (!("properties" in page)) continue;
-
-			const companyId = await resolveCompanyId(page.properties, notion);
-			if (!companyId) {
-				console.log("No related company found (direct or via contact)", { pageId });
-				continue;
-			}
-
-			const company = await notion.pages.retrieve({ page_id: companyId });
-			const companyIcon = "icon" in company ? company.icon : null;
-			const iconUpdate = toIconUpdate(companyIcon);
-			if (!iconUpdate) {
-				console.log("Company has no icon", { pageId, companyId });
-				continue;
-			}
-
-			await notion.pages.update({
-				page_id: pageId,
-				// Cast: the response emoji type is a specific union; the update API accepts the same set of strings at runtime.
-				icon: iconUpdate as Parameters<typeof notion.pages.update>[0]["icon"],
-			});
-
-			console.log("Synced icon", { pageId, companyId });
 		}
 	},
 });
+
+async function syncOne(
+	event: { body: Record<string, unknown>; deliveryId: string },
+	notion: import("@notionhq/client").Client,
+): Promise<void> {
+	const pageId = extractPageId(event.body);
+	if (!pageId) {
+		console.warn("No page id in webhook payload", { deliveryId: event.deliveryId });
+		return;
+	}
+
+	await notionApi.wait();
+	const page = await notion.pages.retrieve({ page_id: pageId });
+	if (!("properties" in page)) return;
+
+	const companyId = await resolveCompanyId(page.properties, notion);
+	if (!companyId) {
+		console.log("No related company found (direct or via contact)", { pageId });
+		return;
+	}
+
+	await notionApi.wait();
+	const company = await notion.pages.retrieve({ page_id: companyId });
+	const companyIcon = "icon" in company ? company.icon : null;
+	const iconUpdate = toIconUpdate(companyIcon);
+	if (!iconUpdate) {
+		console.log("Company has no icon", { pageId, companyId });
+		return;
+	}
+
+	await notionApi.wait();
+	await notion.pages.update({
+		page_id: pageId,
+		// Cast: the response emoji type is a specific union; the update API accepts the same set of strings at runtime.
+		icon: iconUpdate as Parameters<typeof notion.pages.update>[0]["icon"],
+	});
+
+	console.log("Synced icon", { pageId, companyId });
+}
 
 /**
  * Resolve the Company page ID to copy the icon from.
@@ -72,6 +90,7 @@ async function resolveCompanyId(
 
 	const contactIds = relationAllIds(properties, CONTACTS_RELATION_PROPERTY);
 	for (const contactId of contactIds) {
+		await notionApi.wait();
 		const contact = await notion.pages.retrieve({ page_id: contactId });
 		if (!("properties" in contact)) continue;
 		const companyId = relationFirstId(contact.properties, CONTACT_TO_COMPANY_RELATION_PROPERTY);
