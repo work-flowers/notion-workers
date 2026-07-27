@@ -87,6 +87,13 @@ block surgery via the Notion REST API, which does not accept markdown, so it
 would also mean writing our own markdown-to-blocks conversion and losing mermaid
 and table support.
 
+**Multi-select options are a closed set, not seeds.** The platform silently
+drops a value that is not a declared option in `src/options.ts` — it does not
+error and does not create the option, it just writes the cell empty. A new app
+or connection alias therefore needs a code change plus a deploy. `assertDeclared`
+exists to make that visible in the run logs; do not "simplify" it away, and do
+not assume Notion's normal auto-create behaviour applies here. It does not.
+
 **There is no single field for which apps a durable touches.**
 `current_version.app_versions` is null on every workflow observed. `Apps` is
 assembled from the trigger's `selected_api` plus the `app_key` of each bound

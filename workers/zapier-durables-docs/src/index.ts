@@ -4,7 +4,7 @@ import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
-import { SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
+import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
 import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
@@ -61,8 +61,9 @@ const zaps = worker.database("zaps", {
 			"Version ID": Schema.richText(),
 			"Durable Version": Schema.richText(),
 			// Multi-select rather than comma-separated text, so the database can
-			// be filtered and grouped by them. Options are seeded from what is
-			// live today; Notion creates any new option on write.
+			// be filtered and grouped by them. The declared options are the whole
+			// allowed set — the platform silently drops anything else — so a new
+			// app or alias needs a change in src/options.ts and a deploy.
 			Connections: Schema.multiSelect(SEEDED_CONNECTION_ALIASES),
 			Apps: Schema.multiSelect(SEEDED_APPS),
 			Dependencies: Schema.richText(),
@@ -181,8 +182,14 @@ worker.sync("zapsSync", {
 				githubUrl: repoZap?.htmlUrl ?? "",
 				versionId: workflow.current_version_id ?? "",
 				durableVersion: version?.zapier_durable_version ?? "",
-				connections: connectionAliases(version),
-				apps: await resolveApps(trigger?.selected_api, version),
+				// Warns rather than filters: an undeclared value is dropped by the
+				// platform either way, and the log is what makes it visible.
+				connections: assertDeclared("Connections", connectionAliases(version), workflow.name),
+				apps: assertDeclared(
+					"Apps",
+					await resolveApps(trigger?.selected_api, version),
+					workflow.name,
+				),
 				dependencies: formatDependencies(version),
 				steps: countSteps(version),
 				actionCallSites: countActionCallSites(version),
