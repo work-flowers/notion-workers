@@ -19,6 +19,26 @@ Run all `ntn workers` commands from inside the worker's directory — it resolve
 - Typecheck before deploying: `npm run check --workspace=<package-name>` from the root
 - Secrets: `ntn workers env` — never commit secrets
 
+### Rotating a shared credential
+
+**Environment variables live on the deployed worker, not in this repo, and are scoped to one `workerId`.** Nothing is shared or inherited between workers — several just happen to hold copies of the same credential. So rotating one means running `ntn workers env set` in *every* worker that holds it, and a worker you miss keeps using the old value until its next scheduled run, where it fails upstream rather than at deploy time. `src/zapier.ts` throws a clear error on a *missing* variable; a *stale* one just gets rejected by the API.
+
+Two credentials are duplicated widely enough to need a checklist (as of 2026-07-29):
+
+| Credential | Workers holding it |
+|---|---|
+| `ZAPIER_CLIENT_ID` + `ZAPIER_CLIENT_SECRET` | `bq-sync`, `buttondown-tools`, `email-db-updates`, `luma-guest-sync`, `meeting-note-db-updates`, `xero-invoice-sync`, `zapier-durables-docs` |
+| `NOTION_API_TOKEN` | `api-changelog-sync`, `buttondown-sync`, `create-newsletter-page`, `email-db-updates`, `harvest-sync`, `link-contact-to-company`, `luma-guest-sync`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `zapier-durables-docs` |
+
+That table is a snapshot and will drift. Regenerate it rather than trusting it — this prints every worker's variable *names* only, never a value:
+
+```shell
+cd workers && for d in */; do w="${d%/}"; [ -f "$w/workers.json" ] || continue; \
+  printf "%-28s %s\n" "$w" "$(cd "$w" && ntn workers env list 2>/dev/null | awk 'NF{print $1}' | sort | paste -sd, -)"; done
+```
+
+Connection ids (`ZAPIER_*_CONNECTION_ID`) are per worker and per connection, not shared secrets — they name a stored Zapier connection rather than carrying a credential, so they do not need rotating.
+
 ## Notion automation webhooks
 
 Workers that receive **Notion database automation** webhooks (via `worker.webhook()`) get Notion's default envelope, **not** a flat body. The triggering page is nested under `data`:
