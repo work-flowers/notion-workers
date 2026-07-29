@@ -69,7 +69,7 @@ ages runs out of its own history. A replace-mode pass would then delete exactly
 the records this database exists to preserve. Nothing in either sync ever emits
 a delete.
 
-### `errorsDelta` — failure triage
+### `errorsDelta` — failure triage, hourly
 
 Writes **Zapier Error Triage**: one row per *recurring error signature*, not per
 failed run. Zap Runs already keeps one row per run, so a per-run triage table
@@ -120,6 +120,14 @@ could not see — the delta's first cycle would overwrite `Occurrences: 14` with
 So `errorsDelta` does both jobs: with no watermark for a durable it walks that
 durable's whole history across as many executions as it takes, and afterwards
 re-scans only the one-hour overlap window.
+
+**It runs hourly**, unlike the 6h run syncs — a failure is worth seeing sooner
+than the next working day. A cycle with nothing new emits no changes, so it costs
+no Notion writes and leaves every ticket untouched. It is not free, though: every
+execution re-lists the workflows to find its own, so a quiet cycle still spends
+two Zapier calls per durable (~54 at 27 durables) to establish that nothing
+happened. That is trivial against the pacer's 30/min, but it is the figure to look
+at first if this ever needs to go sub-hourly.
 
 `Occurrences` is the true count; the `Zap Runs` relation samples the 25 most
 recent failing runs. To rebuild counts from scratch — after changing the

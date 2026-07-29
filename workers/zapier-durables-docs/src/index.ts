@@ -583,15 +583,27 @@ type TriageState = {
  * Incremental, and it never emits a delete — same reasoning as the run syncs.
  * The recovery path for a bad count or a changed signature scheme is
  * `ntn workers sync state reset errorsDelta`, which re-walks everything and
- * recomputes every count from scratch. Human triage columns survive that,
- * because the sync does not write them.
+ * recomputes every count from scratch. Triage columns survive that: they are not
+ * in the managed schema, so no sync can reach them.
  *
  * One durable per execution, chaining via hasMore.
+ *
+ * **Hourly, unlike the 6h run syncs** — a failure is worth seeing sooner than
+ * the next working day. A cycle with nothing new emits no changes at all, so it
+ * costs no Notion writes; what it does cost is two Zapier calls per durable
+ * (`listWorkflows` + one `listRunsPage`), because every execution re-lists the
+ * workflows to find its own. At 27 durables that is ~54 calls an hour to
+ * establish that nothing happened — trivial against the pacer, but not free, and
+ * it is the number to look at first if this ever needs to go sub-hourly.
+ *
+ * Note that `RUN_OVERLAP_MS` is also one hour, so at this cadence every cycle
+ * re-lists the whole previous window. That is harmless: counting is gated on the
+ * watermark, not on what the listing returns.
  */
 worker.sync("errorsDelta", {
 	database: errorTickets,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1h",
 	execute: async (state: TriageState | undefined) => {
 		const workflows = await listWorkflows(zapierApi);
 		const watermarks = { ...(state?.watermarks ?? {}) };
