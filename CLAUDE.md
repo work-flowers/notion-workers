@@ -10,6 +10,20 @@ One Notion Worker per directory under `workers/`; shared helpers in `packages/sh
 - **Lockfile**: single root `package-lock.json`. Workers must not have their own.
 - **workers.json**: per-worker `ntn` config (workspaceId + workerId). Committed. Never copy one worker's `workers.json` to another — deploys would overwrite the wrong worker.
 
+## Workspace safety (check before every deploy)
+
+**Everything in this repo targets the work.flowers workspace `9607e18f-5d82-4842-8b96-ca0d32e66011`.**
+
+The `ntn` CLI keeps a **single global login** with no per-repo binding, so a deploy silently targets whichever workspace was last authenticated. Client repos are worked on in the same sessions, and a worker has already been deployed into the wrong workspace this way.
+
+- `./scripts/deploy.sh` blocks a deploy when the resolved workspace isn't work.flowers, and when a worker's `workers.json` records a different workspace. Don't bypass it.
+- Check manually with `ntn doctor` and read the **Resolved workspace** line. It writes to **stderr**, so capture `2>&1`.
+- **Don't use `ntn whoami`** for this — it calls `/v1/users/me`, which `403`s for sessions whose token lacks user-read capability, so it reports nothing even when auth is fine.
+- Switching is `ntn logout && ntn login`, which is global — it also changes where client repos would deploy. Switch back afterwards.
+- A `workers.json` created against the wrong workspace must be deleted, not edited; redeploy with `--name` to regenerate it.
+
+Client repos carry the mirror-image guard pinned to their own workspace. Never copy IDs, page references or secrets between this repo and a client's.
+
 ## ntn CLI
 
 Run all `ntn workers` commands from inside the worker's directory — it resolves `workers.json` by CWD lookup.
