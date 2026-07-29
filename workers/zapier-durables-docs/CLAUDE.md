@@ -118,7 +118,7 @@ genuinely different apps and must stay.
 **Declaring a property in a managed schema makes it `readOnly` in Notion — a
 person cannot edit it.** Not emitting a value does not help; managed-ness follows
 the *declaration*, not the writes. Verified the hard way on 2026-07-29: `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved` were declared in the
+`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` were declared in the
 schema and deliberately never written, and the result was five read-only columns
 and a triage table nobody could triage in.
 
@@ -132,7 +132,7 @@ shape, for rebuilding by hand if this database is ever recreated:
 | `Priority` | select | `High` (red), `Medium` (yellow), `Low` (gray) |
 | `Assignee` | person | — |
 | `Resolution Notes` | text | — |
-| `Resolved` | date | — |
+| `Resolved on` | date | — Set by a Notion automation when `Status` moves to a Complete option. Distinct from the `Status` option also called `Resolved`. |
 
 **Undeclaring a property releases it rather than dropping it.** Removing those
 five from the schema and redeploying left every one in place, options and status

@@ -133,7 +133,7 @@ const runs = worker.database("runs", {
 // of src/errors.ts for why, and for what the signature is keyed on.
 //
 // **The triage workflow columns are deliberately NOT declared here.** `Status`,
-// `Priority`, `Assignee`, `Resolution Notes` and `Resolved` live on the data
+// `Priority`, `Assignee`, `Resolution Notes` and `Resolved on` live on the data
 // source as ordinary hand-made properties instead.
 //
 // Declaring a property in a managed schema is what makes Notion mark it
