@@ -92,9 +92,53 @@ export type RunDetail = {
 	/** `execution.summary.total_attempts` — whole-execution retries, distinct
 	 *  from per-operation retries, and >1 even on some successful runs. */
 	attempts: number;
+	/** `operations[].name` of the operation that did not complete. */
+	failingStep?: string;
+	/** That operation's own error — the *actual* cause. See `failureDetail`. */
+	rootCause?: string;
 };
 
-type DurableOperation = { type?: string; retry_count?: number };
+export type DurableOperation = {
+	name?: string;
+	type?: string;
+	status?: string;
+	retry_count?: number;
+	error?: { name?: string | null; message?: string | null } | null;
+};
+
+/** Anything other than this means the operation is why the run failed. */
+const COMPLETED = "completed";
+
+/**
+ * The failing operation, and what it actually said.
+ *
+ * This is the only place the real cause of a failure exists. A run's own
+ * `error.details` is frequently a summary that names no cause at all —
+ * `StepExhaustedError: Step "update-contact-record" exhausted all retry
+ * attempts.` — while the journal entry for that step carries
+ * `ZapierActionError: Action execution failed: Can't edit block that is
+ * archived. You must unarchive the block before editing.`, which is the sentence
+ * someone can act on.
+ *
+ * Zapier exposes **no stack trace** anywhere: not on the run, not on the
+ * execution, not on the operation. Do not add a column expecting one.
+ *
+ * The last non-completed operation wins. Earlier ones can be retried-then-
+ * recovered, so the tail is the one that ended the run.
+ */
+export function failureDetail(operations: DurableOperation[]): {
+	failingStep?: string;
+	rootCause?: string;
+} {
+	const failed = operations.filter((op) => op.status && op.status !== COMPLETED);
+	const last = failed[failed.length - 1];
+	if (!last) return {};
+	const parts = [last.error?.name, last.error?.message].filter(Boolean);
+	return {
+		failingStep: last.name ?? undefined,
+		rootCause: parts.length ? parts.join(": ") : undefined,
+	};
+}
 
 /**
  * Returns undefined rather than throwing: missing detail degrades a few cells
@@ -119,6 +163,7 @@ export async function fetchRunDetail(
 			operations: operations.length,
 			retries: operations.reduce((sum, op) => sum + (op.retry_count ?? 0), 0),
 			attempts: execution?.summary?.total_attempts ?? 0,
+			...failureDetail(operations),
 		};
 	} catch (error) {
 		console.warn(

@@ -8,8 +8,9 @@ the page body.
 Feasibility notes and the empirical testing behind these design decisions live
 in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worker.md).
 
-Two databases: **Zapier Zaps** (one row per deployed durable) and **Zapier Zap
-Runs** (one row per run, related back to its Zap).
+Three databases: **Zapier Zaps** (one row per deployed durable), **Zapier Zap
+Runs** (one row per run, related back to its Zap) and **Zapier Error Triage**
+(one row per recurring failure signature, related to both).
 
 ## What it does
 
@@ -67,6 +68,88 @@ backfill pattern uses replace mode so mark-and-sweep cleans up drift, but Zapier
 ages runs out of its own history. A replace-mode pass would then delete exactly
 the records this database exists to preserve. Nothing in either sync ever emits
 a delete.
+
+### `errorsDelta` — failure triage
+
+Writes **Zapier Error Triage**: one row per *recurring error signature*, not per
+failed run. Zap Runs already keeps one row per run, so a per-run triage table
+would only mirror it; what triage needs is the opposite — repeats collapsed so a
+class of failure gets looked at once.
+
+The ratio is not marginal. Of the 33 failed runs in history when this was built,
+`Could not find a Notion page id in webhook payload` alone accounted for 14,
+across six different durables. The whole set collapsed to about eight tickets.
+
+A signature is `workflowId · errorType · normalisedMessage`. Per durable, because
+the same fault in two Zaps is usually fixed in two places. `normaliseMessage`
+strips what varies between otherwise identical failures — appended JSON payload
+dumps, ids, timestamps, version numbers — while keeping quoted substrings, which
+are normally the discriminating part (`"new Date()"`,
+`Step "update-contact-record"`).
+
+**The triage workflow columns are not in the managed schema at all.** `Status`,
+`Priority`, `Assignee`, `Resolution Notes` and `Resolved` are ordinary hand-made
+properties on the data source. Declaring a property in a managed schema is what
+makes Notion mark it `readOnly`, and not writing a value does not help —
+managed-ness follows the declaration, not the writes. Declared, they produced
+five read-only columns and a triage table nobody could triage in. Their intended
+shape is recorded in this worker's `CLAUDE.md`, since it is no longer expressed
+in code.
+
+A consequence: `Status` is *empty* on a new ticket rather than "Untriaged" —
+filter on empty, or set the property's default in Notion.
+
+**The failing step is display-only, and deliberately not part of the signature.**
+It comes from the operations journal, a separate call that can fail; keying on it
+would let one transient journal failure split a ticket in two and fork its count.
+For `StepExhaustedError` this costs nothing, since the step name is already in the
+message.
+
+**Properties carry only metadata lifted off the run — diagnosis belongs in the
+page body, which an agent owns.** So this sync never writes the body.
+`pageContentMarkdown` replaces a body in its entirety, and a ticket is re-upserted
+every time its signature recurs, so emitting one would wipe the agent's analysis
+on the next recurrence. That is also why there is no `Root Cause` property:
+whatever writes the body reads it from
+`fetchRunDetail(durableRunId).rootCause` instead.
+
+**There is one sync here, not the usual backfill + delta pair.** Sync state is
+per sync key, so a separate backfill would accumulate ticket counts the delta
+could not see — the delta's first cycle would overwrite `Occurrences: 14` with
+`Occurrences: 1`. Any aggregate column forces the counting into a single state.
+So `errorsDelta` does both jobs: with no watermark for a durable it walks that
+durable's whole history across as many executions as it takes, and afterwards
+re-scans only the one-hour overlap window.
+
+`Occurrences` is the true count; the `Zap Runs` relation samples the 25 most
+recent failing runs. To rebuild counts from scratch — after changing the
+signature scheme, say — `ntn workers sync state reset errorsDelta`. Triage columns
+survive that: they are not part of the managed schema, so no sync can touch them.
+Verified end to end on 2026-07-29 by setting a `Status`, `Priority` and
+`Resolution Notes` by hand, then resetting and re-running the whole cycle.
+
+#### Why the journal matters here
+
+The run's own error is frequently a summary that names no cause:
+
+```
+StepExhaustedError: Step "update-contact-record" exhausted all retry attempts.
+```
+
+The journal entry for that same step carries the sentence someone can act on:
+
+```
+ZapierActionError: Action execution failed: Can't edit block that is archived.
+                   You must unarchive the block before editing.
+```
+
+`failureDetail` in `src/runs.ts` reads both out of `operations[]`, taking the last
+operation whose status is not `completed` — earlier ones can retry and recover.
+`Failing Step` becomes a property; the root cause is left for whatever writes the
+page body, and `fetchRunDetail(durableRunId).rootCause` is where to get it.
+
+**Zapier exposes no stack trace anywhere** — not on the run, not on the
+execution, not on the operation. Do not add a column expecting one.
 
 #### Run intensity — the operations journal
 
@@ -262,8 +345,9 @@ directory — `ntn` finds `workers.json` by walking up from the CWD.
 Then preview before letting anything write:
 
 ```shell
-ntn workers sync trigger zapsSync   --preview
-ntn workers sync trigger runsDelta  --preview
+ntn workers sync trigger zapsSync    --preview
+ntn workers sync trigger runsDelta   --preview
+ntn workers sync trigger errorsDelta --preview
 ```
 
 > Preview renders **properties only** — page content is never shown, so an empty
@@ -282,4 +366,19 @@ To redo it from scratch:
 
 ```shell
 ntn workers sync state reset runsBackfill && ntn workers sync trigger runsBackfill
+```
+
+Error triage needs no backfill — `errorsDelta` walks each durable's whole history
+on its first cycle. It is safe to trigger by hand at any time:
+
+```shell
+ntn workers sync trigger errorsDelta
+```
+
+To recompute every ticket's `Occurrences` from scratch (after changing the
+signature scheme, for instance). Human triage columns are untouched by this,
+because the sync never writes them:
+
+```shell
+ntn workers sync state reset errorsDelta && ntn workers sync trigger errorsDelta
 ```

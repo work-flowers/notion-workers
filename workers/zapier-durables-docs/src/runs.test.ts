@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	type DurableOperation,
+	failureDetail,
 	fetchRunDetail,
 	formatRunOutput,
 	normaliseStatus,
@@ -104,6 +106,56 @@ test("run detail is undefined without a durable_run_id", async () => {
 	assert.equal(await fetchRunDetail(undefined), undefined);
 	assert.equal(await fetchRunDetail(null), undefined);
 	assert.equal(await fetchRunDetail(""), undefined);
+});
+
+// The operations journal, verbatim from the run that failed with
+// `StepExhaustedError: Step "update-contact-record" exhausted all retry attempts.`
+// Note that the *useful* sentence exists only on the operation.
+const OBSERVED_JOURNAL: DurableOperation[] = [
+	{ name: "apollo-match", type: "step", status: "completed", retry_count: 0 },
+	{
+		name: "update-contact-record",
+		type: "step",
+		status: "exhausted",
+		retry_count: 5,
+		error: {
+			name: "ZapierActionError",
+			message:
+				"Action execution failed: Can't edit block that is archived. You must unarchive the block before editing.",
+		},
+	},
+];
+
+test("failure detail names the failing step and its real cause", () => {
+	const detail = failureDetail(OBSERVED_JOURNAL);
+	assert.equal(detail.failingStep, "update-contact-record");
+	assert.equal(
+		detail.rootCause,
+		"ZapierActionError: Action execution failed: Can't edit block that is archived. " +
+			"You must unarchive the block before editing.",
+	);
+});
+
+test("failure detail ignores completed operations", () => {
+	assert.deepEqual(failureDetail([OBSERVED_JOURNAL[0]]), {});
+	assert.deepEqual(failureDetail([]), {});
+});
+
+test("the last non-completed operation wins", () => {
+	// An earlier step can retry and recover; the tail is what ended the run.
+	const journal: DurableOperation[] = [
+		{ name: "first", status: "failed", error: { name: "E", message: "recovered later" } },
+		{ name: "second", status: "completed" },
+		{ name: "third", status: "exhausted", error: { name: "E", message: "this ended it" } },
+	];
+	assert.equal(failureDetail(journal).failingStep, "third");
+	assert.equal(failureDetail(journal).rootCause, "E: this ended it");
+});
+
+test("a failing operation with no error still yields its step name", () => {
+	const detail = failureDetail([{ name: "silent-step", status: "exhausted" }]);
+	assert.equal(detail.failingStep, "silent-step");
+	assert.equal(detail.rootCause, undefined);
 });
 
 test("every status option carries a colour, and they are near-distinct", () => {

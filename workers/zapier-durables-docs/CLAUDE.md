@@ -15,6 +15,14 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Zaps"** — written only through `zapsSync`.
 - **Managed database "Zapier Zap Runs"** — written through `runsBackfill` and
   `runsDelta`.
+- **Managed database "Zapier Error Triage"** — written only through
+  `errorsDelta`, and only its machine columns.
+
+There is also a **hand-made `🚨 Error Triage` data source**
+(`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
+touched by any sync. It was the schema sketch this was modelled on. If it is
+still there, it is Dennis's to delete, along with the hand-added `Error Triage`
+relation on the Zaps database.
 
 ## Non-obvious constraints
 
@@ -105,6 +113,89 @@ genuinely different apps and must stay.
 **`input` is intentionally not synced** — the whole trigger payload, up to
 ~10.6 KB, containing full Notion page objects for the webhook durables.
 
+## Error triage
+
+**Declaring a property in a managed schema makes it `readOnly` in Notion — a
+person cannot edit it.** Not emitting a value does not help; managed-ness follows
+the *declaration*, not the writes. Verified the hard way on 2026-07-29: `Status`,
+`Priority`, `Assignee`, `Resolution Notes` and `Resolved` were declared in the
+schema and deliberately never written, and the result was five read-only columns
+and a triage table nobody could triage in.
+
+So those five are **hand-made properties on the data source, not in the schema**.
+Anything a human must edit has to stay out of `worker.database()`. Their intended
+shape, for rebuilding by hand if this database is ever recreated:
+
+| Property | Type | Options |
+|---|---|---|
+| `Status` | status | To-do: `Untriaged` (gray) · In progress: `Ready for Claude` (purple), `Ready for human review` (orange), `In progress` (blue) · Complete: `Resolved` (green), `Won't fix` (brown) |
+| `Priority` | select | `High` (red), `Medium` (yellow), `Low` (gray) |
+| `Assignee` | person | — |
+| `Resolution Notes` | text | — |
+| `Resolved` | date | — |
+
+**Undeclaring a property releases it rather than dropping it.** Removing those
+five from the schema and redeploying left every one in place, options and status
+groups intact, and simply cleared `readOnly`. Nothing was lost and nothing had to
+be recreated — worth knowing before panicking about a schema change.
+
+**Properties carry only metadata lifted off the run. Diagnosis lives in the page
+body, and an agent owns that body — so `errorsDelta` must never write it.**
+`pageContentMarkdown` replaces a page body *in its entirety* (see the note on
+`zapsSync` above: it wipes appended blocks and trashes child pages). A ticket is
+re-upserted every time its signature recurs, so emitting a body here would
+destroy the agent's analysis on the next recurrence, silently and repeatedly.
+There is no `pageContentMarkdown` in the triage `changes`, and none may be added.
+
+**That is why there is no `Root Cause` property.** It was there, and was removed
+2026-07-29 at Dennis's request for exactly this reason. Whatever writes the body
+can get it from `fetchRunDetail(durableRunId).rootCause` — `failureDetail` in
+`src/runs.ts` pulls it out of the operations journal, and that is the only place
+Zapier exposes it. `runs.test.ts` records the real journal shape.
+
+**The signature is `workflowId · errorType · normalisedMessage` and must stay
+derivable from `listWorkflowRuns` alone.** The failing step comes from
+`getDurableRun`, which degrades to `undefined` on failure; keying on it would let
+one transient journal failure split a ticket in two and fork its count. It is
+display-only. There is a test asserting the signature is identical with and
+without the journal.
+
+**Every rule in `normaliseMessage` is driven by a message actually observed** —
+appended JSON payload dumps, ids, ISO and US-format timestamps, semver. Quoted
+substrings are kept deliberately: they are usually the discriminating part
+(`"new Date()"`, `Step "update-contact-record"`). If `MAX_TICKETS` eviction ever
+warns, the fix is a normalisation rule, not a bigger ceiling.
+
+**One sync, not the repo's usual backfill + delta pair — and this one cannot be
+split.** Sync state is per sync key, so a separate backfill would accumulate
+ticket counts the delta could not see, and the delta's first cycle would overwrite
+`Occurrences: 14` with `Occurrences: 1`. Any aggregate column forces the counting
+into a single state.
+
+**The watermark must not move until a durable's walk finishes.** Page one carries
+the newest run, so a partial pass already knows the eventual high-water mark;
+committing it early makes the next execution skip every older failure it has not
+reached yet. That is what `pendingWatermark` is for — do not "simplify" it into
+`watermarks`.
+
+**`Occurrences` is the count; the `Zap Runs` relation is a 25-run sample.** Do not
+present the number of links as the number of failures.
+
+**A durable with no runs at all never gets a watermark**, so it is re-walked every
+cycle. That is one list call and no failures — correct, just not free. Writing a
+watermark for it would need a sentinel, which is not worth the confusion.
+
+**A title falls back to the message when the journal named no step.** `errorType`
+is `details.name`, which for a plain `throw new Error(...)` in durable code is
+literally `"Error"` — six of the first eighteen live tickets were titled
+`<zap> · Error`, unusable in a list. Do not "tidy" the fallback away.
+
+**Zapier exposes no stack trace anywhere** — not on the run, not on the execution,
+not on the operation. Verified against a real failed run's full journal. The
+sketched schema this was modelled on had a `Stack Trace` column; the closest thing
+that actually exists is the failing operation's own error, which `failureDetail`
+extracts.
+
 ## Markdown
 
 `src/markdown.ts` is deliberately minimal and its header comment records what
@@ -139,4 +230,10 @@ npm run check --workspace=notion-worker-zapier-durables-docs
 npm test --workspace=notion-worker-zapier-durables-docs      # markdown + runs unit tests
 ntn workers sync trigger zapsSync --preview              # end to end, no writes
 ntn workers sync trigger runsDelta --preview             # run history, no writes
+ntn workers sync trigger errorsDelta --preview           # triage tickets, no writes
 ```
+
+**A new ticket's `Status` is empty, confirmed** on the first live run
+(2026-07-29): all eighteen tickets came back with `Status = null`, so the platform
+does *not* apply the status property's default to a sync-created row. Views must
+treat empty as untriaged, or the property's default has to be set in Notion.
