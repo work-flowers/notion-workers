@@ -65,6 +65,44 @@ export async function listRunsPage(
 }
 
 /**
+ * A run from `listDurableRuns` — the **account-wide** listing.
+ *
+ * Unlike `listWorkflowRuns` this takes no `workflow`, so one call sees runs
+ * across every durable. Probed live on 2026-07-29: newest-first and strictly
+ * descending, and it does cover workflow-triggered runs (three known failed
+ * `durable_run_id`s from three different durables were all present; 400 runs
+ * spanned three days, 16 of them failed).
+ *
+ * **It carries no workflow attribution.** The fields are exactly `id`, `status`,
+ * `input`, `output`, `error`, `execution_id`, `is_private`, `created_at`,
+ * `updated_at` — no `workflow_id`, no version id, no trigger id, and
+ * `getDurableRun` does not add one either. So it cannot replace the per-durable
+ * listing: a ticket needs to know which Zap it belongs to. It is only good for
+ * answering "did anything fail anywhere", which is what the triage gate asks.
+ *
+ * There is no date filter here either. `pageSize`, `cursor` and `maxItems` are
+ * the only levers on either endpoint — 0.91 dropped the `since` / `updatedAfter`
+ * parameters that earlier versions accepted and silently ignored.
+ */
+export type DurableRunSummary = {
+	id: string;
+	status: string;
+	created_at: string;
+	updated_at: string;
+};
+
+/** One newest-first page of runs across the whole account. */
+export async function listDurableRunsPage(
+	pageSize: number,
+	pacer?: Pacer,
+): Promise<DurableRunSummary[]> {
+	const sdk = experimentalSdk() as any;
+	if (pacer) await pacer.wait();
+	const response = await sdk.listDurableRuns({ pageSize });
+	return (response?.data ?? []) as DurableRunSummary[];
+}
+
+/**
  * Per-run detail, from `getDurableRun` — keyed on `durable_run_id`, not the
  * workflow run id.
  *

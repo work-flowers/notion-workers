@@ -4,8 +4,11 @@ import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 import {
 	accumulate,
+	assessGate,
 	clip,
 	evictOldest,
+	GATE_PAGE_SIZE,
+	isFullWalkDue,
 	isTriageable,
 	MAX_TICKETS,
 	occurrenceFrom,
@@ -19,6 +22,7 @@ import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
 	formatRunOutput,
+	listDurableRunsPage,
 	listRunsPage,
 	normaliseStatus,
 	RUN_STATUS_OPTIONS,
@@ -566,6 +570,13 @@ type TriageState = {
 	 *  finishes — see the note at the point of use. */
 	pendingWatermark?: string;
 	tickets?: Record<string, TicketState>;
+	/** Highest durable-run `updated_at` the account-wide gate has seen. Separate
+	 *  from `watermarks`: those are per workflow and keyed on workflow-run
+	 *  timestamps, this is one account-wide baseline on durable-run timestamps. */
+	gateWatermark?: string;
+	/** When the last full walk started. The gate is overruled once this goes
+	 *  stale, so a gate that wrongly clears costs latency, not a lost ticket. */
+	lastFullWalkAt?: string;
 };
 
 /**
@@ -589,30 +600,65 @@ type TriageState = {
  * One durable per execution, chaining via hasMore.
  *
  * **Hourly, unlike the 6h run syncs** — a failure is worth seeing sooner than
- * the next working day. A cycle with nothing new emits no changes at all, so it
- * costs no Notion writes; what it does cost is two Zapier calls per durable
- * (`listWorkflows` + one `listRunsPage`), because every execution re-lists the
- * workflows to find its own. At 27 durables that is ~54 calls an hour to
- * establish that nothing happened — trivial against the pacer, but not free, and
- * it is the number to look at first if this ever needs to go sub-hourly.
+ * the next working day.
  *
- * Note that `RUN_OVERLAP_MS` is also one hour, so at this cadence every cycle
- * re-lists the whole previous window. That is harmless: counting is gated on the
- * watermark, not on what the listing returns.
+ * A walking cycle costs two Zapier calls per durable (`listWorkflows` + one
+ * `listRunsPage`), because every execution re-lists the workflows to find its
+ * own: ~54 at 27 durables. Hourly, most of those cycles would find nothing, so
+ * the gate above short-circuits them for one call. See the note on the gate in
+ * src/errors.ts for why it is advisory rather than authoritative.
+ *
+ * Note that `RUN_OVERLAP_MS` is also one hour, so at this cadence a walking
+ * cycle re-lists the whole previous window. That is harmless: counting is gated
+ * on the watermark, not on what the listing returns.
  */
 worker.sync("errorsDelta", {
 	database: errorTickets,
 	mode: "incremental",
 	schedule: "1h",
 	execute: async (state: TriageState | undefined) => {
-		const workflows = await listWorkflows(zapierApi);
 		const watermarks = { ...(state?.watermarks ?? {}) };
 		const tickets = { ...(state?.tickets ?? {}) };
 		const index = state?.index ?? 0;
+		let gateWatermark = state?.gateWatermark;
+		let lastFullWalkAt = state?.lastFullWalkAt;
+
+		// -- The gate ---------------------------------------------------------
+		// Once per cycle, and deliberately *before* `listWorkflows`, so a quiet
+		// cycle costs one upstream call rather than ~54. Skipped on a resumed
+		// cycle (index > 0), which is already mid-walk.
+		if (index === 0) {
+			const recent = await listDurableRunsPage(GATE_PAGE_SIZE, zapierApi);
+			const verdict = assessGate(recent, gateWatermark);
+			if (verdict.highest) gateWatermark = verdict.highest;
+
+			// Overruled on a schedule: the gate is an optimisation, and its
+			// coverage across all durables has not been proven.
+			const overdue = isFullWalkDue(lastFullWalkAt);
+			if (verdict.conclusive && !verdict.hasNewFailures && !overdue) {
+				return {
+					changes: [],
+					hasMore: false,
+					nextState: { watermarks, tickets, gateWatermark, lastFullWalkAt },
+				};
+			}
+
+			// Stamped at the start, not the end. A cycle interrupted mid-walk
+			// resumes from `index` on the next tick, so the walk still completes,
+			// and stamping on completion would need another state field to
+			// distinguish "resumed" from "started".
+			lastFullWalkAt = new Date().toISOString();
+		}
+
+		const workflows = await listWorkflows(zapierApi);
 
 		// Cycle complete. Dropping `index` resets it for the next scheduled run.
 		if (index >= workflows.length) {
-			return { changes: [], hasMore: false, nextState: { watermarks, tickets } };
+			return {
+				changes: [],
+				hasMore: false,
+				nextState: { watermarks, tickets, gateWatermark, lastFullWalkAt },
+			};
 		}
 
 		const workflow = workflows[index];
@@ -722,8 +768,16 @@ worker.sync("errorsDelta", {
 			changes,
 			hasMore: true,
 			nextState: walkComplete
-				? { watermarks, tickets, index: index + 1 }
-				: { watermarks, tickets, index, cursor, pendingWatermark: highest },
+				? { watermarks, tickets, gateWatermark, lastFullWalkAt, index: index + 1 }
+				: {
+						watermarks,
+						tickets,
+						gateWatermark,
+						lastFullWalkAt,
+						index,
+						cursor,
+						pendingWatermark: highest,
+					},
 		};
 	},
 });

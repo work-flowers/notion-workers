@@ -185,6 +185,37 @@ present the number of links as the number of failures.
 cycle. That is one list call and no failures — correct, just not free. Writing a
 watermark for it would need a sentinel, which is not worth the confusion.
 
+**`listDurableRuns` is account-wide but carries no workflow attribution.** It
+takes no `workflow` argument and returns runs across every durable, newest-first —
+verified live 2026-07-29, including that it covers workflow-triggered runs. But its
+fields are exactly `id`, `status`, `input`, `output`, `error`, `execution_id`,
+`is_private`, `created_at`, `updated_at`. No `workflow_id`, no version id, no
+trigger id, and `getDurableRun` adds none. **It therefore cannot replace the
+per-durable `listWorkflowRuns` walk** — a ticket must know which Zap it belongs to.
+Do not "optimise" the walk away on the strength of this endpoint existing.
+
+**Neither endpoint has a date filter.** `pageSize`, `cursor`, `maxItems` only. 0.91
+dropped the `since` / `updatedAfter` parameters that earlier versions accepted and
+silently ignored, so there is nothing left to be misled by.
+
+**The gate is advisory and must stay that way.** `listDurableRuns` is used only to
+decide whether an hourly cycle is worth walking (1 call instead of ~54). A false
+negative would mean a real failure never gets a ticket, and coverage was only
+spot-checked across three of 27 durables — so the walk happens unconditionally
+every `FULL_WALK_INTERVAL_MS` regardless of the verdict. Do not remove that
+override, and do not treat `conclusive` as optional: no watermark yet, and a full
+page that never reached back to the watermark, both have to walk.
+
+**`gateWatermark` is not one of the `watermarks`.** Those are per workflow and keyed
+on *workflow-run* timestamps; `gateWatermark` is a single account-wide baseline on
+*durable-run* timestamps. Different objects, different id spaces — do not merge
+them.
+
+**`lastFullWalkAt` is stamped when a walk starts, not when it finishes.** A cycle
+interrupted mid-walk resumes from `index` on the next tick, so the walk still
+completes; stamping on completion would need another state field to tell "resumed"
+from "started".
+
 **A title falls back to the message when the journal named no step.** `errorType`
 is `details.name`, which for a plain `throw new Error(...)` in durable code is
 literally `"Error"` — six of the first eighteen live tickets were titled

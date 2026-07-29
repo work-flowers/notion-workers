@@ -123,11 +123,39 @@ re-scans only the one-hour overlap window.
 
 **It runs hourly**, unlike the 6h run syncs — a failure is worth seeing sooner
 than the next working day. A cycle with nothing new emits no changes, so it costs
-no Notion writes and leaves every ticket untouched. It is not free, though: every
-execution re-lists the workflows to find its own, so a quiet cycle still spends
-two Zapier calls per durable (~54 at 27 durables) to establish that nothing
-happened. That is trivial against the pacer's 30/min, but it is the figure to look
-at first if this ever needs to go sub-hourly.
+no Notion writes and leaves every ticket untouched.
+
+#### The gate
+
+A *walking* cycle costs two Zapier calls per durable — `listWorkflows` plus one
+`listRunsPage`, because every execution re-lists the workflows to find its own —
+so ~54 at 27 durables. Hourly, most cycles would spend all of that to discover
+nothing happened.
+
+`listDurableRuns` answers "did anything fail anywhere" in **one** call. It takes no
+`workflow`, returns newest-first across the whole account, and carries `status`
+and `error`. So the sync asks it first and skips the walk when the answer is no: a
+quiet cycle costs 1 call instead of ~54.
+
+It cannot replace the per-durable listing. Its fields are exactly `id`, `status`,
+`input`, `output`, `error`, `execution_id`, `is_private`, `created_at`,
+`updated_at` — **no workflow attribution at all**, and `getDurableRun` doesn't add
+any. A ticket has to know which Zap it belongs to, so the walk is still the only
+way to build one.
+
+**The gate is advisory, never authoritative.** A false negative would mean a real
+failure never gets a ticket, and coverage was only spot-checked across three of 27
+durables. So the sync walks unconditionally every `FULL_WALK_INTERVAL_MS` (6h)
+whatever the gate says — a gate miss then costs latency, not a lost ticket. It
+also treats two cases as inconclusive and walks anyway: no watermark yet (first
+cycle after a deploy or state reset), and a *full* page whose oldest entry is
+still newer than the watermark, meaning it never reached back far enough to rule
+out failures in the gap. At ~5.5 runs/hour observed, one 100-run page covers ~18
+hours, so the second case should be rare.
+
+There is **no date filter on either endpoint** — `pageSize`, `cursor` and
+`maxItems` are the only levers. 0.91 dropped the `since` / `updatedAfter`
+parameters that earlier versions accepted and silently ignored.
 
 `Occurrences` is the true count; the `Zap Runs` relation samples the 25 most
 recent failing runs. To rebuild counts from scratch — after changing the

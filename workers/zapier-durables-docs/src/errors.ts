@@ -263,6 +263,76 @@ export function ticketTitle(ticket: TicketState): string {
 	return `${ticket.zapName} · ${ticket.errorType}: ${summary}`;
 }
 
+// -- The account-wide gate --------------------------------------------------
+//
+// A cycle walks every durable, and every execution re-lists the workflows to
+// find its own, so a cycle costs two upstream calls per durable — ~54 at 27
+// durables — even when nothing has failed. Hourly, that is a lot of asking to be
+// told nothing happened.
+//
+// `listDurableRuns` answers "did anything fail anywhere" in one call. It cannot
+// replace the per-durable walk, because it carries no workflow attribution (see
+// `DurableRunSummary`), but it can decide whether the walk is worth doing.
+//
+// **The gate is advisory, never authoritative.** A false negative would mean a
+// real failure never gets a ticket, and coverage was only spot-checked across
+// three of 27 durables. So the sync walks unconditionally every
+// `FULL_WALK_INTERVAL_MS` regardless of what the gate says: a gate miss then
+// costs latency, not a lost ticket.
+
+/** One page is the whole gate. At ~5.5 runs/hour observed, 100 covers ~18 hours,
+ *  so an hourly gate has a wide margin before it goes inconclusive. */
+export const GATE_PAGE_SIZE = 100;
+
+/** How stale the last full walk may get before the gate is overruled. */
+export const FULL_WALK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+export type GateVerdict = {
+	/** Something failed after the watermark. */
+	hasNewFailures: boolean;
+	/** Whether the page reached back as far as the watermark. When false, the
+	 *  absence of failures proves nothing and the walk must go ahead. */
+	conclusive: boolean;
+	/** Highest `updated_at` in the page; empty for an empty page. */
+	highest: string;
+};
+
+export function assessGate(
+	runs: Array<{ status: string; updated_at: string }>,
+	watermark: string | undefined,
+	pageSize = GATE_PAGE_SIZE,
+): GateVerdict {
+	let highest = "";
+	let oldest = "";
+	for (const run of runs) {
+		if (run.updated_at > highest) highest = run.updated_at;
+		if (!oldest || run.updated_at < oldest) oldest = run.updated_at;
+	}
+
+	// No baseline to compare against — the first cycle after a deploy or a state
+	// reset must walk, or it would clear itself having checked nothing.
+	if (!watermark) return { hasNewFailures: true, conclusive: false, highest };
+
+	const hasNewFailures = runs.some(
+		(run) => run.updated_at > watermark && isTriageable(run.status),
+	);
+
+	// Newest-first, so a *full* page whose oldest entry is still newer than the
+	// watermark never reached it, and failures may sit in the gap. Paging further
+	// would work; walking is simpler and this is the rare case.
+	const reachedBack = runs.length < pageSize || oldest <= watermark;
+
+	return { hasNewFailures, conclusive: reachedBack, highest };
+}
+
+/** `now` is injectable for tests; production passes the default. */
+export function isFullWalkDue(lastFullWalkAt: string | undefined, now = Date.now()): boolean {
+	if (!lastFullWalkAt) return true;
+	const at = Date.parse(lastFullWalkAt);
+	if (!Number.isFinite(at)) return true;
+	return now - at >= FULL_WALK_INTERVAL_MS;
+}
+
 // -- Triage workflow columns ------------------------------------------------
 //
 // There deliberately are none here.
