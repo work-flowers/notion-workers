@@ -88,7 +88,7 @@ are normally the discriminating part (`"new Date()"`,
 `Step "update-contact-record"`).
 
 **The triage workflow columns are not in the managed schema at all.** `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved` are ordinary hand-made
+`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` are ordinary hand-made
 properties on the data source. Declaring a property in a managed schema is what
 makes Notion mark it `readOnly`, and not writing a value does not help —
 managed-ness follows the declaration, not the writes. Declared, they produced

@@ -337,7 +337,7 @@ export function isFullWalkDue(lastFullWalkAt: string | undefined, now = Date.now
 //
 // There deliberately are none here.
 //
-// `Status`, `Priority`, `Assignee`, `Resolution Notes` and `Resolved` are
+// `Status`, `Priority`, `Assignee`, `Resolution Notes` and `Resolved on` are
 // hand-made properties on the data source, not part of the managed schema — a
 // declared property is `readOnly` in Notion and cannot be edited by a person,
 // which is the one thing a triage column has to be. See the note above the
