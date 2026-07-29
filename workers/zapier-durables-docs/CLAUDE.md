@@ -185,6 +185,35 @@ present the number of links as the number of failures.
 cycle. That is one list call and no failures — correct, just not free. Writing a
 watermark for it would need a sentinel, which is not worth the confusion.
 
+**A durable *is* a workflow, but a durable *run* is not a workflow run.** This is
+the easiest thing here to get wrong. There is no separate list of durables —
+`listWorkflows` returns them — so at the definition level the two words are
+interchangeable. Runs are two different objects:
+
+| | `listWorkflowRuns` / `getWorkflowRun` | `listDurableRuns` / `getDurableRun` |
+|---|---|---|
+| What | a triggered execution of a deployed workflow | the execution engine's own record |
+| Id | `id` | `id`, which the workflow run calls `durable_run_id` |
+| Knows its workflow | yes (`workflow_version_id`, and you queried per workflow) | **no** |
+| Carries | trigger/version ids, status, input, output, error | status, input, output, error, the operations journal |
+
+They are 1:1 — verified: workflow run `019f9e7d-f2ec…` carries `durable_run_id
+019f9e7d-f468…`, and `getDurableRun` on that id returns it. But the link points
+one way only, workflow run → durable run.
+
+**There is no route back.** `getWorkflowRun` given a *durable* run id returns
+`{id: null, durable_run_id: null, workflow_version_id: null}` — silent nulls, not
+a 404, so a mistake here fails quietly. And `getWorkflowVersion` needs
+`{workflow, version}` *both*, so a `workflow_version_id` cannot be resolved to a
+workflow either. Attribution therefore requires the per-durable walk. Probed
+2026-07-29; do not re-litigate it without re-probing.
+
+The reason is structural: the engine also runs durables invoked directly
+(`runDurable`, `cancelDurableRun`), which have no workflow at all, so a durable run
+cannot carry a mandatory workflow reference. A side effect is that an ad-hoc
+`runDurable` failure will open the gate and trigger a walk that finds nothing to
+ticket — a wasted walk, never wrong data.
+
 **`listDurableRuns` is account-wide but carries no workflow attribution.** It
 takes no `workflow` argument and returns runs across every durable, newest-first —
 verified live 2026-07-29, including that it covers workflow-triggered runs. But its
