@@ -65,6 +65,44 @@ export async function listRunsPage(
 }
 
 /**
+ * A run from `listDurableRuns` — the **account-wide** listing.
+ *
+ * Unlike `listWorkflowRuns` this takes no `workflow`, so one call sees runs
+ * across every durable. Probed live on 2026-07-29: newest-first and strictly
+ * descending, and it does cover workflow-triggered runs (three known failed
+ * `durable_run_id`s from three different durables were all present; 400 runs
+ * spanned three days, 16 of them failed).
+ *
+ * **It carries no workflow attribution.** The fields are exactly `id`, `status`,
+ * `input`, `output`, `error`, `execution_id`, `is_private`, `created_at`,
+ * `updated_at` — no `workflow_id`, no version id, no trigger id, and
+ * `getDurableRun` does not add one either. So it cannot replace the per-durable
+ * listing: a ticket needs to know which Zap it belongs to. It is only good for
+ * answering "did anything fail anywhere", which is what the triage gate asks.
+ *
+ * There is no date filter here either. `pageSize`, `cursor` and `maxItems` are
+ * the only levers on either endpoint — 0.91 dropped the `since` / `updatedAfter`
+ * parameters that earlier versions accepted and silently ignored.
+ */
+export type DurableRunSummary = {
+	id: string;
+	status: string;
+	created_at: string;
+	updated_at: string;
+};
+
+/** One newest-first page of runs across the whole account. */
+export async function listDurableRunsPage(
+	pageSize: number,
+	pacer?: Pacer,
+): Promise<DurableRunSummary[]> {
+	const sdk = experimentalSdk() as any;
+	if (pacer) await pacer.wait();
+	const response = await sdk.listDurableRuns({ pageSize });
+	return (response?.data ?? []) as DurableRunSummary[];
+}
+
+/**
  * Per-run detail, from `getDurableRun` — keyed on `durable_run_id`, not the
  * workflow run id.
  *
@@ -92,9 +130,53 @@ export type RunDetail = {
 	/** `execution.summary.total_attempts` — whole-execution retries, distinct
 	 *  from per-operation retries, and >1 even on some successful runs. */
 	attempts: number;
+	/** `operations[].name` of the operation that did not complete. */
+	failingStep?: string;
+	/** That operation's own error — the *actual* cause. See `failureDetail`. */
+	rootCause?: string;
 };
 
-type DurableOperation = { type?: string; retry_count?: number };
+export type DurableOperation = {
+	name?: string;
+	type?: string;
+	status?: string;
+	retry_count?: number;
+	error?: { name?: string | null; message?: string | null } | null;
+};
+
+/** Anything other than this means the operation is why the run failed. */
+const COMPLETED = "completed";
+
+/**
+ * The failing operation, and what it actually said.
+ *
+ * This is the only place the real cause of a failure exists. A run's own
+ * `error.details` is frequently a summary that names no cause at all —
+ * `StepExhaustedError: Step "update-contact-record" exhausted all retry
+ * attempts.` — while the journal entry for that step carries
+ * `ZapierActionError: Action execution failed: Can't edit block that is
+ * archived. You must unarchive the block before editing.`, which is the sentence
+ * someone can act on.
+ *
+ * Zapier exposes **no stack trace** anywhere: not on the run, not on the
+ * execution, not on the operation. Do not add a column expecting one.
+ *
+ * The last non-completed operation wins. Earlier ones can be retried-then-
+ * recovered, so the tail is the one that ended the run.
+ */
+export function failureDetail(operations: DurableOperation[]): {
+	failingStep?: string;
+	rootCause?: string;
+} {
+	const failed = operations.filter((op) => op.status && op.status !== COMPLETED);
+	const last = failed[failed.length - 1];
+	if (!last) return {};
+	const parts = [last.error?.name, last.error?.message].filter(Boolean);
+	return {
+		failingStep: last.name ?? undefined,
+		rootCause: parts.length ? parts.join(": ") : undefined,
+	};
+}
 
 /**
  * Returns undefined rather than throwing: missing detail degrades a few cells
@@ -119,6 +201,7 @@ export async function fetchRunDetail(
 			operations: operations.length,
 			retries: operations.reduce((sum, op) => sum + (op.retry_count ?? 0), 0),
 			attempts: execution?.summary?.total_attempts ?? 0,
+			...failureDetail(operations),
 		};
 	} catch (error) {
 		console.warn(

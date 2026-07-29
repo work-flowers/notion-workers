@@ -2,6 +2,19 @@ import { createHash } from "node:crypto";
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
+import {
+	accumulate,
+	assessGate,
+	clip,
+	evictOldest,
+	GATE_PAGE_SIZE,
+	isFullWalkDue,
+	isTriageable,
+	MAX_TICKETS,
+	occurrenceFrom,
+	ticketTitle,
+	type TicketState,
+} from "./errors.js";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "./markdown.js";
 import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
@@ -9,6 +22,7 @@ import { createUserResolver } from "./people.js";
 import {
 	fetchRunDetail,
 	formatRunOutput,
+	listDurableRunsPage,
 	listRunsPage,
 	normaliseStatus,
 	RUN_STATUS_OPTIONS,
@@ -110,6 +124,65 @@ const runs = worker.database("runs", {
 			"Duration (s)": Schema.number(),
 			Started: Schema.date(),
 			Updated: Schema.date(),
+		},
+	},
+});
+
+// -- Failure triage ---------------------------------------------------------
+// One row per *recurring error signature*, not per failed run — see the header
+// of src/errors.ts for why, and for what the signature is keyed on.
+//
+// **The triage workflow columns are deliberately NOT declared here.** `Status`,
+// `Priority`, `Assignee`, `Resolution Notes` and `Resolved` live on the data
+// source as ordinary hand-made properties instead.
+//
+// Declaring a property in a managed schema is what makes Notion mark it
+// `readOnly: true` — verified 2026-07-29, when all five were declared here and
+// nobody could set a status. Simply never emitting a value does *not* help:
+// managed-ness follows the declaration, not the writes. So anything a human has
+// to edit must stay out of this schema.
+//
+// The cost is that those five are not reproducible from code. Their intended
+// shape is recorded in this worker's CLAUDE.md; if this database is ever
+// recreated they have to be added back by hand.
+//
+// **Properties hold only metadata lifted off the run. Diagnosis goes in the page
+// body, which an agent owns — so this sync must never write the body.**
+// `pageContentMarkdown` replaces a page body *in its entirety*: verified
+// elsewhere in this worker that it wipes appended blocks and moves child pages to
+// trash. A ticket is re-upserted every time its signature recurs, so emitting a
+// body here would destroy the agent's analysis on the next recurrence, silently
+// and repeatedly. There is deliberately no `pageContentMarkdown` in `changes`
+// below, and none may be added.
+//
+// This is why there is no `Root Cause` property. The root cause is available to
+// whatever writes the body via `fetchRunDetail(durableRunId).rootCause`, which
+// reads it out of the operations journal — see `failureDetail` in src/runs.ts.
+const errorTickets = worker.database("errors", {
+	type: "managed",
+	initialTitle: "Zapier Error Triage",
+	primaryKeyProperty: "Signature",
+	schema: {
+		properties: {
+			Ticket: Schema.title(),
+			// The grouping key. Kept as a visible column rather than hashed, so it
+			// is possible to see *why* two failures landed on one ticket.
+			Signature: Schema.richText(),
+			Zap: Schema.relation("zaps", { twoWay: true, relatedPropertyName: "Error Tickets" }),
+			// A sample of the failing runs, newest first — capped, so `Occurrences`
+			// is the count, not the number of links here.
+			"Zap Runs": Schema.relation("runs", {
+				twoWay: true,
+				relatedPropertyName: "Triage Ticket",
+			}),
+			"Error Type": Schema.richText(),
+			"Error Message": Schema.richText(),
+			// The name of the operation that did not complete, from the journal.
+			// Metadata, not diagnosis — see the note below on Root Cause.
+			"Failing Step": Schema.richText(),
+			Occurrences: Schema.number(),
+			"First Seen": Schema.date(),
+			"Last Seen": Schema.date(),
 		},
 	},
 });
@@ -467,5 +540,244 @@ worker.sync("runsDelta", {
 
 		// One durable per execution, chaining until all are done. See the header.
 		return { changes, hasMore: true, nextState: { watermarks, index: index + 1 } };
+	},
+});
+
+// -- Failure triage sync ----------------------------------------------------
+
+/**
+ * Journal fetches per execution. Failures are rare — 33 in the first two months
+ * — so this only ever binds on the initial walk through history. When it does,
+ * the newest failures win (they are what someone is looking at) and the rest are
+ * still counted, just without `Failing Step` / `Root Cause` until they recur.
+ */
+const MAX_TRIAGE_DETAIL_FETCHES = 40;
+
+/**
+ * Pages per execution while walking a durable's whole history for the first
+ * time. Deliberately far below `MAX_PAGES_PER_EXECUTION`: the initial pass also
+ * fetches a journal per failure, and `runsDelta` has already been timed out once
+ * at ~75 upstream calls in one execution. The walk resumes from the cursor.
+ */
+const INITIAL_PAGES_PER_EXECUTION = 4;
+
+type TriageState = {
+	watermarks?: Record<string, string>;
+	index?: number;
+	cursor?: string;
+	/** Highest `updated_at` seen so far in an in-progress multi-execution walk.
+	 *  Held separately because the real watermark must not move until the walk
+	 *  finishes — see the note at the point of use. */
+	pendingWatermark?: string;
+	tickets?: Record<string, TicketState>;
+	/** Highest durable-run `updated_at` the account-wide gate has seen. Separate
+	 *  from `watermarks`: those are per workflow and keyed on workflow-run
+	 *  timestamps, this is one account-wide baseline on durable-run timestamps. */
+	gateWatermark?: string;
+	/** When the last full walk started. The gate is overruled once this goes
+	 *  stale, so a gate that wrongly clears costs latency, not a lost ticket. */
+	lastFullWalkAt?: string;
+};
+
+/**
+ * There is deliberately **one** sync here, not the repo's usual
+ * backfill + delta pair.
+ *
+ * Sync state is per sync key, so a separate backfill would accumulate its own
+ * ticket counts that the delta could not see — the delta's first cycle would
+ * then overwrite `Occurrences: 14` with `Occurrences: 1`. Any aggregate column
+ * forces the counting into a single state. So this sync does both jobs: with no
+ * watermark for a durable it walks that durable's entire history (across as many
+ * executions as it takes, resuming from the cursor), and afterwards it re-scans
+ * only the recent overlap window.
+ *
+ * Incremental, and it never emits a delete — same reasoning as the run syncs.
+ * The recovery path for a bad count or a changed signature scheme is
+ * `ntn workers sync state reset errorsDelta`, which re-walks everything and
+ * recomputes every count from scratch. Triage columns survive that: they are not
+ * in the managed schema, so no sync can reach them.
+ *
+ * One durable per execution, chaining via hasMore.
+ *
+ * **Hourly, unlike the 6h run syncs** — a failure is worth seeing sooner than
+ * the next working day.
+ *
+ * A walking cycle costs two Zapier calls per durable (`listWorkflows` + one
+ * `listRunsPage`), because every execution re-lists the workflows to find its
+ * own: ~54 at 27 durables. Hourly, most of those cycles would find nothing, so
+ * the gate above short-circuits them for one call. See the note on the gate in
+ * src/errors.ts for why it is advisory rather than authoritative.
+ *
+ * Note that `RUN_OVERLAP_MS` is also one hour, so at this cadence a walking
+ * cycle re-lists the whole previous window. That is harmless: counting is gated
+ * on the watermark, not on what the listing returns.
+ */
+worker.sync("errorsDelta", {
+	database: errorTickets,
+	mode: "incremental",
+	schedule: "1h",
+	execute: async (state: TriageState | undefined) => {
+		const watermarks = { ...(state?.watermarks ?? {}) };
+		const tickets = { ...(state?.tickets ?? {}) };
+		const index = state?.index ?? 0;
+		let gateWatermark = state?.gateWatermark;
+		let lastFullWalkAt = state?.lastFullWalkAt;
+
+		// -- The gate ---------------------------------------------------------
+		// Once per cycle, and deliberately *before* `listWorkflows`, so a quiet
+		// cycle costs one upstream call rather than ~54. Skipped on a resumed
+		// cycle (index > 0), which is already mid-walk.
+		if (index === 0) {
+			const recent = await listDurableRunsPage(GATE_PAGE_SIZE, zapierApi);
+			const verdict = assessGate(recent, gateWatermark);
+			if (verdict.highest) gateWatermark = verdict.highest;
+
+			// Overruled on a schedule: the gate is an optimisation, and its
+			// coverage across all durables has not been proven.
+			const overdue = isFullWalkDue(lastFullWalkAt);
+			if (verdict.conclusive && !verdict.hasNewFailures && !overdue) {
+				return {
+					changes: [],
+					hasMore: false,
+					nextState: { watermarks, tickets, gateWatermark, lastFullWalkAt },
+				};
+			}
+
+			// Stamped at the start, not the end. A cycle interrupted mid-walk
+			// resumes from `index` on the next tick, so the walk still completes,
+			// and stamping on completion would need another state field to
+			// distinguish "resumed" from "started".
+			lastFullWalkAt = new Date().toISOString();
+		}
+
+		const workflows = await listWorkflows(zapierApi);
+
+		// Cycle complete. Dropping `index` resets it for the next scheduled run.
+		if (index >= workflows.length) {
+			return {
+				changes: [],
+				hasMore: false,
+				nextState: { watermarks, tickets, gateWatermark, lastFullWalkAt },
+			};
+		}
+
+		const workflow = workflows[index];
+		const previous = watermarks[workflow.id];
+		const initialWalk = !previous;
+		const floor = previous
+			? new Date(Date.parse(previous) - RUN_OVERLAP_MS).toISOString()
+			: undefined;
+
+		const failures: WorkflowRun[] = [];
+		let cursor = state?.cursor;
+		let pages = 0;
+		let highest = state?.pendingWatermark ?? previous ?? "";
+		let done = false;
+		const pageBudget = initialWalk ? INITIAL_PAGES_PER_EXECUTION : MAX_PAGES_PER_EXECUTION;
+
+		do {
+			const page = await listRunsPage(workflow.id, { cursor, pageSize: RUN_PAGE_SIZE }, zapierApi);
+			for (const run of page.runs) {
+				if (floor && run.updated_at < floor) {
+					done = true; // newest-first, so everything after this is older
+					continue;
+				}
+				if (run.updated_at > highest) highest = run.updated_at;
+				if (!isTriageable(run.status)) continue;
+				// Count each failure exactly once. The overlap window re-lists runs
+				// that were already counted, and only a genuine mutation pushes
+				// `updated_at` past the watermark we counted them at.
+				if (previous && run.updated_at <= previous) continue;
+				failures.push(run);
+			}
+			cursor = page.nextCursor;
+			pages++;
+		} while (cursor && !done && pages < pageBudget);
+
+		const walkComplete = !cursor || done;
+
+		// The watermark must not move until the durable is fully walked. Page one
+		// carries the newest run, so a partial pass already knows the eventual
+		// high-water mark — committing it early would make the next execution skip
+		// every older failure it has not reached yet.
+		if (walkComplete) {
+			if (highest) watermarks[workflow.id] = highest;
+		}
+
+		if (failures.length > MAX_TRIAGE_DETAIL_FETCHES) {
+			console.warn(
+				`${workflow.name}: ${failures.length} new failures; fetching the operations journal ` +
+					`for the newest ${MAX_TRIAGE_DETAIL_FETCHES}. The rest are counted but omit ` +
+					`Failing Step and Root Cause until they recur.`,
+			);
+		}
+
+		// Newest-first from the API, and pushed in order, so the cap keeps the
+		// failures someone is most likely to be looking at.
+		const touched = new Set<string>();
+		for (const [i, run] of failures.entries()) {
+			const detail =
+				i < MAX_TRIAGE_DETAIL_FETCHES
+					? await fetchRunDetail(run.durable_run_id, zapierApi)
+					: undefined;
+			const occurrence = occurrenceFrom(run, workflow.id, workflow.name, detail);
+			accumulate(tickets, occurrence);
+			touched.add(occurrence.signature);
+		}
+
+		const changes = [...touched].map((signature) => {
+			const ticket = tickets[signature];
+			return {
+				type: "upsert" as const,
+				key: signature,
+				icon: Builder.emojiIcon("🚨"),
+				properties: {
+					Ticket: Builder.title(ticketTitle(ticket)),
+					Signature: Builder.richText(signature),
+					// Both relations match on the related row's primary key, so they
+					// set themselves with no lookup.
+					Zap: [Builder.relation(ticket.workflowId)],
+					"Zap Runs": ticket.runIds.map((runId) => Builder.relation(runId)),
+					"Error Type": Builder.richText(ticket.errorType),
+					"Error Message": Builder.richText(clip(ticket.message)),
+					Occurrences: Builder.number(ticket.count),
+					"First Seen": Builder.dateTime(ticket.firstSeen),
+					"Last Seen": Builder.dateTime(ticket.lastSeen),
+					// Omitted rather than blanked when the journal was unavailable, so
+					// a transient `getDurableRun` failure cannot erase a step name an
+					// earlier occurrence established.
+					...(ticket.step ? { "Failing Step": Builder.richText(ticket.step) } : {}),
+				},
+			};
+		});
+
+		// After building changes, so an evicted ticket is still written out once
+		// more before it stops accumulating.
+		const evicted = evictOldest(tickets);
+		if (evicted.length > 0) {
+			console.warn(
+				`Ticket state hit ${MAX_TICKETS} signatures; evicted the ${evicted.length} ` +
+					`least-recently-seen. Their Notion rows remain but stop counting. This ` +
+					`usually means normaliseMessage is not stripping something variable: ` +
+					`${evicted.slice(0, 3).join(" | ")}`,
+			);
+		}
+
+		// Resume mid-durable if it paged out, otherwise advance to the next.
+		return {
+			changes,
+			hasMore: true,
+			nextState: walkComplete
+				? { watermarks, tickets, gateWatermark, lastFullWalkAt, index: index + 1 }
+				: {
+						watermarks,
+						tickets,
+						gateWatermark,
+						lastFullWalkAt,
+						index,
+						cursor,
+						pendingWatermark: highest,
+					},
+		};
 	},
 });

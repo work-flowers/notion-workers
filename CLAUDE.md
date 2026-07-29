@@ -9,6 +9,7 @@ One Notion Worker per directory under `workers/`; shared helpers in `packages/sh
 - **Package names**: each worker's `package.json` name is `notion-worker-<dirname>` (workspace names must be unique; freshly scaffolded workers all ship as `@notionhq/workers-template` and must be renamed).
 - **Lockfile**: single root `package-lock.json`. Workers must not have their own.
 - **workers.json**: per-worker `ntn` config (workspaceId + workerId). Committed. Never copy one worker's `workers.json` to another — deploys would overwrite the wrong worker.
+- **Managed schemas make properties read-only. Anything a human must edit has to stay out of `worker.database()`.** Declaring a property is what marks it `readOnly: true` in Notion — *not* whether the sync ever writes a value to it. Declared and never written still means nobody can set it in the UI. Human-owned columns (a triage status, an assignee, notes) therefore have to be added to the data source by hand and documented in the worker's own `CLAUDE.md`, since they are then not reproducible from code. Undeclaring a property does *not* drop it: it stays, keeps its values, options and status groups, and simply loses `readOnly`. (Learned on `zapier-durables-docs`, 2026-07-29.)
 
 ## ntn CLI
 
