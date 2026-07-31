@@ -237,9 +237,13 @@ export async function handlePageCreated(
 		}
 	}
 
-	if (event?.iCalUID) {
+	// Keyed on the occurrence id (`event.id`), never the iCalUID — the iCalUID is
+	// shared by every occurrence of a series, and keying on it silently broke the
+	// downstream reschedule Zap for five months. See LogRow in meetingNoteIdsTable.
+	if (event?.id) {
 		try {
 			await upsertMeetingNoteIdRow(zapier, {
+				eventId: event.id,
 				iCalUID: event.iCalUID,
 				pageId,
 				startDateTime: event.start.dateTime ?? event.start.date,

@@ -13,7 +13,7 @@ When a page is added to the Meeting Notes data source, a Notion DB automation ca
 3. Looks up the calendar event: impersonates the first resolved internal attendee via the service account (domain-wide delegation, scope `calendar.events.readonly`) and finds the event on their primary calendar whose start matches the block's `start_time` exactly. This supplies the emails of attendees Notion couldn't resolve, plus `hangoutLink`, `description`, event `id`, and `iCalUID`. Because the subject is *whichever* internal attendee is on the note, this works for meetings no particular person attends.
 4. Resolves all collected external emails → Notion **Contacts** page IDs (via [`@work-flowers/notion-worker-shared`](https://github.com/work-flowers/notion-worker-shared)), matching on **Primary Email or Secondary Email**. Uses a Zapier-table blocklist, classifies unknown addresses with AI by Zapier (individual vs. service account), and creates new Contact pages for individuals (capped at 10 per run).
 5. Patches the page with `Date`, `Google Calendar Event ID`, `Description`, `Call Link`, `Contacts`, `Internal Attendees`.
-6. Find-or-creates a row in the Zapier `[Table] Meeting Note IDs` (`01JZCVG73MBWWB0357CEPS4903`) keyed on `iCalUID`.
+6. Find-or-creates a row in the Zapier `[Table] Meeting Note IDs` (`01JZCVG73MBWWB0357CEPS4903`) keyed on the calendar event's **occurrence** id (`event.id`), storing the `iCalUID` alongside it in the `iCal UID` column. **The key must stay the occurrence id** — see [Operating notes](#operating-notes).
 
 If the calendar lookup fails or finds nothing, the run still completes with whatever the block resolved (Date, internal attendees, guest-visible contacts).
 
@@ -25,7 +25,7 @@ src/
 ├── handler.ts             # handlePageCreated orchestration + attendee resolution
 ├── meetingNotesBlock.ts   # Poll for the populated meeting_notes child block
 ├── googleCalendar.ts      # Service-account JWT auth (DWD) + exact-start event lookup
-└── meetingNoteIdsTable.ts # Find-or-create Zapier Table row mapping pageId ↔ iCalUID
+└── meetingNoteIdsTable.ts # Find-or-create Zapier Table row mapping pageId ↔ occurrence event id
 ```
 
 Contact resolution, internal-user lookup, and raw data-source helpers live in [`@work-flowers/notion-worker-shared`](https://github.com/work-flowers/notion-worker-shared), shared with [notion-worker-email-db-updates](https://github.com/work-flowers/notion-worker-email-db-updates).
@@ -97,6 +97,20 @@ GOOGLE_SA_KEY_BASE64=$(op document get google-sa-notion-workers | base64 | tr -d
 - The Worker waits up to ~90s for the `meeting_notes` block to appear (Notion populates it asynchronously after page creation). If the block never appears, the run is a no-op — same behaviour as the Zap's "Only continue if found" filter.
 - The `meeting_notes` block's attendee user IDs are **global** Notion user IDs; `users.retrieve` only dereferences workspace members and guests (this is Notion policy — it prevents email harvesting). The service-account calendar lookup is what makes non-guest external attendees resolvable.
 - The event match is by **exact start time** on the impersonated attendee's primary calendar (not title search). Overlapping/all-day events are filtered out; if two events share the same start, the first is used and a warning is logged.
+- **`[Table] Meeting Note IDs` is keyed on the occurrence id, and must stay that way.** A Google event carries two identifiers and they are not interchangeable:
+
+  | | `id` — the **occurrence** | `iCalUID` — the **series** |
+  | --- | --- | --- |
+  | One-off event | `020m73h4pol31v2vml5scfchmp` | `020m73h4pol31v2vml5scfchmp@google.com` |
+  | Recurring occurrence | `48759896…_20260730T033000Z` | `48759896…@google.com` |
+  | Recurring, series since revised | `rljatc0qotko…_20260730T033000Z` | `rljatc0qotko…_R20260622T033000@google.com` |
+
+  Only `event.id` is unique per meeting note. From 2026-05 to 2026-07 this Worker wrote the `iCalUID` into the `Event ID` column, which broke two things silently and simultaneously:
+
+  1. The [`gcal-event-updated-to-meeting-note`](https://github.com/work-flowers/zapier-sdk/tree/main/gcal-event-updated-to-meeting-note) Zap looks the page up by the occurrence id Google's `event_updated` trigger gives it. `<id>@google.com` never equals `<id>` — not even for one-off events — so its "only continue if found" filter stopped **every** run, with no error and no alert. Meeting notes quietly stopped tracking rescheduled meetings for five months (92 of 849 rows).
+  2. One iCalUID covers every occurrence of a series, so the find-or-create kept matching the *same* row and overwriting its `Page ID`. A year of weekly standups became one row; `AI COE Daily Sync` became one row overwritten daily since 14 May.
+
+  A trap worth knowing: **you cannot tell recurring from one-off by looking at an iCalUID** — a recurring series that has never been revised gets a bare `<seriesId>@google.com`, identical in shape to a one-off's. The existing rows were re-keyed by [`backfill-meeting-note-event-ids.mjs`](https://github.com/work-flowers/zapier-sdk/blob/main/scripts/backfill-meeting-note-event-ids.mjs), which preserved every iCalUID into the new `iCal UID` (f9) column.
 - The Zapier table `01KQY6RB1TJ9X7BAYBRRRKB35S` is still the source of truth for the email blocklist. Moving it into Notion is a follow-up.
 - Existing-contact lookup queries the Notion Contacts data source (`21991b07-11ac-81a6-a894-000be4a09a67`) directly via `POST /v1/data_sources/{id}/query` (Notion-Version `2026-03-11`), matching `Primary Email` (email) or `Secondary Email` (multi-select).
 - New Contact creation is capped at `NEW_CONTACT_CAP = 10` per run to match the original sub-Zap.
