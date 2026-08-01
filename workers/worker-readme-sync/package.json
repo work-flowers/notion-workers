@@ -1,6 +1,6 @@
 {
-	"name": "@notionhq/workers-template",
-	"version": "0.0.0",
+	"name": "notion-worker-worker-readme-sync",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -17,6 +17,7 @@
 		"typescript": "^5.8.0"
 	},
 	"dependencies": {
-		"@notionhq/workers": ">=0.0.0"
+		"@notionhq/workers": ">=0.0.0",
+		"@work-flowers/notion-worker-shared": "*"
 	}
 }

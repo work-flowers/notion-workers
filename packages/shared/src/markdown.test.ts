@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { toNotionMarkdown } from "./markdown.js";
+import { toNotionMarkdown } from "./markdown";
 
 test("a table with an escaped pipe becomes table XML with a real pipe", () => {
 	const input = [
@@ -244,4 +244,20 @@ test("reflow is idempotent", () => {
 	const input = ["Para line a", "line b", "", "- item wrapping", "  onto here"].join("\n");
 	const once = toNotionMarkdown(input);
 	assert.equal(toNotionMarkdown(once), once);
+});
+
+test("an autolink mid-paragraph does not split the paragraph", () => {
+	const input = [
+		"Create a Notion internal integration at",
+		"<https://www.notion.so/profile/integrations> and share the **Deals**,",
+		"**Companies**, **Projects** data sources with it.",
+	].join("\n");
+	const out = toNotionMarkdown(input).split("\n");
+	assert.equal(out.length, 1, "autolink must not strand itself on its own line");
+	assert.match(out[0], /integration at <https:\/\/www\.notion\.so\/profile\/integrations> and share/);
+});
+
+test("a real HTML block tag still keeps its own line", () => {
+	const input = ["Text before", "<table header-row=\"true\">", "<tr>", "<td>a</td>", "</tr>", "</table>"].join("\n");
+	assert.equal(toNotionMarkdown(input), input);
 });

@@ -16,7 +16,7 @@ import {
 	type TicketState,
 } from "./errors.js";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
-import { toNotionMarkdown } from "./markdown.js";
+import { toNotionMarkdown } from "@work-flowers/notion-worker-shared";
 import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
 import { createUserResolver } from "./people.js";
 import {

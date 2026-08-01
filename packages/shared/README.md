@@ -36,7 +36,23 @@ const [internalMap, contactPageIds] = await Promise.all([
 const internalUserIds = resolveInternalUserIds(emails, internalMap);
 ```
 
+## `toNotionMarkdown`
+
+Prepares a GitHub README for a sync's `pageContentMarkdown`. Notion emits **one
+block per source line**, so a hard-wrapped paragraph otherwise arrives as a stack
+of one-line paragraphs. Also collapses blockquotes and rewrites pipe tables that
+contain an escaped pipe. The header comment in `src/markdown.ts` records what was
+tested against the live converter and which plausible fixes are wrong — read it
+before adding a transform.
+
+Used by `zapier-durables-docs` and `worker-readme-sync`.
+
 ## Consumers
 
-- [notion-meeting-note-db-updates](https://github.com/work-flowers/notion-meeting-note-db-updates)
-- [notion-worker-email-db-updates](https://github.com/work-flowers/notion-worker-email-db-updates)
+- `workers/email-db-updates`, `workers/meeting-note-db-updates` — contact and
+  internal-user resolution
+- `workers/zapier-durables-docs`, `workers/worker-readme-sync` — `toNotionMarkdown`
+
+Historical standalone repos, superseded by this monorepo:
+[notion-meeting-note-db-updates](https://github.com/work-flowers/notion-meeting-note-db-updates),
+[notion-worker-email-db-updates](https://github.com/work-flowers/notion-worker-email-db-updates)

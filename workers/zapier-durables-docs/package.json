@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@notionhq/workers": ">=0.0.0",
+		"@work-flowers/notion-worker-shared": "*",
 		"@zapier/zapier-sdk": "^0.91.0"
 	}
 }
