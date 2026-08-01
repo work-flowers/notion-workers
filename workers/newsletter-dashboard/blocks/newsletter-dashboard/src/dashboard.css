@@ -537,6 +537,35 @@ body {
 	text-decoration-color: currentColor;
 }
 
+.nl-link:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+/* Transient confirmation, since the click copies rather than navigates. */
+.nl-copied {
+	margin-left: 6px;
+	color: var(--delta-good);
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* Shown only when the clipboard is unavailable, so the URL stays obtainable. */
+.nl-url-field {
+	width: 100%;
+	max-width: 34ch;
+	padding: 2px 4px;
+	border: 1px solid var(--border-primary);
+	border-radius: 4px;
+	background: var(--bg-base);
+	color: var(--content-primary);
+	font: inherit;
+	font-size: 11px;
+}
+
 .nl-table-note {
 	margin: var(--spacing-8) 0 0;
 	color: var(--content-tertiary, var(--content-secondary));

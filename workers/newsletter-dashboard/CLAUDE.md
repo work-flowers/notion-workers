@@ -27,10 +27,22 @@ page's id — but only its id. There is no way to read the related page's title
 from the relation value; that needs a separate `pages.get(id)`, and page *content*
 (blocks) is not readable at all in the alpha.
 
-What you cannot do is navigate to it. `README.md` in `@notionhq/custom-blocks`
-lists "no top-level navigation, `window.open`, or auth redirects" under Forbidden
-APIs, so the subject cell is a plain `target="_blank"` anchor and whether it opens
-is up to the host's iframe sandbox, not to this code.
+**What you cannot do is open it, and this is settled — don't retry it.** The
+sandbox→host protocol (`dist/protocol/messages/sandboxToHost.d.ts`) permits
+exactly eight messages: `connect`, `createPage`, `getPage`, `getUser`,
+`listUsers`, `queryDataSource`, `resize`, `updatePage`. There is no
+navigate/open message, public or internal, and the package README lists "no
+top-level navigation, `window.open`, or auth redirects" under Forbidden APIs. A
+`target="_blank"` anchor was tried in Notion and does nothing.
+
+So the subject cell **copies** its URL on click, with three layers because the
+clipboard is not guaranteed inside the sandbox either: async Clipboard API →
+legacy `execCommand` selection copy → a read-only input holding the URL, so it
+is always obtainable. The `href` stays a real URL so the browser's own context
+menu ("Open in New Tab") still works and so this starts navigating for free if
+the sandbox ever permits it.
+
+Page URLs use `https://app.notion.com/p/<id>`, not `www.notion.so`.
 
 Declared-but-unmapped properties are a supported state (`propertyIdsByKey` maps
 them to `undefined`), which is what lets `issue` be optional. Adding a property

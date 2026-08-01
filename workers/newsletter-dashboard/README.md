@@ -37,7 +37,8 @@ level, per period.
 - **Table view** — the same numbers per period and per send, so nothing is
   reachable only by hovering. Every column sorts on click (unknown values always
   sort last, whichever direction). When the optional `issue` relation is mapped,
-  each subject links to the Newsletter Issues page holding that send's content.
+  clicking a subject copies a link to the Newsletter Issues page holding that
+  send's content — see the caveat below on why it copies rather than opens.
 
 Rates are `null` (`—`) rather than `0` when the denominator is missing, and
 periods with no send are gaps in the line, not 0% points.
@@ -94,9 +95,11 @@ Two caveats, both real:
 
 - Not every send has an issue page. A Buttondown resend gets its own `Email ID`
   with no Notion counterpart, so it stays unlinked — the table says how many.
-- The SDK forbids top-level navigation and `window.open`, so the subject is a
-  plain `target="_blank"` anchor. Whether the host's iframe sandbox lets that
-  open is a property of Notion's sandbox, not of this code.
+- **A block cannot open a Notion page.** The sandbox→host protocol has no
+  navigate/open message at all, and an anchor does nothing when clicked inside
+  Notion. So clicking a subject *copies* its `app.notion.com` link (falling back
+  to a selectable field if the sandbox blocks the clipboard too), and right-click
+  → Open in New Tab remains the way to actually get there.
 
 ## Develop
 
