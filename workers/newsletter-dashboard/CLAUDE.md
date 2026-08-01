@@ -37,6 +37,22 @@ them to `undefined`), which is what lets `issue` be optional. Adding a property
 to the manifest does change the deployed manifest, so an existing block instance
 may need re-mapping after such a deploy.
 
+## Hand-added properties
+
+`Email Analytics` carries a **Newsletter Issue** relation that is *not* in
+`buttondown-sync`'s managed schema and therefore not reproducible from code —
+recording it here per the repo convention for human-owned columns. It points at
+`Newsletter Issues` and is populated by
+`scripts/backfill-issue-relation.ts`, which joins Email Analytics `Email ID` to
+Newsletter Issues `Buttondown ID` (both hold Buttondown's `em_…` identifier).
+
+It has to stay hand-added: declaring it in the sync schema would mark it
+read-only, and `Schema.relation()` only relates two syncs — Newsletter Issues is
+a human-managed data source, not a sync.
+
+Nothing links new sends automatically yet. Re-run the backfill after publishing,
+or build it out following the `link-contact-to-company` webhook pattern.
+
 ## Gotchas found building this
 
 - **`vite.config.ts` must pin `root: import.meta.dirname`.** Inside an npm

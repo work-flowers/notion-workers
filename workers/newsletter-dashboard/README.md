@@ -77,6 +77,19 @@ populated by matching Email Analytics `Email ID` to Newsletter Issues
 hand-added (undeclared) property; a managed schema would make it read-only, and
 `Schema.relation()` only relates two syncs, which Newsletter Issues isn't.
 
+**Setting it up.** Add the property by hand in Notion — on `Email Analytics`, a
+relation named **Newsletter Issue** pointing at `Newsletter Issues`, limited to
+one page. Then backfill it:
+
+```shell
+NOTION_API_TOKEN=ntn_... npx tsx scripts/backfill-issue-relation.ts
+```
+
+That's a dry run: it verifies the property is a relation aimed at the right data
+source, reports how many rows match, and writes nothing. Add `--apply` to write.
+Re-running is safe — rows already pointing at the right page are skipped — so
+the same command catches up after new sends.
+
 Two caveats, both real:
 
 - Not every send has an issue page. A Buttondown resend gets its own `Email ID`
