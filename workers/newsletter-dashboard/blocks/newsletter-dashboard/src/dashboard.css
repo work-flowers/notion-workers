@@ -1,0 +1,589 @@
+/*
+ * Chrome (surfaces, borders, ink, spacing) comes from NDS tokens so the block
+ * tracks the page's theme and works in dark mode. The series colours are fixed
+ * hexes carrying workFlowers brand hues — azure, Russian Violet, ochre, in the
+ * brand's own chart order.
+ *
+ * They are *re-stepped* rather than copied. The brand's raw chart tokens are
+ * built for white web pages and fail on Notion's surfaces: Russian Violet
+ * #4E1B61 is below the usable lightness band in light mode (L 0.335) and only
+ * 1.28:1 against the dark card, and ochre #E17A14 is out of band in dark. Each
+ * mode therefore gets its own step of the same hue, validated as a set against
+ * the surface it actually renders on (#ffffff light, #202020 dark) for lightness
+ * band, chroma floor, colourblind separation and contrast.
+ *
+ * Dark-mode caveat: azure and Russian Violet are near-neighbour hues, so the
+ * dark violet leans magenta to stay separable from the blue. Its worst tritan
+ * pair is ΔE 7.4 — inside the 6–8 band that is only legal alongside secondary
+ * encoding, which is what the direct end labels, the legend and the table view
+ * provide. Don't remove those.
+ *
+ * Status colours are deliberately NOT the brand's ochre CTA: ochre is series 3
+ * here, and a status colour must never be mistakable for a series.
+ */
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: transparent;
+}
+
+.nl-root {
+	/* workFlowers azure / Russian Violet / ochre, stepped for a white surface. */
+	--series-1: #1479e1;
+	--series-2: #7a2e96;
+	--series-3: #e17a14;
+	--grid: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	--baseline: color-mix(in oklab, var(--content-primary) 22%, transparent);
+	--delta-good: #006300;
+	--delta-bad: #d03b3b;
+
+	width: 100%;
+	color: var(--content-primary);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.45;
+}
+
+.nl-root[data-display-mode="dark"] {
+	/* Same three hues, stepped for the dark card; ochre is the brand's own
+	   ochre-hover step, which happens to land in the dark band. */
+	--series-1: #3a92f0;
+	--series-2: #c264c0;
+	--series-3: #c96a0f;
+	--delta-good: #0ca30c;
+	--delta-bad: #e66767;
+}
+
+/*
+ * Inside Notion the iframe is transparent so the page's own background (which
+ * may be tinted) shows through. `?mock` has no page behind it, so paint one —
+ * otherwise dark-mode text sits on the browser's white default.
+ */
+.nl-root[data-mock="true"] {
+	min-height: 100vh;
+	padding: var(--spacing-16);
+	background: var(--bg-base);
+}
+
+.nl-dash {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-16);
+	padding: var(--spacing-4) 0;
+	transition: opacity 120ms ease;
+}
+
+/* Refetch holds the previous render rather than flashing a skeleton. */
+.nl-dash.is-stale {
+	opacity: 0.6;
+}
+
+.nl-header h1 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.nl-header p {
+	margin: 4px 0 0;
+	max-width: 62ch;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+/* ---- Filters: one row, above everything they scope ---- */
+
+.nl-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-16);
+	align-items: flex-end;
+}
+
+.nl-segmented {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.nl-segmented-label {
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.nl-segmented-options {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+.nl-segment {
+	padding: 4px 10px;
+	border: 0;
+	border-radius: var(--radius-6, 6px);
+	background: transparent;
+	color: var(--content-secondary);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.nl-segment:hover {
+	background: color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+.nl-segment.is-active {
+	background: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+.nl-segment:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 1px;
+}
+
+/* ---- Stat tiles ---- */
+
+.nl-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: var(--spacing-8);
+}
+
+.nl-tile {
+	padding: var(--spacing-12);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+.nl-tile-label {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* Proportional figures: tabular-nums makes a standalone number look loose. */
+.nl-tile-value {
+	margin-top: 2px;
+	font-size: 26px;
+	font-weight: 600;
+	line-height: 1.1;
+}
+
+.nl-tile-sub,
+.nl-tile-delta {
+	margin-top: 2px;
+	font-size: 12px;
+}
+
+.nl-tile-sub {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+.nl-tile-delta.is-good {
+	color: var(--delta-good);
+}
+
+.nl-tile-delta.is-bad {
+	color: var(--delta-bad);
+}
+
+.nl-tile-delta.is-flat {
+	color: var(--content-secondary);
+}
+
+.nl-tile-since {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+/* ---- Cards ---- */
+
+.nl-card {
+	padding: var(--spacing-16);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+}
+
+.nl-card-head h2 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* Per-card control sits with its title, not in the global filter row: it
+   changes only this chart's ranking, not the slice everything else shows. */
+.nl-card-head-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	align-items: center;
+	justify-content: space-between;
+}
+
+.nl-card-head p {
+	margin: 2px 0 var(--spacing-12);
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* ---- Chart primitives ---- */
+
+.nl-chart {
+	position: relative;
+	width: 100%;
+}
+
+.nl-chart svg {
+	display: block;
+	overflow: visible;
+}
+
+.nl-chart svg:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* Hairline, solid, one step off the surface — never dashed. */
+.nl-grid {
+	stroke: var(--grid);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-baseline {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-crosshair {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.nl-line {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* 2px surface ring keeps a dot legible where it crosses another line. */
+.nl-dot {
+	fill: currentColor;
+	stroke: var(--bg-elevated);
+	stroke-width: 2;
+	pointer-events: none;
+}
+
+.nl-leader {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.nl-bar {
+	fill: currentColor;
+	transition: opacity 90ms ease;
+}
+
+.nl-bar.is-hover {
+	opacity: 0.78;
+}
+
+.nl-hit {
+	fill: transparent;
+}
+
+.nl-axis-text {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Values wear text tokens; the coloured dot beside them carries identity. */
+.nl-end-label,
+.nl-cap-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.nl-issue-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+}
+
+.nl-issue-date {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-variant-numeric: tabular-nums;
+}
+
+/* The aggregate benchmark. Solid like every other rule — dashing would read as
+   a projection or a target rather than the measured figure. */
+.nl-reference {
+	stroke: var(--content-secondary);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-reference-label {
+	fill: var(--content-secondary);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.nl-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	margin: var(--spacing-8) 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.nl-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.nl-key {
+	display: inline-block;
+	width: 12px;
+	height: 2px;
+	border-radius: 1px;
+	background: currentColor;
+}
+
+/* ---- Tooltip ---- */
+
+.nl-tooltip {
+	position: absolute;
+	top: 4px;
+	min-width: 148px;
+	padding: 8px 10px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+	box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 12%));
+	pointer-events: none;
+}
+
+.nl-tooltip-title {
+	margin-bottom: 4px;
+	color: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.nl-tooltip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+/* Value leads, series name follows. */
+.nl-tooltip-value {
+	color: var(--content-primary);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.nl-tooltip-label {
+	color: var(--content-secondary);
+}
+
+.nl-tooltip-footer {
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid var(--border-primary);
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+}
+
+/* ---- Tables (the WCAG-clean twin of every chart) ---- */
+
+.nl-table-wrap {
+	overflow-x: auto;
+}
+
+.nl-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Numbers are right-aligned so digits line up; text columns opt out with
+ * `.nl-col-left`, which is applied to the header and the cell from the same
+ * column definition. Doing it per-column rather than by `:first-child` is what
+ * keeps a text column in the middle of the table (Subject) from getting a
+ * right-aligned header over left-aligned cells.
+ */
+.nl-table th,
+.nl-table td {
+	padding: 6px 10px 6px 0;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.nl-table th.nl-col-left,
+.nl-table td.nl-col-left {
+	text-align: left;
+}
+
+.nl-table thead th {
+	border-bottom: 1px solid var(--border-primary);
+	color: var(--content-secondary);
+	font-weight: 500;
+}
+
+.nl-table tbody tr + tr td {
+	border-top: 1px solid color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+/* Sortable header: a real button, so it's keyboard-reachable and announced. */
+.nl-sort {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.nl-table th:not(.nl-col-left) .nl-sort {
+	flex-direction: row-reverse;
+}
+
+.nl-sort:hover {
+	color: var(--content-primary);
+}
+
+.nl-sort:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+.nl-sort.is-active {
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+/*
+ * Every column is sortable but only one is sorted, so the caret is hidden until
+ * it means something: visible on the active column, and faintly on hover/focus
+ * as the affordance. `visibility` rather than `display` so the header width
+ * doesn't shift when it appears.
+ */
+.nl-sort-caret {
+	font-size: 10px;
+	visibility: hidden;
+}
+
+.nl-sort:hover .nl-sort-caret,
+.nl-sort:focus-visible .nl-sort-caret {
+	visibility: visible;
+	opacity: 0.4;
+}
+
+.nl-sort.is-active .nl-sort-caret {
+	visibility: visible;
+	opacity: 1;
+}
+
+.nl-subject {
+	display: inline-block;
+	max-width: 34ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: bottom;
+}
+
+/*
+ * No link styling on subjects. A custom block cannot open a Notion page (see
+ * CLAUDE.md), so an underline would advertise a click that can't work. Use the
+ * `Newsletter Issue` relation cell in Notion's own table to reach the content.
+ */
+
+/* Table captions carry the "click to sort" affordance for screen readers. */
+.nl-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* ---- Notes & empty states ---- */
+
+.nl-notes {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.nl-notes p {
+	margin: 0 0 4px;
+}
+
+.nl-empty {
+	padding: var(--spacing-24);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+}
+
+.nl-empty h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.nl-empty p {
+	margin: 6px 0 0;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+.nl-empty-hint code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: color-mix(in oklab, var(--content-primary) 8%, transparent);
+	font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.nl-dash,
+	.nl-bar {
+		transition: none;
+	}
+}
