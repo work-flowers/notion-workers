@@ -1,8 +1,25 @@
 /*
- * Chrome (surfaces, borders, ink) comes from NDS tokens so the block tracks the
- * page's theme and accent. Only the series colours are fixed hexes: they are
- * chosen for CVD separation and validated against Notion's light (#ffffff) and
- * dark (#202020) card surfaces, which a themeable token can't guarantee.
+ * Chrome (surfaces, borders, ink, spacing) comes from NDS tokens so the block
+ * tracks the page's theme and works in dark mode. The series colours are fixed
+ * hexes carrying workFlowers brand hues — azure, Russian Violet, ochre, in the
+ * brand's own chart order.
+ *
+ * They are *re-stepped* rather than copied. The brand's raw chart tokens are
+ * built for white web pages and fail on Notion's surfaces: Russian Violet
+ * #4E1B61 is below the usable lightness band in light mode (L 0.335) and only
+ * 1.28:1 against the dark card, and ochre #E17A14 is out of band in dark. Each
+ * mode therefore gets its own step of the same hue, validated as a set against
+ * the surface it actually renders on (#ffffff light, #202020 dark) for lightness
+ * band, chroma floor, colourblind separation and contrast.
+ *
+ * Dark-mode caveat: azure and Russian Violet are near-neighbour hues, so the
+ * dark violet leans magenta to stay separable from the blue. Its worst tritan
+ * pair is ΔE 7.4 — inside the 6–8 band that is only legal alongside secondary
+ * encoding, which is what the direct end labels, the legend and the table view
+ * provide. Don't remove those.
+ *
+ * Status colours are deliberately NOT the brand's ochre CTA: ochre is series 3
+ * here, and a status colour must never be mistakable for a series.
  */
 
 * {
@@ -15,9 +32,10 @@ body {
 }
 
 .nl-root {
-	--series-1: #2a78d6;
-	--series-2: #eb6834;
-	--series-3: #1baf7a;
+	/* workFlowers azure / Russian Violet / ochre, stepped for a white surface. */
+	--series-1: #1479e1;
+	--series-2: #7a2e96;
+	--series-3: #e17a14;
 	--grid: color-mix(in oklab, var(--content-primary) 10%, transparent);
 	--baseline: color-mix(in oklab, var(--content-primary) 22%, transparent);
 	--delta-good: #006300;
@@ -31,9 +49,11 @@ body {
 }
 
 .nl-root[data-display-mode="dark"] {
-	--series-1: #3987e5;
-	--series-2: #d95926;
-	--series-3: #199e70;
+	/* Same three hues, stepped for the dark card; ochre is the brand's own
+	   ochre-hover step, which happens to land in the dark band. */
+	--series-1: #3a92f0;
+	--series-2: #c264c0;
+	--series-3: #c96a0f;
 	--delta-good: #0ca30c;
 	--delta-bad: #e66767;
 }

@@ -48,10 +48,28 @@ what it renders and how to bind it. Repo-wide conventions live in the root
 
 ## Colour
 
-Series colours are literal hexes with a `data-display-mode="dark"` override, not
-NDS tokens: they're picked for colourblind separation and validated against
-Notion's light (`#ffffff`) and dark (`#202020`) card surfaces, which a themeable
-token can't guarantee. Everything else (surfaces, borders, ink, spacing) uses NDS
-tokens so the block tracks the page's theme. Light-mode series 3 sits below 3:1
-contrast, which is why the end labels and table view are mandatory rather than
-decorative.
+Deliberately hybrid: **NDS tokens for chrome** (surfaces, borders, ink, spacing)
+so the block tracks the page's theme and works in dark mode, and **workFlowers
+brand hues for the series** — azure, Russian Violet, ochre, in the brand's own
+chart order — as literal hexes with a `data-display-mode="dark"` override.
+
+The brand's raw chart tokens can't be used as-is. They're built for white web
+pages and fail on Notion's surfaces: Russian Violet `#4E1B61` is below the usable
+lightness band in light mode (L 0.335) and only 1.28:1 against the dark card;
+ochre `#E17A14` is out of band in dark. So each mode carries its own step of the
+same hue, validated as a set against the surface it renders on. If you touch
+these, re-validate both modes against `#ffffff` and `#202020` — don't eyeball it.
+
+Two consequences to preserve:
+
+- The dark violet leans magenta because azure and Russian Violet are
+  near-neighbour hues. Its worst tritan pair is ΔE 7.4, inside the band that is
+  only legal with secondary encoding — the direct end labels, legend and table
+  view are that encoding.
+- Status colours are **not** the brand's ochre CTA, because ochre is series 3
+  here and a status colour must never read as a series.
+
+The brand also has no dark mode at all (`tokens/colors.css` is light-only) and
+loads Inter from the Google Fonts CDN, which the sandboxed iframe's CSP blocks —
+both reasons the chrome stays NDS. If Inter is ever wanted, bundle it via
+`@fontsource/inter` so it's a same-origin asset.
