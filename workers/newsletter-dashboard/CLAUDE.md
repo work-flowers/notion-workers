@@ -46,9 +46,27 @@ issue page — it's just not the block's business. If you ever do render a page
 URL for other reasons, use `https://app.notion.com/p/<id>`, not `www.notion.so`.
 
 Declared-but-unmapped properties are a supported state (`propertyIdsByKey` maps
-them to `undefined`), which is what lets `issue` be optional. Adding a property
-to the manifest does change the deployed manifest, so an existing block instance
-may need re-mapping after such a deploy.
+them to `undefined`), so a property left `Empty` in the config panel is noise
+rather than a broken binding.
+
+## Custom views auto-bind; custom blocks don't
+
+Inserted as a **custom view** on a data source, Notion maps the enclosing
+database automatically and name-matches the declared properties — the config
+panel says as much ("Notion automatically uses the current database for simple
+custom views") and only exists for extras it couldn't match. Inserted as a
+**custom block** on a page there is no enclosing data source, so the mapping is
+manual.
+
+Note that `/custom` on a page creates a *new* database — the `· Database` suffix
+in that slash menu marks entries that do. To attach a custom view to an existing
+database, add it from that database's own view tab bar. There is no API route:
+`create_view` accepts table, board, list, calendar, timeline, gallery, form,
+chart, map and dashboard — not custom.
+
+The config panel reflects the manifest of the **deployed** build, so a property
+removed from `worker.customBlock()` keeps appearing until the worker is
+redeployed.
 
 ## Hand-added properties
 
