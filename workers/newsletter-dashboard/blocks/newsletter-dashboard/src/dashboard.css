@@ -1,0 +1,466 @@
+/*
+ * Chrome (surfaces, borders, ink) comes from NDS tokens so the block tracks the
+ * page's theme and accent. Only the series colours are fixed hexes: they are
+ * chosen for CVD separation and validated against Notion's light (#ffffff) and
+ * dark (#202020) card surfaces, which a themeable token can't guarantee.
+ */
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: transparent;
+}
+
+.nl-root {
+	--series-1: #2a78d6;
+	--series-2: #eb6834;
+	--series-3: #1baf7a;
+	--grid: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	--baseline: color-mix(in oklab, var(--content-primary) 22%, transparent);
+	--delta-good: #006300;
+	--delta-bad: #d03b3b;
+
+	width: 100%;
+	color: var(--content-primary);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.45;
+}
+
+.nl-root[data-display-mode="dark"] {
+	--series-1: #3987e5;
+	--series-2: #d95926;
+	--series-3: #199e70;
+	--delta-good: #0ca30c;
+	--delta-bad: #e66767;
+}
+
+/*
+ * Inside Notion the iframe is transparent so the page's own background (which
+ * may be tinted) shows through. `?mock` has no page behind it, so paint one —
+ * otherwise dark-mode text sits on the browser's white default.
+ */
+.nl-root[data-mock="true"] {
+	min-height: 100vh;
+	padding: var(--spacing-16);
+	background: var(--bg-base);
+}
+
+.nl-dash {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-16);
+	padding: var(--spacing-4) 0;
+	transition: opacity 120ms ease;
+}
+
+/* Refetch holds the previous render rather than flashing a skeleton. */
+.nl-dash.is-stale {
+	opacity: 0.6;
+}
+
+.nl-header h1 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.nl-header p {
+	margin: 4px 0 0;
+	max-width: 62ch;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+/* ---- Filters: one row, above everything they scope ---- */
+
+.nl-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-16);
+	align-items: flex-end;
+}
+
+.nl-segmented {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.nl-segmented-label {
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.nl-segmented-options {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+.nl-segment {
+	padding: 4px 10px;
+	border: 0;
+	border-radius: var(--radius-6, 6px);
+	background: transparent;
+	color: var(--content-secondary);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.nl-segment:hover {
+	background: color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+.nl-segment.is-active {
+	background: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+.nl-segment:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 1px;
+}
+
+/* ---- Stat tiles ---- */
+
+.nl-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: var(--spacing-8);
+}
+
+.nl-tile {
+	padding: var(--spacing-12);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+.nl-tile-label {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* Proportional figures: tabular-nums makes a standalone number look loose. */
+.nl-tile-value {
+	margin-top: 2px;
+	font-size: 26px;
+	font-weight: 600;
+	line-height: 1.1;
+}
+
+.nl-tile-sub,
+.nl-tile-delta {
+	margin-top: 2px;
+	font-size: 12px;
+}
+
+.nl-tile-sub {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+.nl-tile-delta.is-good {
+	color: var(--delta-good);
+}
+
+.nl-tile-delta.is-bad {
+	color: var(--delta-bad);
+}
+
+.nl-tile-delta.is-flat {
+	color: var(--content-secondary);
+}
+
+.nl-tile-since {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+/* ---- Cards ---- */
+
+.nl-card {
+	padding: var(--spacing-16);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+}
+
+.nl-card-head h2 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.nl-card-head p {
+	margin: 2px 0 var(--spacing-12);
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* ---- Chart primitives ---- */
+
+.nl-chart {
+	position: relative;
+	width: 100%;
+}
+
+.nl-chart svg {
+	display: block;
+	overflow: visible;
+}
+
+.nl-chart svg:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* Hairline, solid, one step off the surface — never dashed. */
+.nl-grid {
+	stroke: var(--grid);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-baseline {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-crosshair {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.nl-line {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* 2px surface ring keeps a dot legible where it crosses another line. */
+.nl-dot {
+	fill: currentColor;
+	stroke: var(--bg-elevated);
+	stroke-width: 2;
+	pointer-events: none;
+}
+
+.nl-leader {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.nl-bar {
+	fill: currentColor;
+	transition: opacity 90ms ease;
+}
+
+.nl-bar.is-hover {
+	opacity: 0.78;
+}
+
+.nl-hit {
+	fill: transparent;
+}
+
+.nl-axis-text {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Values wear text tokens; the coloured dot beside them carries identity. */
+.nl-end-label,
+.nl-cap-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.nl-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	margin: var(--spacing-8) 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.nl-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.nl-key {
+	display: inline-block;
+	width: 12px;
+	height: 2px;
+	border-radius: 1px;
+	background: currentColor;
+}
+
+/* ---- Tooltip ---- */
+
+.nl-tooltip {
+	position: absolute;
+	top: 4px;
+	min-width: 148px;
+	padding: 8px 10px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+	box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 12%));
+	pointer-events: none;
+}
+
+.nl-tooltip-title {
+	margin-bottom: 4px;
+	color: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.nl-tooltip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+/* Value leads, series name follows. */
+.nl-tooltip-value {
+	color: var(--content-primary);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.nl-tooltip-label {
+	color: var(--content-secondary);
+}
+
+.nl-tooltip-footer {
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid var(--border-primary);
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+}
+
+/* ---- Tables (the WCAG-clean twin of every chart) ---- */
+
+.nl-table-wrap {
+	overflow-x: auto;
+}
+
+.nl-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.nl-table th,
+.nl-table td {
+	padding: 6px 10px 6px 0;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.nl-table thead th {
+	border-bottom: 1px solid var(--border-primary);
+	color: var(--content-secondary);
+	font-weight: 500;
+}
+
+.nl-table tbody th {
+	text-align: left;
+	font-weight: 500;
+}
+
+.nl-table tbody tr + tr th,
+.nl-table tbody tr + tr td {
+	border-top: 1px solid color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+.nl-table thead th:first-child,
+.nl-table tbody th:first-child {
+	text-align: left;
+}
+
+.nl-subject {
+	max-width: 34ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Shrink to content so the slack lands on the subject column, not the date. */
+.nl-nowrap {
+	width: 1px;
+	text-align: left;
+}
+
+/* ---- Notes & empty states ---- */
+
+.nl-notes {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.nl-notes p {
+	margin: 0 0 4px;
+}
+
+.nl-empty {
+	padding: var(--spacing-24);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+}
+
+.nl-empty h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.nl-empty p {
+	margin: 6px 0 0;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+.nl-empty-hint code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: color-mix(in oklab, var(--content-primary) 8%, transparent);
+	font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.nl-dash,
+	.nl-bar {
+		transition: none;
+	}
+}
