@@ -63,8 +63,10 @@ It has to stay hand-added: declaring it in the sync schema would mark it
 read-only, and `Schema.relation()` only relates two syncs — Newsletter Issues is
 a human-managed data source, not a sync.
 
-Nothing links new sends automatically yet. Re-run the backfill after publishing,
-or build it out following the `link-contact-to-company` webhook pattern.
+New sends are linked automatically by `buttondown-sync`'s `emailAnalyticsSync`,
+which runs the same join at the start of each 6h cycle (see that worker's
+README). The backfill script here remains for one-off catch-ups and for verifying
+the join without waiting for a cycle.
 
 ## Gotchas found building this
 
