@@ -17,11 +17,6 @@ export type Send = {
 	opens: number
 	clicks: number
 	unsubscribes: number
-	/**
-	 * Page id of the related Newsletter Issue, when the optional `issue` relation
-	 * is mapped and set. Null otherwise — the relation is not required.
-	 */
-	issuePageId: string | null
 }
 
 export type Granularity = "week" | "month" | "quarter"

@@ -36,9 +36,7 @@ level, per period.
   says so when there are more.
 - **Table view** — the same numbers per period and per send, so nothing is
   reachable only by hovering. Every column sorts on click (unknown values always
-  sort last, whichever direction). When the optional `issue` relation is mapped,
-  clicking a subject copies a link to the Newsletter Issues page holding that
-  send's content — see the caveat below on why it copies rather than opens.
+  sort last, whichever direction).
 
 Rates are `null` (`—`) rather than `0` when the denominator is missing, and
 periods with no send are gaps in the line, not 0% points.
@@ -60,27 +58,28 @@ in Notion when the block is inserted. Bind the `sends` data source to
 | `opens` | Opens (number) |
 | `clicks` | Clicks (number) |
 | `unsubscribes` | Unsubscriptions (number) |
-| `issue` *(optional)* | a relation to Newsletter Issues — see below |
 
 Do **not** map `Click Rate` / `Open Rate` / `Click Rate (Agg)` — the block
 derives rates itself, and the alpha can't read formula properties anyway.
 
-### The optional `issue` relation
+### Why the block doesn't read the `Newsletter Issue` relation
 
-`issue` is the only property that may be left unmapped: without it the table
-view renders subjects as plain text, with it each subject links to the
-Newsletter Issues page holding that send's content.
+`Email Analytics` carries a **Newsletter Issue** relation to `Newsletter Issues`,
+so each issue page shows its own send stats. The block deliberately doesn't map
+it.
 
-It needs a relation property on Email Analytics pointing at Newsletter Issues,
-populated by matching Email Analytics `Email ID` to Newsletter Issues
-`Buttondown ID` — those hold the same Buttondown identifier (`em_…`). Note that
-`Email Analytics` is a synced data source, so the relation has to be a
-hand-added (undeclared) property; a managed schema would make it read-only, and
-`Schema.relation()` only relates two syncs, which Newsletter Issues isn't.
+The reason is a hard platform limit, not taste: **a custom block cannot open a
+Notion page.** The sandbox→host protocol permits exactly eight messages
+(`connect`, `createPage`, `getPage`, `getUser`, `listUsers`, `queryDataSource`,
+`resize`, `updatePage`) with no navigate or open among them, and the SDK lists
+top-level navigation and `window.open` as forbidden. An anchor was tried inside
+Notion and does nothing. Reading the relation could therefore only ever produce a
+link that goes nowhere, so the subject stays plain text and Notion's own relation
+cell does the navigating.
 
-**Setting it up.** Add the property by hand in Notion — on `Email Analytics`, a
-relation named **Newsletter Issue** pointing at `Newsletter Issues`, limited to
-one page. Then backfill it:
+The relation is populated by matching Email Analytics `Email ID` to Newsletter
+Issues `Buttondown ID` — both hold the same Buttondown identifier (`em_…`).
+`scripts/backfill-issue-relation.ts` does that for existing rows:
 
 ```shell
 NOTION_API_TOKEN=ntn_... npx tsx scripts/backfill-issue-relation.ts
@@ -88,18 +87,10 @@ NOTION_API_TOKEN=ntn_... npx tsx scripts/backfill-issue-relation.ts
 
 That's a dry run: it verifies the property is a relation aimed at the right data
 source, reports how many rows match, and writes nothing. Add `--apply` to write.
-Re-running is safe — rows already pointing at the right page are skipped — so
-the same command catches up after new sends.
+Re-running is safe — rows already pointing at the right page are skipped.
 
-Two caveats, both real:
-
-- Not every send has an issue page. A Buttondown resend gets its own `Email ID`
-  with no Notion counterpart, so it stays unlinked — the table says how many.
-- **A block cannot open a Notion page.** The sandbox→host protocol has no
-  navigate/open message at all, and an anchor does nothing when clicked inside
-  Notion. So clicking a subject *copies* its `app.notion.com` link (falling back
-  to a selectable field if the sandbox blocks the clipboard too), and right-click
-  → Open in New Tab remains the way to actually get there.
+Note that not every send has an issue page: a Buttondown resend gets its own
+`Email ID` with no Notion counterpart, so it stays unlinked.
 
 ## Develop
 

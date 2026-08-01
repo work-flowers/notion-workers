@@ -35,14 +35,15 @@ navigate/open message, public or internal, and the package README lists "no
 top-level navigation, `window.open`, or auth redirects" under Forbidden APIs. A
 `target="_blank"` anchor was tried in Notion and does nothing.
 
-So the subject cell **copies** its URL on click, with three layers because the
-clipboard is not guaranteed inside the sandbox either: async Clipboard API →
-legacy `execCommand` selection copy → a read-only input holding the URL, so it
-is always obtainable. The `href` stays a real URL so the browser's own context
-menu ("Open in New Tab") still works and so this starts navigating for free if
-the sandbox ever permits it.
+Consequently **this block does not read the `Newsletter Issue` relation at all**,
+and shouldn't be "improved" to: any link it rendered would go nowhere. Subjects
+are plain text with no link styling, and Notion's own relation cell in the Email
+Analytics table is how you reach an issue's content. Copy-to-clipboard-on-click
+was built and rejected as too surprising for the value.
 
-Page URLs use `https://app.notion.com/p/<id>`, not `www.notion.so`.
+The relation still matters in Notion — it's what shows a send's stats on its
+issue page — it's just not the block's business. If you ever do render a page
+URL for other reasons, use `https://app.notion.com/p/<id>`, not `www.notion.so`.
 
 Declared-but-unmapped properties are a supported state (`propertyIdsByKey` maps
 them to `undefined`), which is what lets `issue` be optional. Adding a property

@@ -173,7 +173,7 @@ export function App({ sends, today, status, message, stale }: AppState) {
 					</Card>
 					<Card
 						title="By send"
-						subtitle="One row per send, newest first. Click a column header to sort. Clicking a subject copies a link to its newsletter issue — Notion's sandbox won't let a block open a page, so right-click to open it in a new tab."
+						subtitle="One row per send, newest first. Click a column header to sort."
 					>
 						<SendTable sends={model.inRange} />
 					</Card>
@@ -436,7 +436,7 @@ const SEND_COLUMNS: Column<SendRow>[] = [
 		label: "Subject",
 		left: true,
 		sortValue: (s) => s.subject.toLowerCase(),
-		render: (s) => <SubjectCell send={s} />,
+		render: (s) => <span className="nl-subject">{s.subject}</span>,
 	},
 	{
 		key: "deliveries",
@@ -465,114 +465,19 @@ const SEND_COLUMNS: Column<SendRow>[] = [
 	},
 ]
 
-/** Canonical short-form page URL on the current Notion domain. */
-function issueUrl(pageId: string): string {
-	return `https://app.notion.com/p/${pageId.replace(/-/g, "")}`
-}
-
-/**
- * Best-effort clipboard write. The async Clipboard API needs a permission the
- * host's iframe may not grant, so fall back to the legacy selection copy, which
- * only needs the user gesture we're already inside. Returns false when neither
- * works, so the caller can show the URL for manual copying instead of silently
- * doing nothing.
- */
-async function copyToClipboard(text: string): Promise<boolean> {
-	try {
-		await navigator.clipboard.writeText(text)
-		return true
-	} catch {
-		// Fall through to the legacy path.
-	}
-	try {
-		const field = document.createElement("textarea")
-		field.value = text
-		field.setAttribute("readonly", "")
-		field.style.position = "fixed"
-		field.style.opacity = "0"
-		document.body.appendChild(field)
-		field.select()
-		const ok = document.execCommand("copy")
-		document.body.removeChild(field)
-		return ok
-	} catch {
-		return false
-	}
-}
-
-/**
- * The subject of a send, linked to its Newsletter Issue page when the optional
- * `issue` relation is mapped and set.
- *
- * Clicking copies the URL rather than opening it. That isn't a preference: the
- * sandbox↔host protocol has no navigate/open message, and the SDK forbids
- * top-level navigation and `window.open`, so nothing in a custom block can make
- * Notion open a page. The `href` stays real so the browser's own context menu
- * ("Copy Link", "Open in New Tab") keeps working, and so this starts navigating
- * for free if the sandbox ever allows it.
- */
-function SubjectCell({ send }: { send: SendRow }) {
-	const [state, setState] = useState<"idle" | "copied" | "manual">("idle")
-
-	if (!send.issuePageId) return <span className="nl-subject">{send.subject}</span>
-
-	const url = issueUrl(send.issuePageId)
-
-	if (state === "manual") {
-		// Clipboard refused. Hand over the URL, selected, so ⌘C still works.
-		return (
-			<input
-				className="nl-url-field"
-				readOnly
-				value={url}
-				autoFocus
-				onFocus={(e) => e.currentTarget.select()}
-				onBlur={() => setState("idle")}
-				aria-label={`Link to ${send.subject}`}
-			/>
-		)
-	}
-
-	return (
-		<a
-			className="nl-subject nl-link"
-			href={url}
-			onClick={async (event) => {
-				event.preventDefault()
-				const copied = await copyToClipboard(url)
-				setState(copied ? "copied" : "manual")
-				if (copied) window.setTimeout(() => setState("idle"), 1600)
-			}}
-			title={`Copy link to “${send.subject}”. Notion's sandbox won't let a custom block open a page — right-click to open it in a new tab.`}
-		>
-			{send.subject}
-			{state === "copied" ? <span className="nl-copied"> copied</span> : null}
-		</a>
-	)
-}
-
 function SendTable({ sends }: { sends: Send[] }) {
 	const rows = useMemo(
 		() => sends.map((send) => ({ ...send, ...summarize([send]) })),
 		[sends],
 	)
-	const linked = rows.filter((r) => r.issuePageId).length
 
 	return (
-		<>
-			<DataTable
-				columns={SEND_COLUMNS}
-				rows={rows}
-				initialSort={{ key: "sent", dir: "desc" }}
-				caption="Row-level counts per send. Click a column header to sort."
-			/>
-			{linked > 0 && linked < rows.length ? (
-				<p className="nl-table-note">
-					{rows.length - linked} of {rows.length} sends aren't linked to a
-					newsletter issue, so their subjects aren't clickable.
-				</p>
-			) : null}
-		</>
+		<DataTable
+			columns={SEND_COLUMNS}
+			rows={rows}
+			initialSort={{ key: "sent", dir: "desc" }}
+			caption="Row-level counts per send. Click a column header to sort."
+		/>
 	)
 }
 
