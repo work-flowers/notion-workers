@@ -1,4 +1,4 @@
-# notion-workers-fx-rates
+# fx-rates
 
 A [Notion Worker](https://developers.notion.com/workers) that syncs daily FX rates for USD, SGD, JPY, and AUD into a managed Notion database, with conversions to both USD and SGD.
 

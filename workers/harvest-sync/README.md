@@ -1,4 +1,4 @@
-# notion-harvest-sync
+# harvest-sync
 
 A Notion Worker that syncs Harvest time tracking into a Notion database every
 six hours, and post-hoc links each entry to rows in pre-existing Deals,

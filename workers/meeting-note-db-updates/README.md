@@ -1,4 +1,4 @@
-# notion-meeting-note-db-updates
+# meeting-note-db-updates
 
 A [Notion Worker](https://developers.notion.com/workers) that enriches newly created pages in the **Meeting Notes** data source with the meeting date, resolved attendees, and calendar-event metadata. Attendees come primarily from the page's embedded `meeting_notes` block; a Google **service account with domain-wide delegation** fills in what Notion can't expose — no individual user's calendar connection required. Replaces a production Zap + sub-Zap that previously did this job (the originals are kept in `exported-zap-*.json` for reference).
 
