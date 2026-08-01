@@ -1,4 +1,4 @@
-# Notion Workers [beta]
+# buttondown-tools
 
 A worker is a small Node/TypeScript program hosted by Notion. Workers have three capability types:
 

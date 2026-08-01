@@ -1,4 +1,4 @@
-# Notion Workers [beta]
+# link-contact-to-company
 
 A worker is a small Node/TypeScript program hosted by Notion. Workers have three capability types:
 
