@@ -11,15 +11,6 @@ const GITHUB_BRANCH = "main";
 const API_BASE = "https://api.github.com/repos/" + GITHUB_OWNER + "/" + GITHUB_REPO;
 const WEB_BASE = "https://github.com/" + GITHUB_OWNER + "/" + GITHUB_REPO;
 
-interface DeploymentMetadata {
-	workerId: string;
-	name: string;
-	createdAt: string;
-	updatedAt: string;
-	updatedByName: string;
-	capabilities: string[];
-}
-
 interface GitHubDirEntry {
 	name: string;
 	path: string;
@@ -29,6 +20,21 @@ interface GitHubDirEntry {
 interface GitHubFileResponse {
 	content: string;
 	encoding: string;
+}
+
+interface CommitAuthor {
+	name: string;
+	email: string;
+	date: string;
+}
+
+interface CommitInfo {
+	sha: string;
+	commit: {
+		author: CommitAuthor;
+		committer: CommitAuthor;
+		message: string;
+	};
 }
 
 const db = worker.database("workers", {
@@ -55,7 +61,7 @@ const db = worker.database("workers", {
 });
 
 const githubPacer = worker.pacer("github", {
-	allowedRequests: 30,
+	allowedRequests: 60,
 	intervalMs: 60000,
 });
 
@@ -70,31 +76,46 @@ function githubHeaders(): Record<string, string> {
 	return headers;
 }
 
-function parseDeploymentMetadata(): Record<string, DeploymentMetadata> {
-	const map: Record<string, DeploymentMetadata> = {};
-	try {
-		const raw = process.env.WORKERS_METADATA || "[]";
-		const list = JSON.parse(raw) as DeploymentMetadata[];
-		for (const w of list) {
-			map[w.name] = w;
-		}
-	} catch (e) {
-		console.log("Failed to parse WORKERS_METADATA:", e);
+async function fetchFile(path: string): Promise<string | null> {
+	await githubPacer.wait();
+	const url = API_BASE + "/contents/" + path + "?ref=" + GITHUB_BRANCH;
+	const response = await fetch(url, { headers: githubHeaders() });
+	if (response.status === 404) return null;
+	if (!response.ok) {
+		console.log("GitHub API error fetching " + path + ": " + response.status);
+		return null;
 	}
-	return map;
+	const data = (await response.json()) as GitHubFileResponse;
+	if (data.encoding === "base64") {
+		return Buffer.from(data.content, "base64").toString("utf-8");
+	}
+	return data.content || null;
 }
 
-const EMAIL_MAP: Record<string, string> = {
-	"Dennis": "dennis@work.flowers",
-};
+async function fetchCommits(path: string): Promise<CommitInfo[]> {
+	await githubPacer.wait();
+	const url = API_BASE + "/commits?path=" + path + "&per_page=100&sha=" + GITHUB_BRANCH;
+	const response = await fetch(url, { headers: githubHeaders() });
+	if (!response.ok) {
+		console.log("GitHub API error fetching commits for " + path + ": " + response.status);
+		return [];
+	}
+	return (await response.json()) as CommitInfo[];
+}
+
+function parseCapabilities(source: string): string[] {
+	const caps: string[] = [];
+	if (source.includes("worker.sync(")) caps.push("sync");
+	if (source.includes("worker.tool(")) caps.push("tool");
+	if (source.includes("worker.webhook(")) caps.push("webhook");
+	return caps;
+}
 
 worker.sync("readmeSync", {
 	database: db,
 	mode: "replace",
 	schedule: "12h",
 	execute: async () => {
-		const deploymentData = parseDeploymentMetadata();
-
 		// Fetch worker directories from GitHub
 		await githubPacer.wait();
 		const dirUrl = API_BASE + "/contents/workers?ref=" + GITHUB_BRANCH;
@@ -109,45 +130,64 @@ worker.sync("readmeSync", {
 		const changes: any[] = [];
 
 		for (const dir of workerDirs) {
-			await githubPacer.wait();
-			const readmeUrl = API_BASE + "/contents/" + dir.path + "/README.md?ref=" + GITHUB_BRANCH;
-			const readmeResponse = await fetch(readmeUrl, { headers: githubHeaders() });
+			// 1. Fetch README.md for page body
+			const readmeContent = await fetchFile(dir.path + "/README.md") || "";
 
-			let readmeContent = "";
-			if (readmeResponse.ok) {
-				const readmeData = (await readmeResponse.json()) as GitHubFileResponse;
-				if (readmeData.encoding === "base64") {
-					readmeContent = Buffer.from(readmeData.content, "base64").toString("utf-8");
+			// 2. Fetch workers.json for worker ID and deployment status
+			const workersJsonContent = await fetchFile(dir.path + "/workers.json");
+			let workerId = "";
+			let deployed = false;
+			if (workersJsonContent) {
+				try {
+					const wj = JSON.parse(workersJsonContent);
+					workerId = wj.workerId || "";
+					deployed = Boolean(workerId);
+				} catch {
+					console.log("Failed to parse workers.json for " + dir.name);
 				}
-			} else {
-				console.log("No README.md found for " + dir.name + " (" + readmeResponse.status + ")");
 			}
 
-			const deployed = deploymentData[dir.name];
+			// 3. Fetch src/index.ts for capabilities
+			const sourceContent = await fetchFile(dir.path + "/src/index.ts") || "";
+			const capabilities = parseCapabilities(sourceContent);
+
+			// 4. Fetch commits for created/updated dates and author
+			const commits = await fetchCommits(dir.path);
+			let createdDate = "";
+			let updatedDate = "";
+			let updatedByEmail = "";
+			if (commits.length > 0) {
+				const latestCommit = commits[0];
+				updatedDate = latestCommit.commit.author.date;
+				updatedByEmail = latestCommit.commit.author.email;
+				const firstCommit = commits[commits.length - 1];
+				createdDate = firstCommit.commit.author.date;
+			}
+
 			const githubUrl = WEB_BASE + "/tree/" + GITHUB_BRANCH + "/" + dir.path;
 
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const properties: any = {
 				"Worker Name": Builder.title(dir.name),
-				"Worker ID": Builder.richText(deployed?.workerId || ""),
+				"Worker ID": Builder.richText(workerId),
 				"GitHub URL": Builder.url(githubUrl),
-				"Deployed": Builder.checkbox(Boolean(deployed)),
+				"Deployed": Builder.checkbox(deployed),
 			};
 
-			if (deployed?.createdAt) {
-				properties["Created"] = Builder.dateTime(deployed.createdAt);
+			if (createdDate) {
+				properties["Created"] = Builder.dateTime(createdDate);
 			}
 
-			if (deployed?.updatedAt) {
-				properties["Last Updated"] = Builder.dateTime(deployed.updatedAt);
+			if (updatedDate) {
+				properties["Last Updated"] = Builder.dateTime(updatedDate);
 			}
 
-			if (deployed?.updatedByName && EMAIL_MAP[deployed.updatedByName]) {
-				properties["Updated By"] = Builder.people(EMAIL_MAP[deployed.updatedByName]);
+			if (updatedByEmail) {
+				properties["Updated By"] = Builder.people(updatedByEmail);
 			}
 
-			if (deployed?.capabilities && deployed.capabilities.length > 0) {
-				properties["Capabilities"] = Builder.multiSelect(...deployed.capabilities);
+			if (capabilities.length > 0) {
+				properties["Capabilities"] = Builder.multiSelect(...capabilities);
 			}
 
 			changes.push({
@@ -155,7 +195,7 @@ worker.sync("readmeSync", {
 				key: dir.name,
 				properties,
 				pageContentMarkdown: readmeContent || undefined,
-				upstreamUpdatedAt: deployed?.updatedAt,
+				upstreamUpdatedAt: updatedDate || undefined,
 			});
 		}
 
