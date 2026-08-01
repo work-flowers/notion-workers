@@ -202,6 +202,16 @@ body {
 	font-weight: 600;
 }
 
+/* Per-card control sits with its title, not in the global filter row: it
+   changes only this chart's ranking, not the slice everything else shows. */
+.nl-card-head-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	align-items: center;
+	justify-content: space-between;
+}
+
 .nl-card-head p {
 	margin: 2px 0 var(--spacing-12);
 	color: var(--content-secondary);
@@ -293,6 +303,30 @@ body {
 	font-size: 11px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
+}
+
+.nl-issue-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+}
+
+.nl-issue-date {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-variant-numeric: tabular-nums;
+}
+
+/* The aggregate benchmark. Solid like every other rule — dashing would read as
+   a projection or a target rather than the measured figure. */
+.nl-reference {
+	stroke: var(--content-secondary);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.nl-reference-label {
+	fill: var(--content-secondary);
+	font-size: 10px;
+	font-weight: 600;
 }
 
 .nl-legend {

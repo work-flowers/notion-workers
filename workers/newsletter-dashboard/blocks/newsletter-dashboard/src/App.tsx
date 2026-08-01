@@ -8,19 +8,28 @@ import {
 	formatDelta,
 	formatPercent,
 	GRANULARITY_LABELS,
+	ISSUE_METRIC_LABELS,
 	previousWindow,
+	rankIssues,
 	RANGE_LABELS,
 	summarize,
 	type Bucket,
 	type Granularity,
+	type IssueMetric,
 	type Metrics,
 	type RangeKey,
 	type Send,
 } from "./aggregate.ts"
-import { RateTrend, VolumeColumns } from "./charts.tsx"
+import { ISSUE_LIMIT, IssueBars, RateTrend, VolumeColumns } from "./charts.tsx"
 
 const GRANULARITIES: Granularity[] = ["week", "month", "quarter"]
 const RANGES: RangeKey[] = ["90d", "180d", "365d", "all"]
+const ISSUE_METRICS: IssueMetric[] = [
+	"clickRate",
+	"openRate",
+	"clickToOpenRate",
+	"deliveries",
+]
 
 export type AppState = {
 	sends: Send[]
@@ -36,6 +45,7 @@ export function App({ sends, today, status, message, stale }: AppState) {
 	const [granularity, setGranularity] = useState<Granularity>("month")
 	const [range, setRange] = useState<RangeKey>("all")
 	const [view, setView] = useState<"chart" | "table">("chart")
+	const [issueMetric, setIssueMetric] = useState<IssueMetric>("clickRate")
 
 	const model = useMemo(() => {
 		const inRange = filterByRange(sends, range, today)
@@ -45,9 +55,10 @@ export function App({ sends, today, status, message, stale }: AppState) {
 			totals: summarize(inRange),
 			prior: prior ? summarize(prior) : null,
 			buckets: bucketize(inRange, granularity),
+			issues: rankIssues(inRange, issueMetric),
 			undated: sends.filter((s) => !s.sentOn).length,
 		}
-	}, [sends, range, today, granularity])
+	}, [sends, range, today, granularity, issueMetric])
 
 	if (status === "error") {
 		return (
@@ -128,6 +139,27 @@ export function App({ sends, today, status, message, stale }: AppState) {
 					</Card>
 					<Card title="Delivery volume" subtitle="Emails delivered per period.">
 						<VolumeColumns buckets={model.buckets} />
+					</Card>
+					<Card
+						title="By issue"
+						subtitle={issueSubtitle(issueMetric, model.issues.length)}
+						control={
+							<Segmented
+								label="Rank by"
+								options={ISSUE_METRICS.map((m) => ({
+									value: m,
+									label: ISSUE_METRIC_LABELS[m],
+								}))}
+								value={issueMetric}
+								onChange={setIssueMetric}
+							/>
+						}
+					>
+						<IssueBars
+							rows={model.issues}
+							metric={issueMetric}
+							aggregate={model.totals}
+						/>
 					</Card>
 				</>
 			) : (
@@ -285,19 +317,35 @@ function Tile({
 	)
 }
 
+/**
+ * Ranking by a rate ignores size, so say so rather than letting a 54-delivery
+ * issue silently look like the best-performing one.
+ */
+function issueSubtitle(metric: IssueMetric, count: number): string {
+	const capped =
+		count > ISSUE_LIMIT ? `Top ${ISSUE_LIMIT} of ${count} sends. ` : ""
+	if (metric === "deliveries") return `${capped}Largest send first.`
+	return `${capped}Highest first. Small sends can top a rate ranking — the line marks the aggregate, and each bar's delivery count is in its tooltip.`
+}
+
 function Card({
 	title,
 	subtitle,
+	control,
 	children,
 }: {
 	title: string
 	subtitle: string
+	control?: React.ReactNode
 	children: React.ReactNode
 }) {
 	return (
 		<section className="nl-card">
 			<div className="nl-card-head">
-				<h2>{title}</h2>
+				<div className="nl-card-head-row">
+					<h2>{title}</h2>
+					{control}
+				</div>
 				<p>{subtitle}</p>
 			</div>
 			{children}

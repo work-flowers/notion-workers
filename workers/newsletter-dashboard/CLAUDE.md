@@ -36,6 +36,13 @@ what it renders and how to bind it. Repo-wide conventions live in the root
 - A missing denominator yields `null`, rendered `—`. Don't "fix" that to 0: a
   period with no deliveries is unknown, not zero engagement.
 - Buttondown's `Recipients` is 0 on every row; `Deliveries` is the denominator.
+- **The per-issue chart ranks by an unweighted rate**, which is the one place
+  this block shows a figure that *isn't* size-aware. That's deliberate — you want
+  to know which issue landed — but it's why the aggregate reference line and the
+  per-bar delivery counts are load-bearing, not decoration. Don't remove them.
+- The per-issue rows key off the Notion page id. Keep mock ids unique too: two
+  fixtures sharing an id makes React reuse DOM and the bars render on top of
+  each other, which looks like a layout bug rather than a data one.
 - One send (2026-04-07) has deliveries and zero opens. It's counted, with a
   visible footnote — don't silently filter rows to make the chart look better.
 

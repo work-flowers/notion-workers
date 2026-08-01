@@ -28,6 +28,12 @@ level, per period.
   on one axis (all three share a unit).
 - **Delivery volume** — deliveries per period, as its own chart rather than a
   second y-axis on the rate plot.
+- **By issue** — one bar per send, ranked by click rate, open rate,
+  click-to-open or deliveries, with a reference line at the aggregate rate for
+  the same window. Ranking by a rate ignores size, so a 54-delivery issue can
+  top a 180-delivery one; the reference line and each bar's delivery count (in
+  its tooltip) are what keep that honest. Capped at the top 20, and the subtitle
+  says so when there are more.
 - **Table view** — the same numbers per period and per send, so nothing is
   reachable only by hovering.
 

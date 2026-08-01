@@ -5,6 +5,10 @@ import type { Send } from "./aggregate.ts"
  * so layout and chart work doesn't need a bound data source. Shaped like the
  * real Email Analytics rows, including the one delivered-but-never-opened send.
  */
+/** Sequential so ids stay unique even when two sends share a date and subject
+ *  prefix — real rows carry distinct Notion page ids. */
+let seq = 0
+
 export const MOCK_SENDS: Send[] = [
 	row("Stop Troubleshooting your Zaps Manually. Like an Animal.", "2026-07-31", 176, 88, 18, 1),
 	row("How Knoxx Foods Built the Operational Foundations for AI", "2026-07-15", 180, 101, 26, 5),
@@ -28,5 +32,6 @@ function row(
 	clicks: number,
 	unsubscribes: number,
 ): Send {
-	return { id: sentOn + subject.slice(0, 8), subject, sentOn, deliveries, opens, clicks, unsubscribes }
+	seq += 1
+	return { id: `mock-${seq}`, subject, sentOn, deliveries, opens, clicks, unsubscribes }
 }

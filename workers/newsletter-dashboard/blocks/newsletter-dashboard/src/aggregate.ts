@@ -54,6 +54,12 @@ export type Bucket = Metrics & {
 
 export type MetricKey = "openRate" | "clickRate" | "clickToOpenRate"
 
+/** What the per-issue chart can be sorted and measured by. */
+export type IssueMetric = MetricKey | "unsubRate" | "deliveries"
+
+/** One send with its own metrics, for the per-issue view. */
+export type IssueRow = Metrics & { id: string; subject: string; sentOn: string | null }
+
 const MONTHS = [
 	"Jan",
 	"Feb",
@@ -92,6 +98,19 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
 	openRate: "Open rate",
 	clickRate: "Click rate",
 	clickToOpenRate: "Click-to-open",
+}
+
+export const ISSUE_METRIC_LABELS: Record<IssueMetric, string> = {
+	clickRate: "Click rate",
+	openRate: "Open rate",
+	clickToOpenRate: "Click-to-open",
+	unsubRate: "Unsubscribe rate",
+	deliveries: "Delivered",
+}
+
+/** True for the metrics measured as a percentage of deliveries or opens. */
+export function isRateMetric(metric: IssueMetric): metric is MetricKey | "unsubRate" {
+	return metric !== "deliveries"
 }
 
 /**
@@ -245,6 +264,35 @@ export function bucketize(sends: Send[], granularity: Granularity): Bucket[] {
 			start,
 			...summarize(rows),
 		}))
+}
+
+/**
+ * One row per send, ranked by `metric`, highest first. Sends whose metric is
+ * unknown (no deliveries, or no opens for click-to-open) sort to the end rather
+ * than being treated as zero.
+ *
+ * Ranking by a rate deliberately ignores size — a 54-delivery issue can top a
+ * 180-delivery one on a handful of clicks. The caller shows each row's delivery
+ * count and the aggregate reference line so that's visible rather than implied.
+ */
+export function rankIssues(sends: Send[], metric: IssueMetric): IssueRow[] {
+	return sends
+		.map((send) => ({
+			id: send.id,
+			subject: send.subject,
+			sentOn: send.sentOn,
+			...summarize([send]),
+		}))
+		.sort((a, b) => {
+			const left = a[metric]
+			const right = b[metric]
+			if (left === null && right === null) return 0
+			if (left === null) return 1
+			if (right === null) return -1
+			if (right !== left) return right - left
+			// Stable tiebreak so equal rates don't reorder between renders.
+			return (b.sentOn ?? "") < (a.sentOn ?? "") ? -1 : 1
+		})
 }
 
 /** Relative change between two rates. Null unless both sides are known. */

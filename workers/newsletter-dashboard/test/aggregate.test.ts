@@ -8,6 +8,7 @@ import {
 	filterByRange,
 	formatPercent,
 	previousWindow,
+	rankIssues,
 	summarize,
 	type Send,
 } from "../blocks/newsletter-dashboard/src/aggregate.ts"
@@ -191,6 +192,46 @@ test("delta is relative change, and null when either side is unknown", () => {
 	assert.equal(delta(null, 0.1), null)
 	assert.equal(delta(0.1, null), null)
 	assert.equal(delta(0.1, 0), null)
+})
+
+test("issues rank by the chosen metric, with unknown values last", () => {
+	const rows = [
+		send({ id: "mid", sentOn: "2026-07-01", deliveries: 100, opens: 50, clicks: 8 }),
+		send({ id: "best", sentOn: "2026-07-02", deliveries: 50, opens: 30, clicks: 10 }),
+		send({ id: "unsent", sentOn: "2026-07-03", deliveries: 0 }),
+		send({ id: "worst", sentOn: "2026-07-04", deliveries: 200, opens: 90, clicks: 4 }),
+	]
+
+	// A 50-delivery send at 20% outranks a 200-delivery send at 2%: the ranking
+	// is by rate, which is exactly why the chart shows the aggregate line.
+	assert.deepEqual(
+		rankIssues(rows, "clickRate").map((r) => r.id),
+		["best", "mid", "worst", "unsent"],
+	)
+	assert.equal(rankIssues(rows, "clickRate")[3].clickRate, null)
+
+	assert.deepEqual(
+		rankIssues(rows, "deliveries").map((r) => r.id),
+		["worst", "mid", "best", "unsent"],
+	)
+
+	// Click-to-open needs opens, not deliveries, to be defined.
+	const noOpens = rankIssues(
+		[send({ id: "delivered-unopened", deliveries: 40, opens: 0 })],
+		"clickToOpenRate",
+	)
+	assert.equal(noOpens[0].clickToOpenRate, null)
+})
+
+test("equal metric values keep a stable, newest-first order", () => {
+	const rows = [
+		send({ id: "older", sentOn: "2026-06-01", deliveries: 100, opens: 50, clicks: 5 }),
+		send({ id: "newer", sentOn: "2026-07-01", deliveries: 200, opens: 100, clicks: 10 }),
+	]
+	assert.deepEqual(
+		rankIssues(rows, "clickRate").map((r) => r.id),
+		["newer", "older"],
+	)
 })
 
 test("addDays crosses month and year boundaries", () => {

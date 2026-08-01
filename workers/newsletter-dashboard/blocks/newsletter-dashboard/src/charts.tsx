@@ -3,8 +3,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
 	formatCount,
 	formatPercent,
+	isRateMetric,
+	ISSUE_METRIC_LABELS,
 	METRIC_LABELS,
 	type Bucket,
+	type IssueMetric,
+	type IssueRow,
+	type Metrics,
 	type MetricKey,
 } from "./aggregate.ts"
 
@@ -429,6 +434,215 @@ export function VolumeColumns({ buckets }: { buckets: Bucket[] }) {
 	)
 }
 
+const ISSUE_ROW_HEIGHT = 26
+const ISSUE_BAR_THICKNESS = 14
+const ISSUE_LABEL_WIDTH = 168
+/** Past this the card becomes a scroll-hunt; the overflow is reported, never hidden. */
+export const ISSUE_LIMIT = 20
+
+/**
+ * One bar per send, ranked. Horizontal because subjects are long sentences —
+ * rotated x-axis labels would be unreadable. Single series, so one colour for
+ * every bar: shading by value would double-encode the bar's own length.
+ */
+export function IssueBars({
+	rows,
+	metric,
+	aggregate,
+}: {
+	rows: IssueRow[]
+	metric: IssueMetric
+	aggregate: Metrics
+}) {
+	const [ref, width] = useMeasuredWidth()
+	const [hover, setHover] = useState<number | null>(null)
+
+	const shown = rows.slice(0, ISSUE_LIMIT)
+	const isRate = isRateMetric(metric)
+	const plotHeight = shown.length * ISSUE_ROW_HEIGHT
+	const height = plotHeight + PAD.top + AXIS_BAND
+	const labelWidth = Math.min(ISSUE_LABEL_WIDTH, Math.max(90, width * 0.3))
+	const innerWidth = Math.max(60, width - labelWidth - 52)
+
+	const values = shown
+		.map((row) => row[metric])
+		.filter((v): v is number => v !== null && v > 0)
+	const max = values.length > 0 ? Math.max(...values) : isRate ? 0.1 : 1
+	const step = isRate ? niceRateStep(max) : niceCountStep(max)
+	const top = Math.max(step, Math.ceil(max / step) * step)
+	const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step)
+
+	const xAt = (value: number) => labelWidth + (value / top) * innerWidth
+	const yAt = (i: number) => PAD.top + i * ISSUE_ROW_HEIGHT
+	const format = (value: number | null) =>
+		value === null ? "—" : isRate ? formatPercent(value) : formatCount(value)
+
+	// Only rates have a meaningful per-issue benchmark: the aggregate rate for
+	// the same window. Total deliveries is not a per-issue reference.
+	const reference = isRate ? aggregate[metric] : null
+
+	return (
+		<div className="nl-chart" ref={ref}>
+			<svg
+				width={width}
+				height={height}
+				role="img"
+				aria-label={`${ISSUE_METRIC_LABELS[metric]} for each of ${shown.length} sends, highest first`}
+			>
+				{ticks.map((tick) => (
+					<g key={tick}>
+						<line
+							className="nl-grid"
+							x1={xAt(tick)}
+							x2={xAt(tick)}
+							y1={PAD.top}
+							y2={PAD.top + plotHeight}
+						/>
+						<text
+							className="nl-axis-text"
+							x={xAt(tick)}
+							y={PAD.top + plotHeight + 16}
+							textAnchor="middle"
+						>
+							{isRate ? formatPercent(tick, 0) : formatCount(tick)}
+						</text>
+					</g>
+				))}
+
+				{shown.map((row, i) => {
+					const value = row[metric]
+					const barWidth = value === null ? 0 : Math.max(0, xAt(value) - labelWidth)
+					return (
+						<g key={row.id} style={{ color: "var(--series-1)" }}>
+							{/* Date prefix: two sends can share a subject (a resend), and
+							    truncation would otherwise make them indistinguishable. */}
+							<text
+								className="nl-issue-label"
+								x={labelWidth - 10}
+								y={yAt(i) + ISSUE_ROW_HEIGHT / 2 + 4}
+								textAnchor="end"
+							>
+								<tspan className="nl-issue-date">{shortDate(row.sentOn)}</tspan>
+								{`  ${truncate(row.subject, 20)}`}
+							</text>
+							{barWidth > 0 ? (
+								<>
+									<rect
+										className={`nl-bar${hover === i ? " is-hover" : ""}`}
+										x={labelWidth}
+										y={yAt(i) + (ISSUE_ROW_HEIGHT - ISSUE_BAR_THICKNESS) / 2}
+										width={barWidth}
+										height={ISSUE_BAR_THICKNESS}
+										rx={4}
+									/>
+									{/* Square the baseline end; only the data end is rounded. */}
+									<rect
+										className={`nl-bar${hover === i ? " is-hover" : ""}`}
+										x={labelWidth}
+										y={yAt(i) + (ISSUE_ROW_HEIGHT - ISSUE_BAR_THICKNESS) / 2}
+										width={Math.min(4, barWidth)}
+										height={ISSUE_BAR_THICKNESS}
+									/>
+								</>
+							) : null}
+							<text
+								className="nl-cap-label"
+								x={labelWidth + barWidth + 8}
+								y={yAt(i) + ISSUE_ROW_HEIGHT / 2 + 4}
+							>
+								{format(value)}
+							</text>
+							{/* Hit target covers the whole row, not the painted bar. */}
+							<rect
+								className="nl-hit"
+								x={0}
+								y={yAt(i)}
+								width={Math.max(width, 1)}
+								height={ISSUE_ROW_HEIGHT}
+								onPointerEnter={() => setHover(i)}
+								onPointerLeave={() => setHover((prev) => (prev === i ? null : prev))}
+							/>
+						</g>
+					)
+				})}
+
+				{reference !== null && reference > 0 && reference <= top ? (
+					<g>
+						{/* Solid, like every other rule here — a dashed line would read as
+						    a projection or threshold rather than the actual aggregate. */}
+						<line
+							className="nl-reference"
+							x1={xAt(reference)}
+							x2={xAt(reference)}
+							y1={PAD.top - 8}
+							y2={PAD.top + plotHeight}
+						/>
+						<text className="nl-reference-label" x={xAt(reference) + 4} y={PAD.top - 12}>
+							{`Aggregate ${formatPercent(reference)}`}
+						</text>
+					</g>
+				) : null}
+
+				<line
+					className="nl-baseline"
+					x1={labelWidth}
+					x2={labelWidth}
+					y1={PAD.top}
+					y2={PAD.top + plotHeight}
+				/>
+			</svg>
+
+			{hover !== null && shown[hover] ? (
+				<Tooltip
+					anchor={Math.min(labelWidth + innerWidth / 2, width)}
+					width={width}
+					top={yAt(hover) + ISSUE_ROW_HEIGHT}
+					title={shown[hover].subject}
+					rows={[
+						{
+							cssVar: "--series-1",
+							label: ISSUE_METRIC_LABELS[metric],
+							value: format(shown[hover][metric]),
+						},
+					]}
+					footer={`${shown[hover].sentOn ?? "no date"} · ${formatCount(
+						shown[hover].deliveries,
+					)} delivered · ${formatCount(shown[hover].opens)} opens · ${formatCount(
+						shown[hover].clicks,
+					)} clicks`}
+				/>
+			) : null}
+		</div>
+	)
+}
+
+/** Subjects are long; the full text stays in the tooltip and the table view. */
+function truncate(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`
+}
+
+/** `2026-07-31` → `31 Jul`. Parsed by hand to avoid a timezone shift. */
+function shortDate(day: string | null): string {
+	if (!day) return "—"
+	const [, month, date] = day.split("-")
+	return `${Number(date)} ${SHORT_MONTHS[Number(month) - 1] ?? ""}`
+}
+
+const SHORT_MONTHS = [
+	"Jan",
+	"Feb",
+	"Mar",
+	"Apr",
+	"May",
+	"Jun",
+	"Jul",
+	"Aug",
+	"Sep",
+	"Oct",
+	"Nov",
+	"Dec",
+]
+
 function Legend() {
 	return (
 		<ul className="nl-legend">
@@ -449,12 +663,14 @@ function Legend() {
 function Tooltip({
 	anchor,
 	width,
+	top,
 	title,
 	rows,
 	footer,
 }: {
 	anchor: number
 	width: number
+	top?: number
 	title: string
 	rows: { cssVar: string; label: string; value: string }[]
 	footer?: string
@@ -470,7 +686,7 @@ function Tooltip({
 	const left = Math.min(Math.max(anchor - box / 2, 4), Math.max(4, width - box - 4))
 
 	return (
-		<div className="nl-tooltip" ref={ref} style={{ left }} role="status">
+		<div className="nl-tooltip" ref={ref} style={{ left, top }} role="status">
 			<div className="nl-tooltip-title">{title}</div>
 			{rows.map((row) => (
 				<div className="nl-tooltip-row" key={row.label}>
