@@ -1,4 +1,8 @@
-import type { NotionDataSourcePage, NotionDateValue } from "@notionhq/custom-blocks"
+import type {
+	NotionDataSourcePage,
+	NotionDateValue,
+	NotionRecordPointer,
+} from "@notionhq/custom-blocks"
 
 import type { Send } from "./aggregate.ts"
 
@@ -17,7 +21,19 @@ export function toSend(row: NotionDataSourcePage): Send {
 		opens: count(props.opens),
 		clicks: count(props.clicks),
 		unsubscribes: count(props.unsubscribes),
+		issuePageId: relatedPageId(props.issue),
 	}
+}
+
+/**
+ * First related page id from a relation value. Relation values arrive as an
+ * array of `{ id, table }` record pointers; an unmapped or empty relation is
+ * simply absent, which is a supported state here rather than an error.
+ */
+function relatedPageId(value: unknown): string | null {
+	if (!Array.isArray(value) || value.length === 0) return null
+	const first = value[0] as NotionRecordPointer
+	return typeof first?.id === "string" && first.id.length > 0 ? first.id : null
 }
 
 function text(value: unknown): string {

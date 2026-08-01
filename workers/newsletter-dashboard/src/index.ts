@@ -60,6 +60,18 @@ worker.customBlock("newsletterDashboard", {
 					description: "Unsubscribes attributed to the send.",
 					type: "number",
 				},
+				/**
+				 * Optional. When mapped to a relation pointing at Newsletter Issues,
+				 * the table view links each send to the page holding its content.
+				 * Left unmapped the block still works — the subject renders as plain
+				 * text — so this can be bound after the fact.
+				 */
+				issue: {
+					name: "Newsletter issue",
+					description:
+						"Optional relation to the Newsletter Issues page for this send. Leave unmapped if you don't have one; the dashboard degrades to plain text.",
+					type: "relation",
+				},
 			},
 		},
 	},

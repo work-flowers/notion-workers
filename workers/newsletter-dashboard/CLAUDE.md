@@ -17,6 +17,26 @@ what it renders and how to bind it. Repo-wide conventions live in the root
 - `blocks/newsletter-dashboard/src/aggregate.ts` — all the arithmetic, kept pure
   and free of React/SDK imports so `test/aggregate.test.ts` can exercise it.
 
+## Relations are readable, despite the alpha overview
+
+The alpha overview page says property support excludes relations. That is out of
+date: `NotionDataSourceValue` includes an array of `{ id, table }` record
+pointers, and the official habit-tracker cookbook both declares
+`type: "relation"` and reads it. A relation therefore gives you the related
+page's id — but only its id. There is no way to read the related page's title
+from the relation value; that needs a separate `pages.get(id)`, and page *content*
+(blocks) is not readable at all in the alpha.
+
+What you cannot do is navigate to it. `README.md` in `@notionhq/custom-blocks`
+lists "no top-level navigation, `window.open`, or auth redirects" under Forbidden
+APIs, so the subject cell is a plain `target="_blank"` anchor and whether it opens
+is up to the host's iframe sandbox, not to this code.
+
+Declared-but-unmapped properties are a supported state (`propertyIdsByKey` maps
+them to `undefined`), which is what lets `issue` be optional. Adding a property
+to the manifest does change the deployed manifest, so an existing block instance
+may need re-mapping after such a deploy.
+
 ## Gotchas found building this
 
 - **`vite.config.ts` must pin `root: import.meta.dirname`.** Inside an npm

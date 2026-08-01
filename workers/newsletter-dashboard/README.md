@@ -35,7 +35,9 @@ level, per period.
   its tooltip) are what keep that honest. Capped at the top 20, and the subtitle
   says so when there are more.
 - **Table view** — the same numbers per period and per send, so nothing is
-  reachable only by hovering.
+  reachable only by hovering. Every column sorts on click (unknown values always
+  sort last, whichever direction). When the optional `issue` relation is mapped,
+  each subject links to the Newsletter Issues page holding that send's content.
 
 Rates are `null` (`—`) rather than `0` when the denominator is missing, and
 periods with no send are gaps in the line, not 0% points.
@@ -57,9 +59,31 @@ in Notion when the block is inserted. Bind the `sends` data source to
 | `opens` | Opens (number) |
 | `clicks` | Clicks (number) |
 | `unsubscribes` | Unsubscriptions (number) |
+| `issue` *(optional)* | a relation to Newsletter Issues — see below |
 
 Do **not** map `Click Rate` / `Open Rate` / `Click Rate (Agg)` — the block
 derives rates itself, and the alpha can't read formula properties anyway.
+
+### The optional `issue` relation
+
+`issue` is the only property that may be left unmapped: without it the table
+view renders subjects as plain text, with it each subject links to the
+Newsletter Issues page holding that send's content.
+
+It needs a relation property on Email Analytics pointing at Newsletter Issues,
+populated by matching Email Analytics `Email ID` to Newsletter Issues
+`Buttondown ID` — those hold the same Buttondown identifier (`em_…`). Note that
+`Email Analytics` is a synced data source, so the relation has to be a
+hand-added (undeclared) property; a managed schema would make it read-only, and
+`Schema.relation()` only relates two syncs, which Newsletter Issues isn't.
+
+Two caveats, both real:
+
+- Not every send has an issue page. A Buttondown resend gets its own `Email ID`
+  with no Notion counterpart, so it stays unlinked — the table says how many.
+- The SDK forbids top-level navigation and `window.open`, so the subject is a
+  plain `target="_blank"` anchor. Whether the host's iframe sandbox lets that
+  open is a property of Notion's sandbox, not of this code.
 
 ## Develop
 

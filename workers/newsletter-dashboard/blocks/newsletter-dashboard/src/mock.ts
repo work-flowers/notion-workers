@@ -33,5 +33,18 @@ function row(
 	unsubscribes: number,
 ): Send {
 	seq += 1
-	return { id: `mock-${seq}`, subject, sentOn, deliveries, opens, clicks, unsubscribes }
+	return {
+		id: `mock-${seq}`,
+		subject,
+		sentOn,
+		deliveries,
+		opens,
+		clicks,
+		unsubscribes,
+		// Every fixture is linked except the resend, mirroring the real join:
+		// that Buttondown email has no Newsletter Issues page.
+		issuePageId: subject.includes("(resend)")
+			? null
+			: `00000000-0000-0000-0000-${String(seq).padStart(12, "0")}`,
+	}
 }

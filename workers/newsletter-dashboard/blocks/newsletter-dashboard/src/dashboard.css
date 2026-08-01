@@ -434,11 +434,23 @@ body {
 	font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Numbers are right-aligned so digits line up; text columns opt out with
+ * `.nl-col-left`, which is applied to the header and the cell from the same
+ * column definition. Doing it per-column rather than by `:first-child` is what
+ * keeps a text column in the middle of the table (Subject) from getting a
+ * right-aligned header over left-aligned cells.
+ */
 .nl-table th,
 .nl-table td {
 	padding: 6px 10px 6px 0;
 	text-align: right;
 	white-space: nowrap;
+}
+
+.nl-table th.nl-col-left,
+.nl-table td.nl-col-left {
+	text-align: left;
 }
 
 .nl-table thead th {
@@ -447,32 +459,100 @@ body {
 	font-weight: 500;
 }
 
-.nl-table tbody th {
-	text-align: left;
-	font-weight: 500;
-}
-
-.nl-table tbody tr + tr th,
 .nl-table tbody tr + tr td {
 	border-top: 1px solid color-mix(in oklab, var(--content-primary) 6%, transparent);
 }
 
-.nl-table thead th:first-child,
-.nl-table tbody th:first-child {
-	text-align: left;
+/* Sortable header: a real button, so it's keyboard-reachable and announced. */
+.nl-sort {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.nl-table th:not(.nl-col-left) .nl-sort {
+	flex-direction: row-reverse;
+}
+
+.nl-sort:hover {
+	color: var(--content-primary);
+}
+
+.nl-sort:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+.nl-sort.is-active {
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+/*
+ * Every column is sortable but only one is sorted, so the caret is hidden until
+ * it means something: visible on the active column, and faintly on hover/focus
+ * as the affordance. `visibility` rather than `display` so the header width
+ * doesn't shift when it appears.
+ */
+.nl-sort-caret {
+	font-size: 10px;
+	visibility: hidden;
+}
+
+.nl-sort:hover .nl-sort-caret,
+.nl-sort:focus-visible .nl-sort-caret {
+	visibility: visible;
+	opacity: 0.4;
+}
+
+.nl-sort.is-active .nl-sort-caret {
+	visibility: visible;
+	opacity: 1;
 }
 
 .nl-subject {
+	display: inline-block;
 	max-width: 34ch;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	vertical-align: bottom;
 }
 
-/* Shrink to content so the slack lands on the subject column, not the date. */
-.nl-nowrap {
+.nl-link {
+	color: var(--content-primary);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in oklab, var(--content-primary) 35%, transparent);
+	text-underline-offset: 2px;
+}
+
+.nl-link:hover {
+	text-decoration-color: currentColor;
+}
+
+.nl-table-note {
+	margin: var(--spacing-8) 0 0;
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+}
+
+/* Table captions carry the "click to sort" affordance for screen readers. */
+.nl-sr-only {
+	position: absolute;
 	width: 1px;
-	text-align: left;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
 }
 
 /* ---- Notes & empty states ---- */

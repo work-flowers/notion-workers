@@ -21,6 +21,7 @@ function send(partial: Partial<Send> & { id: string }): Send {
 		opens: 0,
 		clicks: 0,
 		unsubscribes: 0,
+		issuePageId: null,
 		...partial,
 	}
 }

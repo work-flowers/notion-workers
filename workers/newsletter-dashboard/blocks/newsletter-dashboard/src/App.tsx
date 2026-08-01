@@ -21,6 +21,7 @@ import {
 	type Send,
 } from "./aggregate.ts"
 import { ISSUE_LIMIT, IssueBars, RateTrend, VolumeColumns } from "./charts.tsx"
+import { DataTable, type Column } from "./table.tsx"
 
 const GRANULARITIES: Granularity[] = ["week", "month", "quarter"]
 const RANGES: RangeKey[] = ["90d", "180d", "365d", "all"]
@@ -164,10 +165,16 @@ export function App({ sends, today, status, message, stale }: AppState) {
 				</>
 			) : (
 				<>
-					<Card title="By period" subtitle="The same figures the charts plot.">
+					<Card
+						title="By period"
+						subtitle="The same figures the charts plot. Click a column header to sort."
+					>
 						<PeriodTable buckets={model.buckets} />
 					</Card>
-					<Card title="By send" subtitle="Row-level counts, newest first.">
+					<Card
+						title="By send"
+						subtitle="One row per send, newest first. Click a column header to sort, or a subject to open its newsletter issue."
+					>
 						<SendTable sends={model.inRange} />
 					</Card>
 				</>
@@ -353,80 +360,153 @@ function Card({
 	)
 }
 
+const PERIOD_COLUMNS: Column<Bucket & { id: string }>[] = [
+	{
+		key: "period",
+		label: "Period",
+		left: true,
+		// Sort on the bucket key, which is chronological; the label isn't.
+		sortValue: (b) => b.key,
+		render: (b) => b.label,
+	},
+	{ key: "sends", label: "Sends", sortValue: (b) => b.sends, render: (b) => formatCount(b.sends) },
+	{
+		key: "deliveries",
+		label: "Delivered",
+		sortValue: (b) => b.deliveries,
+		render: (b) => formatCount(b.deliveries),
+	},
+	{ key: "opens", label: "Opens", sortValue: (b) => b.opens, render: (b) => formatCount(b.opens) },
+	{
+		key: "clicks",
+		label: "Clicks",
+		sortValue: (b) => b.clicks,
+		render: (b) => formatCount(b.clicks),
+	},
+	{
+		key: "openRate",
+		label: "Open rate",
+		sortValue: (b) => b.openRate,
+		render: (b) => formatPercent(b.openRate),
+	},
+	{
+		key: "clickRate",
+		label: "Click rate",
+		sortValue: (b) => b.clickRate,
+		render: (b) => formatPercent(b.clickRate),
+	},
+	{
+		key: "clickToOpenRate",
+		label: "Click-to-open",
+		sortValue: (b) => b.clickToOpenRate,
+		render: (b) => formatPercent(b.clickToOpenRate),
+	},
+	{
+		key: "unsubRate",
+		label: "Unsub rate",
+		sortValue: (b) => b.unsubRate,
+		render: (b) => formatPercent(b.unsubRate, 2),
+	},
+]
+
 function PeriodTable({ buckets }: { buckets: Bucket[] }) {
+	const rows = useMemo(() => buckets.map((b) => ({ ...b, id: b.key })), [buckets])
 	return (
-		<div className="nl-table-wrap">
-			<table className="nl-table">
-				<thead>
-					<tr>
-						<th scope="col">Period</th>
-						<th scope="col">Sends</th>
-						<th scope="col">Delivered</th>
-						<th scope="col">Opens</th>
-						<th scope="col">Clicks</th>
-						<th scope="col">Open rate</th>
-						<th scope="col">Click rate</th>
-						<th scope="col">Click-to-open</th>
-						<th scope="col">Unsub rate</th>
-					</tr>
-				</thead>
-				<tbody>
-					{[...buckets].reverse().map((bucket) => (
-						<tr key={bucket.key}>
-							<th scope="row">{bucket.label}</th>
-							<td>{formatCount(bucket.sends)}</td>
-							<td>{formatCount(bucket.deliveries)}</td>
-							<td>{formatCount(bucket.opens)}</td>
-							<td>{formatCount(bucket.clicks)}</td>
-							<td>{formatPercent(bucket.openRate)}</td>
-							<td>{formatPercent(bucket.clickRate)}</td>
-							<td>{formatPercent(bucket.clickToOpenRate)}</td>
-							<td>{formatPercent(bucket.unsubRate, 2)}</td>
-						</tr>
-					))}
-				</tbody>
-			</table>
-		</div>
+		<DataTable
+			columns={PERIOD_COLUMNS}
+			rows={rows}
+			initialSort={{ key: "period", dir: "desc" }}
+			caption="Aggregate figures per period. Click a column header to sort."
+		/>
+	)
+}
+
+type SendRow = Send & Metrics
+
+const SEND_COLUMNS: Column<SendRow>[] = [
+	{
+		key: "sent",
+		label: "Sent",
+		left: true,
+		sortValue: (s) => s.sentOn,
+		render: (s) => s.sentOn ?? "—",
+	},
+	{
+		key: "subject",
+		label: "Subject",
+		left: true,
+		sortValue: (s) => s.subject.toLowerCase(),
+		render: (s) => <SubjectCell send={s} />,
+	},
+	{
+		key: "deliveries",
+		label: "Delivered",
+		sortValue: (s) => s.deliveries,
+		render: (s) => formatCount(s.deliveries),
+	},
+	{ key: "opens", label: "Opens", sortValue: (s) => s.opens, render: (s) => formatCount(s.opens) },
+	{
+		key: "clicks",
+		label: "Clicks",
+		sortValue: (s) => s.clicks,
+		render: (s) => formatCount(s.clicks),
+	},
+	{
+		key: "openRate",
+		label: "Open rate",
+		sortValue: (s) => s.openRate,
+		render: (s) => formatPercent(s.openRate),
+	},
+	{
+		key: "clickRate",
+		label: "Click rate",
+		sortValue: (s) => s.clickRate,
+		render: (s) => formatPercent(s.clickRate),
+	},
+]
+
+/**
+ * Links to the related Newsletter Issue page when the `issue` relation is
+ * mapped and set. `target="_blank"` because the block may not navigate its own
+ * frame — the SDK forbids top-level navigation.
+ */
+function SubjectCell({ send }: { send: SendRow }) {
+	if (!send.issuePageId) return <span className="nl-subject">{send.subject}</span>
+	return (
+		<a
+			className="nl-subject nl-link"
+			href={`https://www.notion.so/${send.issuePageId.replace(/-/g, "")}`}
+			target="_blank"
+			rel="noreferrer"
+			title={`Open “${send.subject}” in Notion`}
+		>
+			{send.subject}
+		</a>
 	)
 }
 
 function SendTable({ sends }: { sends: Send[] }) {
-	const rows = [...sends].sort((a, b) => (a.sentOn ?? "") < (b.sentOn ?? "") ? 1 : -1)
+	const rows = useMemo(
+		() => sends.map((send) => ({ ...send, ...summarize([send]) })),
+		[sends],
+	)
+	const linked = rows.filter((r) => r.issuePageId).length
 
 	return (
-		<div className="nl-table-wrap">
-			<table className="nl-table">
-				<thead>
-					<tr>
-						<th scope="col">Sent</th>
-						<th scope="col">Subject</th>
-						<th scope="col">Delivered</th>
-						<th scope="col">Opens</th>
-						<th scope="col">Clicks</th>
-						<th scope="col">Open rate</th>
-						<th scope="col">Click rate</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((send) => {
-						const summary = summarize([send])
-						return (
-							<tr key={send.id}>
-								<td className="nl-nowrap">{send.sentOn ?? "—"}</td>
-								<th scope="row" className="nl-subject">
-									{send.subject}
-								</th>
-								<td>{formatCount(send.deliveries)}</td>
-								<td>{formatCount(send.opens)}</td>
-								<td>{formatCount(send.clicks)}</td>
-								<td>{formatPercent(summary.openRate)}</td>
-								<td>{formatPercent(summary.clickRate)}</td>
-							</tr>
-						)
-					})}
-				</tbody>
-			</table>
-		</div>
+		<>
+			<DataTable
+				columns={SEND_COLUMNS}
+				rows={rows}
+				initialSort={{ key: "sent", dir: "desc" }}
+				caption="Row-level counts per send. Click a column header to sort."
+			/>
+			{linked > 0 && linked < rows.length ? (
+				<p className="nl-table-note">
+					{rows.length - linked} of {rows.length} sends aren't linked to a
+					newsletter issue, so their subjects aren't clickable.
+				</p>
+			) : null}
+		</>
 	)
 }
 
