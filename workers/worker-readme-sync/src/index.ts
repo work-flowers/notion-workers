@@ -1,6 +1,7 @@
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
+import { toNotionMarkdown } from "@work-flowers/notion-worker-shared";
 
 const worker = new Worker();
 export default worker;
@@ -194,7 +195,10 @@ worker.sync("readmeSync", {
 				type: "upsert" as const,
 				key: dir.name,
 				properties,
-				pageContentMarkdown: readmeContent || undefined,
+				// Notion emits one block per source line, so a hard-wrapped README
+				// arrives as a stack of one-line paragraphs. See the header comment
+				// in packages/shared/src/markdown.ts.
+				pageContentMarkdown: readmeContent ? toNotionMarkdown(readmeContent) : undefined,
 				upstreamUpdatedAt: updatedDate || undefined,
 			});
 		}

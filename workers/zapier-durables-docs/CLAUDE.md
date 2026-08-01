@@ -258,7 +258,10 @@ extracts.
 
 ## Markdown
 
-`src/markdown.ts` is deliberately minimal and its header comment records what
+The conversion lives in `packages/shared/src/markdown.ts` (it moved out of this
+worker on 2026-08-01 when `worker-readme-sync` needed the same fixes — both
+import `toNotionMarkdown` from `@work-flowers/notion-worker-shared`, and its
+tests moved with it). It is deliberately minimal and its header comment records what
 was tested and what was rejected. Before adding a transform there, check that
 comment — mermaid `<br/>` normalisation and wholesale pipe-table conversion were
 both considered and are both *unnecessary*, and two plausible fixes for the

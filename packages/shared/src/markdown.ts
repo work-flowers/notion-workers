@@ -301,6 +301,19 @@ function fixBlockquotes(text: string): string {
 // own line, and an indented block that follows a blank line is treated as
 // indented code rather than a continuation.
 
+/**
+ * An HTML block tag opening a line — `<table …>`, `<tr>`, `</td>`, `<!-- … -->`.
+ *
+ * Deliberately *not* a Markdown autolink (`<https://…>`, `<mailto:…>`): the tag
+ * name may not contain a colon, so a URI scheme fails to match. Treating an
+ * autolink as structural strands it on its own line and splits the paragraph
+ * around it into three blocks — `workers/harvest-sync/README.md` has one
+ * mid-paragraph, which is how this was found.
+ */
+function isHtmlBlockLine(line: string): boolean {
+	return /^<!--/.test(line) || /^<\/?[a-zA-Z][a-zA-Z0-9-]*(?:[\s/>]|$)/.test(line);
+}
+
 /** A line that must keep its own line and terminates any paragraph in progress. */
 function isStructuralLine(line: string): boolean {
 	const t = line.trim();
@@ -309,7 +322,7 @@ function isStructuralLine(line: string): boolean {
 		/^(?:[-*_]\s*){3,}$/.test(t) || // horizontal rule
 		t.startsWith(">") || // quote (already one line each)
 		t.startsWith("|") || // pipe table row
-		t.startsWith("<") // table XML or raw HTML
+		isHtmlBlockLine(t) // table XML or raw HTML, but not an autolink
 	);
 }
 

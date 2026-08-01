@@ -11,5 +11,6 @@ export {
 } from "./contacts";
 export type { Blocklist, ResolveContactsOptions } from "./contacts";
 export { buildInternalUserMap, resolveInternalUserIds } from "./internalUsers";
+export { toNotionMarkdown } from "./markdown";
 export { createPage, queryDataSource } from "./notionRaw";
 export type { QueryDataSourceResponse } from "./notionRaw";
