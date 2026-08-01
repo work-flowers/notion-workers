@@ -13,6 +13,37 @@ Two managed databases, two syncs:
 
 Plus a standalone script for historical subscriber counts — see below.
 
+### Newsletter issue linking
+
+`emailAnalyticsSync` also keeps a **Newsletter Issue** relation on each analytics
+row pointed at the matching page in the *Newsletter Issues* data source, so an
+issue page shows its own send stats. The join is on Buttondown's email id —
+`Email ID` on the analytics row, `Buttondown ID` on the issue.
+
+Three things about it are deliberate:
+
+- **The property is hand-added, not part of the managed schema.** Declaring it
+  would make it read-only, and `Schema.relation()` only relates two syncs —
+  *Newsletter Issues* is edited by hand. So the sync writes it through the Notion
+  API instead. If the property is missing or isn't a relation, the pass logs and
+  skips; the analytics sync is unaffected.
+- **A brand-new send is linked on the following cycle, so within 6h.** The
+  platform applies a sync's changes *after* the handler returns, so on the cycle
+  where a send first appears there is no row yet to relate.
+- **Only wrong or missing relations are written**, which makes it cheap to repeat
+  and self-healing: if a `replace` cycle ever deletes and re-creates a row, the
+  next pass restores its relation.
+
+Sends with no matching issue page are counted and left alone — expected for a
+Buttondown resend, which gets its own email id with no issue page behind it.
+
+⚠️ `ntn workers sync trigger emailAnalyticsSync --preview` is **not** side-effect
+free for this sync: preview skips writes to the managed database, but the relation
+pass writes through the API regardless.
+
+Existing rows can also be linked without waiting for a cycle, with
+`workers/newsletter-dashboard/scripts/backfill-issue-relation.ts`.
+
 ## Setup
 
 Prerequisites: Notion Business/Enterprise workspace with [Workers opted in](https://www.notion.so/?target=ai), the [`ntn` CLI](https://developers.notion.com/workers) installed, Node 22+.
@@ -70,6 +101,6 @@ Import the CSV into the *Buttondown subscriber counts* database via the `…` me
 
 ## Files
 
-- [`src/index.ts`](src/index.ts) — Worker entry point: both managed databases and syncs.
+- [`src/index.ts`](src/index.ts) — Worker entry point: both managed databases and syncs, plus the newsletter-issue relation pass.
 - [`scripts/export-subscriber-history.ts`](scripts/export-subscriber-history.ts) — Standalone CSV exporter (not part of the Worker).
 - `workers.json` — Worker ID for this deploy (gitignored).
