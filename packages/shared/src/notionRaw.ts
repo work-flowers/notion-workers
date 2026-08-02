@@ -45,3 +45,10 @@ export async function queryDataSource(
 export async function createPage(body: Record<string, unknown>): Promise<any> {
 	return await call("POST", "pages", body);
 }
+
+export async function updatePage(
+	pageId: string,
+	body: Record<string, unknown>,
+): Promise<any> {
+	return await call("PATCH", `pages/${pageId}`, body);
+}
