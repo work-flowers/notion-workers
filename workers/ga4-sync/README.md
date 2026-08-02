@@ -1,120 +1,174 @@
 # notion-worker-ga4-sync
 
-A [Notion Worker](https://www.notion.so/) that syncs Google Analytics 4 (GA4) report data into Notion databases on a schedule.
+A [Notion Worker](https://www.notion.so/) that syncs Google Analytics 4 reports
+for **work.flowers — Website** into Notion databases on a schedule, and links
+each page back to the Notion record that is the source of its content.
 
-It pulls two GA4 reports and keeps a Notion database for each in sync:
+## Reports
 
-| Report | Notion database | Dimensions | Metrics |
-| --- | --- | --- | --- |
-| Pages Path | **Pages Path Report** 📄 | `date`, `pagePath` | Screen Page Views, New Users, Total Users, User Engagement Duration |
-| Traffic Source/Medium | **Traffic Session Source Medium Report** 🚥 | `date`, `sessionSource`, `sessionMedium` | Sessions, Users |
+| Database | Grain | Metrics |
+| --- | --- | --- |
+| **Pages Path Report** 📄 | `date` × `pagePath` | Screen Page Views, Active Users, Total Users, Event Count, Scrolled Users, User Engagement Duration |
+| **Traffic Session Source Medium Report** 🚥 | `date` × channel group × source × medium | Sessions, Engaged Sessions, Users, New Users, Key Events, User Engagement Duration |
+| **Landing Page Report** 🛬 | `date` × `landingPage` × channel group | Sessions, Engaged Sessions, Bounce Rate, Avg Session Duration, Key Events |
+| **Site Daily Summary** 📈 | `date` | Sessions, Engaged Sessions, Engagement Rate, Total/New/Active Users, Screen Page Views, Key Events, Avg Session Duration |
+| **Page Performance** 🗂️ | `pagePath` | Lifetime and last-28-day views, users and engagement — plus the relation to the source page in Notion |
 
-All worker code lives in [`src/index.ts`](src/index.ts).
+Page-scoped and session-scoped metrics are kept apart on purpose. `sessions`,
+`bounceRate` and `averageSessionDuration` are attributes of a whole visit, so
+they sit on **Landing Page Report** — attributing them to every page in a session
+would be misleading. Likewise `newUsers` is absent from the page report: at page
+grain GA4 counts users whose *first ever session* touched the page, which is not
+"new visitors to this page".
+
+All reports are filtered to `hostName == www.work.flowers`, which excludes the
+Bullet CMS admin, preview deploys and localhost — about 5% of raw traffic.
 
 ## How it works
 
-Each report is synced by a **backfill + delta** pair of syncs writing to the same database:
+Each report has a **backfill + delta** pair writing to the same database:
 
-- **Backfill** (`mode: "replace"`, `schedule: "manual"`) — paginates the full GA4 history from `2020-01-01` to yesterday. Run it manually for the initial load, after schema changes, or to repair drift. Its replace-mode mark-and-sweep also cleans up rows no longer present upstream.
-- **Delta** (`mode: "incremental"`, `schedule: "1h"`) — every hour, re-fetches just the last few days (`DELTA_LOOKBACK_DAYS = 3`) up to yesterday. GA4 metrics for recent days keep settling (late hits, attribution), so the lookback re-upserts those days to stay accurate.
+- **Backfill** (`mode: "replace"`, `schedule: "manual"`) — walks the full history
+  from `2026-04-01`. Run it for the initial load, after a schema change, or to
+  repair drift; its mark-and-sweep also removes rows no longer present upstream.
+- **Delta** (`mode: "incremental"`, `schedule: "6h"`) — re-reads the last
+  `DELTA_LOOKBACK_DAYS = 4` days. GA4 keeps revising recent days as late hits and
+  attribution settle, so those days are re-upserted every run.
 
-Both syncs end at **yesterday** (`getDateNDaysAgo(1)`) rather than today, since the current day's GA4 data is incomplete.
+Both stop at the last **complete** property-local day, computed in the property's
+own timezone (`Asia/Singapore`) rather than UTC.
+
+Syncs page by **date window**, not row offset, and every cycle is sized to
+complete in a single `execute` so no pagination cursor is ever persisted — see
+`CLAUDE.md` for why both of those matter for correctness.
 
 | Sync key | Database | Mode | Schedule |
 | --- | --- | --- | --- |
 | `pagesPathBackfill` | Pages Path Report | replace | manual |
-| `pagesPathDelta` | Pages Path Report | incremental | 1h |
+| `pagesPathDelta` | Pages Path Report | incremental | 6h |
 | `trafficSourceMediumBackfill` | Traffic Session Source Medium Report | replace | manual |
-| `trafficSourceMediumDelta` | Traffic Session Source Medium Report | incremental | 1h |
+| `trafficSourceMediumDelta` | Traffic Session Source Medium Report | incremental | 6h |
+| `landingPageBackfill` | Landing Page Report | replace | manual |
+| `landingPageDelta` | Landing Page Report | incremental | 6h |
+| `siteDailyBackfill` | Site Daily Summary | replace | manual |
+| `siteDailyDelta` | Site Daily Summary | incremental | 6h |
+| `pagePerformanceSync` | Page Performance | replace | 6h |
+| `pagePerformanceRelink` | Page Performance | incremental | 6h |
 
-Both report families share one pacer, `ga4Api` (`100` requests / `60s`), to stay within GA4's quotas. Pages are fetched in batches of `250` rows via the GA4 Data API `runReport` `offset`/`limit`.
+GA4 calls share the `ga4Api` pacer (60/min); Notion writes share `notionApi`
+(3/sec).
 
 ## Authentication
 
-GA4 is accessed with a **Google service account** (JWT bearer flow — no interactive OAuth). The worker signs a JWT with the service account's private key, exchanges it for an access token scoped to `analytics.readonly`, and caches the token until shortly before it expires.
+GA4 is reached through the **Zapier connection**, using the `API Request (Beta)`
+action so Zapier supplies the Google OAuth credentials. No Google service-account
+key lives in this worker.
 
-To set this up:
+### Environment variables
 
-1. Create a Google Cloud service account and download its JSON key.
-2. In Google Analytics, grant that service account **Viewer** access to the GA4 property.
-3. Push the secrets to the worker (see below).
-
-### Required secrets
-
-| Secret | Description |
+| Variable | Description |
 | --- | --- |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | The full service account key JSON, as a single-line string. |
-| `GA4_PROPERTY_ID` | The numeric GA4 property ID (e.g. `123456789`). |
+| `ZAPIER_CLIENT_ID` | Zapier SDK client ID (shared across workers). |
+| `ZAPIER_CLIENT_SECRET` | Zapier SDK client secret (shared across workers). |
+| `ZAPIER_GA4_CONNECTION_ID` | The stored Google Analytics 4 connection. |
+| `GA4_PROPERTY_ID` | The numeric GA4 property ID. |
+| `NOTION_API_TOKEN` | Used by the relation pass. |
+| `PAGE_PERFORMANCE_DATA_SOURCE_ID` | Set after the first deploy (see below). |
 
 ```shell
-ntn workers env set GOOGLE_SERVICE_ACCOUNT_JSON='{"client_email":"...","private_key":"..."}'
-ntn workers env set GA4_PROPERTY_ID=123456789
+ntn workers env set ZAPIER_GA4_CONNECTION_ID=021bc3c4-464a-8cd5-b99d-21644f733dc4
 ```
 
-For local runs, pull them into a `.env` file:
-
-```shell
-ntn workers env pull
-```
+For local runs, pull them into a `.env` file with `ntn workers env pull`.
 
 ## Setup & deploy
 
-```shell
-npm install
-npm run check          # type-check
-ntn login              # connect your Notion workspace
-ntn workers deploy     # build and publish
-```
-
-After deploying, run the backfills once to populate the databases, then let the deltas keep them current:
+Deploy from the repo root — this worker depends on the shared package, which the
+ntn cloud build cannot resolve on its own:
 
 ```shell
-ntn workers sync trigger pagesPathBackfill
-ntn workers sync trigger trafficSourceMediumBackfill
+./scripts/deploy.sh ga4-sync
 ```
 
-> [!NOTE]
-> Deploying does **not** reset sync state — syncs resume from their last cursor. To re-run a backfill from scratch:
+Type-check first:
+
+```shell
+npm run check --workspace=notion-worker-ga4-sync
+```
+
+### First deploy: three manual steps
+
+The first deploy creates the databases but cannot finish the relation wiring.
+
+1. **Add the two relation properties by hand** to the **Page Performance** data
+   source in Notion:
+   - `Website Page` → relation to **Pages List**
+   - `Blog Post` → relation to **Blog Posts**
+
+   They are deliberately not in the worker's schema — declaring a property makes
+   it read-only, and `Schema.relation` cannot target a database this worker does
+   not manage. `CLAUDE.md` explains the trade-off in full.
+
+2. **Give the Notion connection access** to Pages List, Blog Posts and Page
+   Performance, then set the data source ID:
+
+   ```shell
+   ntn workers env set PAGE_PERFORMANCE_DATA_SOURCE_ID=<id>
+   ```
+
+3. **Run the backfills**, then let the deltas keep things current:
+
+   ```shell
+   for s in pagesPathBackfill trafficSourceMediumBackfill landingPageBackfill siteDailyBackfill; do ntn workers sync trigger "$s"; done
+   ```
+
+> [!IMPORTANT]
+> The page and acquisition reports changed their primary keys in the 2026-08-02
+> rework — paths are now normalised, and the acquisition key gained a
+> channel-group segment. Existing rows carry the old keys and the incremental
+> deltas will not remove them. Reset and re-run those two backfills so
+> replace-mode sweeps the stale rows:
 > ```shell
 > ntn workers sync state reset pagesPathBackfill && ntn workers sync trigger pagesPathBackfill
 > ```
+> The old `New Users` column on Pages Path Report is no longer declared. It keeps
+> its historical values and becomes editable; delete it by hand when convenient.
 
 ## Operating
 
 ```shell
-# Live sync health for all four syncs
+# Live sync health for every sync
 ntn workers sync status
+```
 
+```shell
 # Preview a sync's output without writing to Notion
 ntn workers sync trigger pagesPathDelta --preview
+```
 
-# Trigger a real sync immediately (bypass schedule)
-ntn workers sync trigger pagesPathDelta
+```shell
+# Repair the relations without touching GA4
+ntn workers sync state reset pagePerformanceRelink && ntn workers sync trigger pagePerformanceRelink
+```
 
+```shell
 # Inspect run logs
 ntn workers runs list
-ntn workers runs logs <runId>
-
-# Pause / resume a sync
-ntn workers capabilities disable pagesPathDelta
-ntn workers capabilities enable pagesPathDelta
 ```
+
+Rows in Page Performance with **Matched** unchecked are URLs with no Notion
+record — usually a renamed slug that needs a redirect, or a 404. It makes a
+useful triage view.
 
 ## Project layout
 
-- `src/index.ts` — worker definition: service-account auth, GA4 fetch helper, databases, and the four syncs.
+- `src/index.ts` — worker definition: databases, syncs, row mapping.
+- `src/ga4.ts` — Zapier transport, retries, report helper, property-timezone dates.
+- `src/paths.ts` — URL normalisation and page classification.
+- `src/sourcePages.ts` — reads Pages List and Blog Posts, builds the path index.
+- `src/relink.ts` — writes the relation over the Notion REST API.
 - `.agents/skills/` — shared agent skills (`.claude/skills` is a compatibility symlink).
-- `dist/` — build output (generated).
 - `workers.json` — `ntn` CLI config (workspace/worker IDs).
-
-## Local development
-
-```shell
-npm run check   # type-check only
-npm run build   # emit dist/
-```
-
-Local execution loads `.env` automatically, so secrets pulled with `ntn workers env pull` are available via `process.env`.
 
 ## Have a question?
 
