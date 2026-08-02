@@ -71,6 +71,10 @@ Workers that receive **Notion database automation** webhooks (via `worker.webhoo
 
 See `workers/link-contact-to-company/src/index.ts` (`extractContactPageId`) for a reference parser.
 
+## Custom blocks
+
+Building a custom block (or a custom database view — same capability) is different enough from a sync to have its own guide: **[`docs/custom-blocks.md`](docs/custom-blocks.md)**. Read it first. It covers the project shape, the Vite `root` pin that npm workspaces make mandatory, block-vs-view placement, what the sandbox forbids (it cannot open a Notion page), and the chart colours validated against Notion's surfaces. `workers/newsletter-dashboard` is the reference implementation.
+
 ## Worker-specific docs
 
 Each worker keeps its own `CLAUDE.md` for worker-specific context (what it syncs, which databases/data sources it touches, quirks of the upstream API). Scaffold-generated boilerplate that duplicates this file can be deleted from worker CLAUDE.mds when touched.
