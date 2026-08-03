@@ -87,6 +87,49 @@ Measured against the real data: 117 GA4 paths collapse to 111, and 86% of
 lifetime views resolve to a Notion source page. Nearly all of the remainder is
 `/blog/tags/*` and `/blog/authors/*`, which correctly have no source record.
 
+## A change's `key` must equal the primary key property's value
+
+Every mapper writes its `key` verbatim into `Name` (the `primaryKeyProperty`).
+That is not stylistic — it is what makes a row identifiable at all. The platform
+resolves an upsert's `key` through the *value* of the primary key property, so a
+key that differs from the string written into that property matches nothing and
+**inserts on every run**.
+
+`mapSiteRows` got this wrong: `key` was GA4's raw `20260729` while `Name` was
+`isoDate(...)` → `2026-07-29`. Consequences, found 2026-08-03:
+
+- `siteDailyDelta` re-reads `DELTA_LOOKBACK_DAYS` = 4 days every 6h, so Site
+  Daily Summary gained **four new rows every run** — 124 rows for 112 dates
+  after barely a day. Nothing looked wrong: `sync status` showed `healthy`, and
+  every run legitimately reported four upserts.
+- Every duplicate was byte-identical across all nine metrics, and **no row in the
+  database had `last_edited_time != created_time`** — the tell that the sync had
+  never once updated anything.
+- The other three reports were unaffected because their key *is* their title
+  (`${date}::${path}` etc.). Pages Path Report proves the same point from the
+  other direction: 177 rows created by an earlier deployment between April and
+  2026-08-02 were silently *adopted* by the new backfill, because their titles
+  matched the keys it emitted.
+
+Mark-and-sweep cannot clean this up. Replace mode only removes keys absent from
+the batch, and duplicates share a key: a `siteDailyBackfill` run over 113 keys
+with two duplicated dates still present reported **113 upserts, 0 deletes**.
+
+### Fixing duplicates by hand
+
+Two behaviours make this fiddlier than it looks, both verified on 2026-08-03:
+
+- The key→row resolution is **remembered**, and an upsert will **un-archive a
+  trashed row** to write to it. Trashing all but one copy is not enough — the
+  next delta run revived two of the eleven rows that had been trashed.
+- **Renaming a trashed row over the REST API does not repoint it.** The renamed
+  rows were revived again *and had their titles rewritten* on the next run.
+
+What works: trash the copies the syncs are *not* writing to (the ones whose
+`last_edited_time` did not move on a triggered run), then trigger both the delta
+and the backfill and confirm nothing is revived and nothing is created. Site
+Daily settled at 113 rows for 113 contiguous dates, 2026-04-12 … 2026-08-02.
+
 ## Syncs page by date window, not row offset — and finish in one call
 
 `windowedSync` walks a date range `windowDays` at a time, fetching each window in

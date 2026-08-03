@@ -18,6 +18,34 @@ import { loadSourcePages } from "./sourcePages.js";
 const worker = new Worker();
 export default worker;
 
+// --- Row identity: `key` must equal the primary key property's value ---
+//
+// A change's `key` is resolved to a row through the value of the database's
+// `primaryKeyProperty`. A `key` that differs from the string written into that
+// property therefore matches nothing and *inserts* on every run — the sync
+// silently becomes append-only, and nothing in `sync status` shows it, because
+// every run reports a healthy batch of upserts.
+//
+// Every mapper below writes the key verbatim into the primary key property.
+// `mapSiteRows` did not: `key` was GA4's raw `20260729` while `Name` was
+// `2026-07-29`. Site Daily Summary grew by four rows every six hours from
+// 2026-08-02 until this was fixed on 2026-08-03; the other three reports were
+// unaffected precisely because their key *is* their title.
+//
+// This is also the only thing coupling the backfill/delta pair. The two syncs
+// share no state, so agreeing on the primary key value is what lets the
+// replace-mode backfill land on the delta's rows instead of doubling them —
+// and mark-and-sweep cannot clean up afterwards, since it only removes keys
+// absent from the batch and duplicates share a key. Verified 2026-08-03: a
+// backfill over 113 keys with two duplicated dates present reported 113
+// upserts and 0 deletes.
+//
+// Two things to know before hand-fixing duplicates over the REST API: the
+// resolution is remembered, so an upsert will *un-archive* a trashed row to
+// write to it; and renaming a trashed row out of band does not repoint it. The
+// cleanup that works is to trash the copies the syncs do not write to, then
+// trigger both syncs and confirm nothing is revived.
+
 // --- Pacers ---
 
 // GA4 standard properties get 200k tokens/day and 40k/hour; a report of this
@@ -531,13 +559,16 @@ const SITE_METRICS = [
 
 function mapSiteRows(rows: GA4Row[]) {
 	return rows.map((row) => {
-		const date = dim(row, 0);
+		// The key must be the ISO date, not GA4's raw `YYYYMMDD` — see the note on
+		// row identity above. `Name` is what the platform matches on, so the two
+		// have to be the same string.
+		const day = isoDate(dim(row, 0));
 		return {
 			type: "upsert" as const,
-			key: date,
+			key: day,
 			properties: {
-				Name: Builder.title(isoDate(date)),
-				Date: Builder.date(isoDate(date)),
+				Name: Builder.title(day),
+				Date: Builder.date(day),
 				Sessions: Builder.number(metric(row, 0)),
 				"Engaged Sessions": Builder.number(metric(row, 1)),
 				"Engagement Rate": Builder.number(round(metric(row, 2), 4)),
