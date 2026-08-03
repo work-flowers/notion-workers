@@ -72,6 +72,37 @@ Ship a `?mock` mode that renders from fixtures so layout and chart work needs no
 binding, no deploy, and no Notion. It is also how you exercise empty, loading and
 error states, which are otherwise awkward to reach.
 
+**Prefer a real snapshot to invented fixtures**, and `import()` it dynamically so
+the bundle Notion serves doesn't carry it. Plausible-looking synthetic numbers
+hide the conditions the layout actually has to survive — a 78-session spike among
+3-session days, nine days at zero, a 1,118-view page next to a 1-view one. The
+snapshot goes stale, and that is fine: nothing feeds it back into the bound
+block, and a stale fixture with correct arithmetic beats a fresh one with made-up
+numbers. It also lets the unit tests assert figures that were *measured*.
+
+## `vite.config.mts` when the worker is CommonJS
+
+**If the host worker's `package.json` has no `"type": "module"`, the Vite config
+must be `vite.config.mts`, not `.ts`.** Vite loads its config through Node's
+resolver, which picks CJS-vs-ESM from the nearest `package.json`. A block added
+to an existing *sync* worker therefore gets its config `require`d and dies with:
+
+```
+Failed to resolve "@notionhq/custom-blocks/vite". This package is ESM only but it
+was tried to load by `require`.
+```
+
+The error names the SDK, so it reads like a broken dependency rather than a
+module-system mismatch two directories up. `newsletter-dashboard` never hits it
+because it is a block-only worker and its package is already `"type": "module"`.
+
+Use the `.mts` extension rather than adding `"type": "module"` to the worker: the
+extension scopes the change to one file, whereas the package flag changes what
+`tsc` emits for the sync Notion actually runs. Vite discovers `vite.config.mts`
+natively, so the deploy sandbox's bare `npx vite build` finds it unaided — but
+your own `--config` script paths need updating, and so does the block
+`tsconfig.json`'s `include`.
+
 ## Placement: block or view — same capability
 
 There is no `worker.customView()`. A custom block and a custom view are the *same
@@ -189,8 +220,32 @@ Don't cite these as fact:
 - **Whether the clipboard APIs work inside the sandbox.** Untested in the host;
   they work in a plain browser with user activation.
 
-## Reference implementation
+## Where the block should live
 
-`workers/newsletter-dashboard` — a bound dashboard with charts, a table view,
-`?mock` fixtures, and unit-tested aggregation. Its `CLAUDE.md` covers the
-decisions specific to that block; this file covers what generalises.
+A block can be its own worker or ride along in the worker that syncs its data.
+There is **no runtime coupling either way** — the block reads Notion through the
+host bridge under the viewer's permissions, never through the worker's token — so
+this is purely about deploys and maintenance:
+
+| | Its own worker | Inside the sync worker |
+|---|---|---|
+| Schema drift | Nothing links the manifest to the schema it mirrors but a comment | Rename a property and both halves change in one PR |
+| Deploy | Independent; a sync hotfix never rebuilds an alpha-SDK block | Shared — a frontend build error fails a sync deploy, and every deploy re-applies the managed database schemas |
+| Overhead | Another `workers.json`, README, CLAUDE.md, deploy target | None |
+
+`newsletter-dashboard` is standalone (it had no sync to co-locate with);
+`ga4-sync` carries its block. Neither is the default — pick on whether the
+dashboard is the primary way the synced data gets consumed, in which case shared
+fate is a feature.
+
+## Two reference implementations
+
+- **`workers/newsletter-dashboard`** — the simpler one: a single data source,
+  charts, a table view, `?mock` fixtures, unit-tested aggregation.
+- **`workers/ga4-sync/blocks/website-dashboard`** — a block co-located with the
+  sync that feeds it, mapping **three** data sources with tabs, optional keys,
+  and generic `TrendLines` / `Columns` / `RankedBars` primitives reused across
+  all of them. Also the one that hit the `.mts` problem above.
+
+Each worker's `CLAUDE.md` covers the decisions specific to its block; this file
+covers what generalises.

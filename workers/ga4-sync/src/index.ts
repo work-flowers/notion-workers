@@ -716,6 +716,202 @@ worker.sync("pagePerformanceRelink", {
 	},
 });
 
+// ---------------------------------------------------------------------------
+// 6. Website dashboard — a custom block over three of the reports above
+// ---------------------------------------------------------------------------
+
+/**
+ * A front-end web app Notion serves in a sandboxed iframe. It is **build-time
+ * only**: no `execute`, no environment variables, and it reads Notion through
+ * the host bridge under the *viewer's* permissions rather than this worker's
+ * token. Deploying the worker ships the block; there is no separate frontend
+ * deploy. See `docs/custom-blocks.md` for how custom blocks work in general.
+ *
+ * It lives in this worker rather than its own because the manifest below mirrors
+ * the schemas declared above: rename a property there and the block's binding
+ * silently goes `undefined`. Co-locating keeps both halves in one directory and
+ * one PR. The cost is a shared deploy — `scripts/deploy.sh` now vendors the
+ * shared package *and* runs a Vite build in the same cloud sandbox, so a
+ * frontend build error fails a sync deploy too.
+ *
+ * `dataSources` declares the *shape* the block needs, not a binding: whoever
+ * inserts it maps these keys to real properties. Declared-but-unmapped is a
+ * supported state — each tab renders a setup hint and the others keep working.
+ *
+ * Only three of the five reports are here. `useDataSource` caps a query at 999
+ * rows with no server-side filter or sort, and Pages Path Report (~1,150 rows)
+ * and Landing Page Report (~1,160) are already past it, growing ~10 rows a day.
+ * Site Daily grows one row a day and Page Performance one row per URL, so both
+ * have years of headroom.
+ *
+ * Every count the block asks for is a raw count, never a stored rate. That is
+ * the point of it: `Engagement Rate` and `Avg Session Duration` are per-day
+ * means, and averaging them across days — all a native Notion chart can do —
+ * weights a 3-session Sunday the same as a 78-session Tuesday.
+ */
+worker.customBlock("websiteDashboard", {
+	path: "./blocks/website-dashboard",
+	command: "npx vite build",
+	output: "dist",
+	version: 1,
+	dataSources: {
+		daily: {
+			name: "Site daily summary",
+			description:
+				"One row per day, with the raw session and view counts. Rates are recalculated from these counts, so map the counts rather than the Engagement Rate percentage.",
+			icon: { type: "emoji", emoji: "📈" },
+			properties: {
+				day: {
+					name: "Date",
+					description: "The calendar day. Drives every time bucket and range.",
+					type: "date",
+				},
+				sessions: {
+					name: "Sessions",
+					description:
+						"Sessions started that day. The denominator for engagement rate and session duration.",
+					type: "number",
+				},
+				engagedSessions: {
+					name: "Engaged Sessions",
+					description: "The numerator for engagement rate.",
+					type: "number",
+				},
+				avgSessionDuration: {
+					name: "Avg Session Duration",
+					description:
+						"Seconds per session, averaged over that day. Re-weighted by sessions before it is combined across days.",
+					type: "number",
+				},
+				views: {
+					name: "Screen Page Views",
+					description: "Page views that day.",
+					type: "number",
+				},
+				totalUsers: {
+					name: "Total Users",
+					description:
+						"Unique users that day. Shown per period only — summing it across days gives user-days, not unique visitors.",
+					type: "number",
+				},
+				newUsers: {
+					name: "New Users",
+					description: "Users whose first ever session was that day. Additive across days.",
+					type: "number",
+				},
+				keyEvents: {
+					name: "Key Events",
+					description:
+						"GA4 key events. Currently zero everywhere — the block shows the zero rather than hiding the metric.",
+					type: "number",
+				},
+			},
+		},
+		acquisition: {
+			name: "Traffic by source",
+			description:
+				"One row per day, channel, source and medium. Engagement rate is recomputed per channel from the summed counts.",
+			icon: { type: "emoji", emoji: "🚥" },
+			properties: {
+				day: { name: "Date", description: "The calendar day.", type: "date" },
+				channel: {
+					name: "Channel Group",
+					description: "GA4's default channel grouping — Direct, Organic Search, and so on.",
+					type: "rich_text",
+				},
+				source: {
+					name: "Session Source",
+					description: "Where the session came from, e.g. google or linkedin.com.",
+					type: "rich_text",
+				},
+				medium: {
+					name: "Session Medium",
+					description: "How it arrived, e.g. organic, referral or email.",
+					type: "rich_text",
+				},
+				sessions: { name: "Sessions", description: "Sessions for this row.", type: "number" },
+				engagedSessions: {
+					name: "Engaged Sessions",
+					description: "The numerator for this channel's engagement rate.",
+					type: "number",
+				},
+				newUsers: {
+					name: "New Users",
+					description: "First-ever sessions attributed to this source.",
+					type: "number",
+				},
+				engagementSeconds: {
+					name: "User Engagement Duration",
+					description:
+						"Total engaged seconds — a sum, so it divides cleanly by sessions.",
+					type: "number",
+				},
+			},
+		},
+		pages: {
+			name: "Page performance",
+			description:
+				"One row per URL: a lifetime rollup with a 28-day window. No per-day history, so the dashboard's date range doesn't apply to this tab.",
+			icon: { type: "emoji", emoji: "🗂️" },
+			properties: {
+				path: {
+					name: "Page",
+					description: "The normalised URL path.",
+					type: "title",
+				},
+				pageType: {
+					name: "Page Type",
+					description:
+						"Blog Post, Static Page, Blog Tag and so on. Separates URLs the CMS generates from ones somebody wrote.",
+					type: "select",
+				},
+				views: { name: "Views", description: "Lifetime page views.", type: "number" },
+				users: {
+					name: "Users",
+					description:
+						"Unique users for this page. Never totalled across pages — that would double-count anyone who read two.",
+					type: "number",
+				},
+				engagementSeconds: {
+					name: "Engagement (s)",
+					description: "Total engaged seconds, so seconds-per-view can be recomputed.",
+					type: "number",
+				},
+				views28: {
+					name: "Views (28d)",
+					description: "Views in the last 28 days — what's live now rather than historical.",
+					type: "number",
+				},
+				users28: {
+					name: "Users (28d)",
+					description: "Unique users in the last 28 days.",
+					type: "number",
+				},
+				engagementSeconds28: {
+					name: "Engagement (28d)",
+					description: "Engaged seconds in the last 28 days.",
+					type: "number",
+				},
+				matched: {
+					name: "Matched",
+					description:
+						"Whether a Notion page authors this URL. Drives the content triage view.",
+					type: "checkbox",
+				},
+				sourceTitle: {
+					name: "Source Title",
+					description: "The linked Notion page's title, so rankings read as content not URLs.",
+					type: "rich_text",
+				},
+				// Deliberately no Website Page / Blog Post relation. Page Performance
+				// carries both, but a custom block cannot open a Notion page (see
+				// docs/custom-blocks.md), so reading them here would only produce a
+				// link that goes nowhere. Notion's own relation cell does that job.
+			},
+		},
+	},
+});
+
 // --- Shared option lists ---
 
 function PAGE_TYPE_OPTIONS() {

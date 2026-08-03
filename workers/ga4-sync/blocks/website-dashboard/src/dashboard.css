@@ -1,0 +1,676 @@
+/*
+ * Chrome (surfaces, borders, ink, spacing) comes from NDS tokens so the block
+ * tracks the page's theme and works in dark mode. The series colours are fixed
+ * hexes carrying workFlowers brand hues — azure, Russian Violet, ochre, in the
+ * brand's own chart order.
+ *
+ * They are *re-stepped* rather than copied. The brand's raw chart tokens are
+ * built for white web pages and fail on Notion's surfaces: Russian Violet
+ * #4E1B61 is below the usable lightness band in light mode and only 1.28:1
+ * against the dark card, and ochre #E17A14 is out of band in dark. Each mode
+ * gets its own step of the same hue, validated as a set against the surface it
+ * actually renders on (#ffffff light, #202020 dark). Identical to the set
+ * validated for `newsletter-dashboard` — see `docs/custom-blocks.md`; if you
+ * touch them, re-validate both modes rather than eyeballing it.
+ *
+ * Dark-mode caveat: azure and Russian Violet are near-neighbour hues, so the
+ * dark violet leans magenta to stay separable from the blue. Its worst tritan
+ * pair sits in the band that is only legal alongside secondary encoding, which
+ * is what the direct end labels, the legend and the table view provide.
+ *
+ * Status colours are deliberately NOT the brand's ochre CTA: ochre is series 3
+ * here, and a status colour must never be mistakable for a series.
+ */
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: transparent;
+}
+
+.wd-root {
+	/* workFlowers azure / Russian Violet / ochre, stepped for a white surface. */
+	--series-1: #1479e1;
+	--series-2: #7a2e96;
+	--series-3: #e17a14;
+	--grid: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	--baseline: color-mix(in oklab, var(--content-primary) 22%, transparent);
+	--delta-good: #006300;
+	--delta-bad: #d03b3b;
+
+	width: 100%;
+	color: var(--content-primary);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.45;
+}
+
+.wd-root[data-display-mode="dark"] {
+	/* Same three hues, stepped for the dark card; ochre is the brand's own
+	   ochre-hover step, which happens to land in the dark band. */
+	--series-1: #3a92f0;
+	--series-2: #c264c0;
+	--series-3: #c96a0f;
+	--delta-good: #0ca30c;
+	--delta-bad: #e66767;
+}
+
+/*
+ * Inside Notion the iframe is transparent so the page's own background (which
+ * may be tinted) shows through. `?mock` has no page behind it, so paint one —
+ * otherwise dark-mode text sits on the browser's white default.
+ */
+.wd-root[data-mock="true"] {
+	min-height: 100vh;
+	padding: var(--spacing-16);
+	background: var(--bg-base);
+}
+
+.wd-dash {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-16);
+	padding: var(--spacing-4) 0;
+	transition: opacity 120ms ease;
+}
+
+/* Refetch holds the previous render rather than flashing a skeleton. */
+.wd-dash.is-stale {
+	opacity: 0.6;
+}
+
+.wd-header h1 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.wd-header p {
+	margin: 4px 0 0;
+	max-width: 68ch;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+/* ---- Tabs ---- */
+
+.wd-tabs {
+	display: flex;
+	gap: var(--spacing-4);
+	border-bottom: 1px solid var(--border-primary);
+}
+
+.wd-tab {
+	padding: 6px 12px;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: none;
+	color: var(--content-secondary);
+	font: inherit;
+	font-size: 14px;
+	cursor: pointer;
+	/* Nudged down so the active underline sits on the container's border. */
+	margin-bottom: -1px;
+}
+
+.wd-tab:hover {
+	color: var(--content-primary);
+}
+
+.wd-tab.is-active {
+	border-bottom-color: var(--series-1);
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+.wd-tab:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: -2px;
+	border-radius: 4px;
+}
+
+/* ---- Filters: one row, above everything they scope ---- */
+
+.wd-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-16);
+	align-items: flex-end;
+}
+
+.wd-filters-note {
+	flex: 1 1 24ch;
+	margin: 0;
+	max-width: 66ch;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.wd-segmented {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.wd-segmented-label {
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.wd-segmented-options {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+.wd-segment {
+	padding: 4px 10px;
+	border: 0;
+	border-radius: var(--radius-6, 6px);
+	background: transparent;
+	color: var(--content-secondary);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.wd-segment:hover {
+	background: color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+.wd-segment.is-active {
+	background: color-mix(in oklab, var(--content-primary) 10%, transparent);
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+.wd-segment:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 1px;
+}
+
+/* ---- Stat tiles ---- */
+
+.wd-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
+	gap: var(--spacing-8);
+	margin-bottom: var(--spacing-16);
+}
+
+.wd-tile {
+	padding: var(--spacing-12);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+}
+
+/* A measured zero, not a missing metric — dimmed so it doesn't read as a
+   headline figure, present so it doesn't read as unmeasured. */
+.wd-tile.is-muted .wd-tile-value {
+	color: var(--content-tertiary, var(--content-secondary));
+	font-weight: 500;
+}
+
+.wd-tile-label {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* Proportional figures: tabular-nums makes a standalone number look loose. */
+.wd-tile-value {
+	margin-top: 2px;
+	font-size: 24px;
+	font-weight: 600;
+	line-height: 1.1;
+}
+
+.wd-tile-sub,
+.wd-tile-delta {
+	margin-top: 2px;
+	font-size: 12px;
+}
+
+.wd-tile-sub {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+.wd-tile-delta.is-good {
+	color: var(--delta-good);
+}
+
+.wd-tile-delta.is-bad {
+	color: var(--delta-bad);
+}
+
+.wd-tile-delta.is-flat {
+	color: var(--content-secondary);
+}
+
+.wd-tile-since {
+	color: var(--content-tertiary, var(--content-secondary));
+}
+
+/* ---- Cards ---- */
+
+.wd-card {
+	padding: var(--spacing-16);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+	margin-bottom: var(--spacing-16);
+}
+
+.wd-card-head h2 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* Per-card control sits with its title, not in the global filter row: it
+   changes only this chart's measure, not the slice everything else shows. */
+.wd-card-head-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	align-items: center;
+	justify-content: space-between;
+}
+
+.wd-card-head p {
+	margin: 2px 0 var(--spacing-12);
+	max-width: 84ch;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* ---- Chart primitives ---- */
+
+.wd-chart {
+	position: relative;
+	width: 100%;
+}
+
+.wd-chart svg {
+	display: block;
+	overflow: visible;
+}
+
+.wd-chart svg:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* Hairline, solid, one step off the surface — never dashed. */
+.wd-grid {
+	stroke: var(--grid);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.wd-baseline {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.wd-crosshair {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.wd-line {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* 2px surface ring keeps a dot legible where it crosses another line. */
+.wd-dot {
+	fill: currentColor;
+	stroke: var(--bg-elevated);
+	stroke-width: 2;
+	pointer-events: none;
+}
+
+.wd-leader {
+	stroke: var(--baseline);
+	stroke-width: 1;
+	pointer-events: none;
+}
+
+.wd-bar {
+	fill: currentColor;
+	transition: opacity 90ms ease;
+}
+
+.wd-bar.is-hover {
+	opacity: 0.78;
+}
+
+.wd-hit {
+	fill: transparent;
+}
+
+.wd-axis-text {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Values wear text tokens; the coloured dot beside them carries identity.
+   The surface-coloured halo (stroke painted *under* the fill) keeps a label
+   readable where a series line or bar runs behind it — otherwise the reference
+   label and a crossing line turn each other into mush. */
+.wd-end-label,
+.wd-cap-label,
+.wd-reference-label {
+	stroke: var(--bg-elevated);
+	stroke-width: 3;
+	paint-order: stroke fill;
+}
+
+.wd-end-label,
+.wd-cap-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.wd-row-label {
+	fill: var(--content-secondary);
+	font-size: 11px;
+}
+
+.wd-row-prefix {
+	fill: var(--content-tertiary, var(--content-secondary));
+	font-variant-numeric: tabular-nums;
+}
+
+/* The aggregate benchmark. Solid like every other rule — dashing would read as
+   a projection or a target rather than the measured figure. */
+.wd-reference {
+	stroke: var(--content-secondary);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.wd-reference-label {
+	fill: var(--content-secondary);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.wd-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	margin: var(--spacing-8) 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.wd-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.wd-key {
+	display: inline-block;
+	width: 12px;
+	height: 2px;
+	border-radius: 1px;
+	background: currentColor;
+}
+
+/* ---- Tooltip ---- */
+
+.wd-tooltip {
+	position: absolute;
+	top: 4px;
+	min-width: 148px;
+	max-width: 300px;
+	padding: 8px 10px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-8, 8px);
+	background: var(--bg-elevated);
+	box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 12%));
+	pointer-events: none;
+}
+
+.wd-tooltip-title {
+	margin-bottom: 4px;
+	color: var(--content-secondary);
+	font-size: 11px;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
+.wd-tooltip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+/* Value leads, series name follows. */
+.wd-tooltip-value {
+	color: var(--content-primary);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.wd-tooltip-label {
+	color: var(--content-secondary);
+}
+
+.wd-tooltip-footer {
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid var(--border-primary);
+	color: var(--content-tertiary, var(--content-secondary));
+	font-size: 11px;
+}
+
+/* ---- Tables (the WCAG-clean twin of every chart) ---- */
+
+.wd-table-wrap {
+	overflow-x: auto;
+}
+
+.wd-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Numbers are right-aligned so digits line up; text columns opt out with
+ * `.wd-col-left`, which is applied to the header and the cell from the same
+ * column definition. Doing it per-column rather than by `:first-child` is what
+ * keeps a text column in the middle of the table from getting a right-aligned
+ * header over left-aligned cells.
+ */
+.wd-table th,
+.wd-table td {
+	padding: 6px 10px 6px 0;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.wd-table th.wd-col-left,
+.wd-table td.wd-col-left {
+	text-align: left;
+}
+
+.wd-table thead th {
+	border-bottom: 1px solid var(--border-primary);
+	color: var(--content-secondary);
+	font-weight: 500;
+}
+
+.wd-table tbody tr + tr td {
+	border-top: 1px solid color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+/* Sortable header: a real button, so it's keyboard-reachable and announced. */
+.wd-sort {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.wd-table th:not(.wd-col-left) .wd-sort {
+	flex-direction: row-reverse;
+}
+
+.wd-sort:hover {
+	color: var(--content-primary);
+}
+
+.wd-sort:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+.wd-sort.is-active {
+	color: var(--content-primary);
+	font-weight: 600;
+}
+
+/*
+ * Every column is sortable but only one is sorted, so the caret is hidden until
+ * it means something: visible on the active column, and faintly on hover/focus
+ * as the affordance. `visibility` rather than `display` so the header width
+ * doesn't shift when it appears.
+ */
+.wd-sort-caret {
+	font-size: 10px;
+	visibility: hidden;
+}
+
+.wd-sort:hover .wd-sort-caret,
+.wd-sort:focus-visible .wd-sort-caret {
+	visibility: visible;
+	opacity: 0.4;
+}
+
+.wd-sort.is-active .wd-sort-caret {
+	visibility: visible;
+	opacity: 1;
+}
+
+.wd-title,
+.wd-path {
+	display: inline-block;
+	max-width: 40ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: bottom;
+}
+
+.wd-path {
+	max-width: 34ch;
+	color: var(--content-secondary);
+	font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 11px;
+}
+
+/*
+ * No link styling on paths or titles. A custom block cannot open a Notion page
+ * (see docs/custom-blocks.md), so an underline would advertise a click that
+ * can't work — and these are website URLs, not Notion ones. Use the Website
+ * Page / Blog Post relation cells in Notion's own table to reach the source.
+ */
+
+.wd-table-note {
+	margin: var(--spacing-8) 0 0;
+	max-width: 84ch;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+/* Table captions carry the "click to sort" affordance for screen readers. */
+.wd-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* ---- Notes & empty states ---- */
+
+.wd-notes {
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.wd-notes p {
+	margin: 0 0 4px;
+	max-width: 84ch;
+}
+
+.wd-empty {
+	padding: var(--spacing-24);
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-12, 12px);
+	background: var(--bg-elevated);
+}
+
+.wd-empty h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.wd-empty p {
+	margin: 6px 0 0;
+	max-width: 76ch;
+	color: var(--content-secondary);
+	font-size: 13px;
+}
+
+.wd-empty-hint code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: color-mix(in oklab, var(--content-primary) 8%, transparent);
+	font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wd-dash,
+	.wd-bar {
+		transition: none;
+	}
+}
