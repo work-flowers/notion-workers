@@ -11,8 +11,12 @@ export interface CalendarEvent {
 	iCalUID?: string;
 	start: { dateTime?: string; date?: string };
 	end: { dateTime?: string; date?: string };
-	organizer?: { email?: string };
-	attendees?: Array<{ email?: string; resource?: boolean }>;
+	organizer?: { email?: string; displayName?: string };
+	attendees?: Array<{
+		email?: string;
+		displayName?: string;
+		resource?: boolean;
+	}>;
 }
 
 interface ServiceAccountKey {

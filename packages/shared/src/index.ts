@@ -9,7 +9,12 @@ export {
 	lookupExistingContacts,
 	resolveContactPageIds,
 } from "./contacts";
-export type { Blocklist, ResolveContactsOptions } from "./contacts";
+export type {
+	Blocklist,
+	EmailCandidate,
+	EmailInput,
+	ResolveContactsOptions,
+} from "./contacts";
 export { buildInternalUserMap, resolveInternalUserIds } from "./internalUsers";
 export { toNotionMarkdown } from "./markdown";
 export { createPage, queryDataSource, updatePage } from "./notionRaw";
