@@ -31,6 +31,7 @@ Client repos carry the mirror-image guard pinned to their own workspace. Never c
 Run all `ntn workers` commands from inside the worker's directory — it resolves `workers.json` by CWD lookup.
 
 - **Deploy: always `./scripts/deploy.sh <worker-name>` from the repo root**, never bare `ntn workers deploy` for workers that use the shared package. The ntn cloud build uploads only the worker directory and runs `npm install` in a sandbox, so it cannot resolve unpublished workspace packages; the script vendors a tarball of `packages/shared` for the duration of the deploy. `--local-build` also does not work in a workspace (workers have no local `node_modules`).
+- **Commit `package.json` before deploying a shared-package worker.** To vendor the tarball the script rewrites the dependency with `npm pkg set`, then restores the file in a cleanup trap with `git checkout -- workers/<name>/package.json`. That trap discards *every* uncommitted change to it, not just the one line the script added — so a deploy silently reverts new dependencies or scripts you haven't committed yet. The deploy itself succeeds (the upload happens before the trap), which is what makes it easy to miss: the worker in Notion is fine and only the working tree is wrong. Hit on `ga4-sync` 2026-08-03.
 - Typecheck before deploying: `npm run check --workspace=<package-name>` from the root
 - Secrets: `ntn workers env` — never commit secrets
 

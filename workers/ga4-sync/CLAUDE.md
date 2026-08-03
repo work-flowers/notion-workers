@@ -198,6 +198,105 @@ primitive in the SDK — `worker.tool` is on-demand and `worker.workflow` is
 trigger-based — and this way the pass gets scheduling, run logs and health
 monitoring for free.
 
+## The website-dashboard custom block
+
+This worker also ships a **custom block** — `blocks/website-dashboard`, declared
+by `worker.customBlock("websiteDashboard", …)` at the bottom of `src/index.ts`.
+
+**How custom blocks work in general — project shape, the Vite `root` pin, the
+`.mts` config requirement, block-vs-view placement, manifest binding, what the
+sandbox forbids, chart colour against Notion's surfaces — lives in
+[`docs/custom-blocks.md`](../../docs/custom-blocks.md).** Read that first; this
+section only records what's specific to this worker.
+
+### Why it's in here and not its own worker
+
+The manifest mirrors the schemas declared above. `New Users` was dropped from
+Pages Path Report on 2026-08-02; the same change to a property this block binds
+would silently leave it `undefined`, and nothing but a comment would connect the
+two. Co-locating makes that one PR. The dashboard is also the primary way this
+data gets consumed, so shared fate on deploy is acceptable rather than merely
+tolerable.
+
+The cost is that `./scripts/deploy.sh ga4-sync` now vendors the shared package
+**and** runs a Vite build in the same cloud sandbox. That combination was
+verified by hand on 2026-08-03 (fresh `npm install` from the vendored tarball,
+then `npx vite build` from the block directory), but a frontend error will now
+fail a sync deploy. Run `npm run build:block --workspace=notion-worker-ga4-sync`
+before deploying.
+
+### Which properties it binds — keep this in sync with the schemas
+
+Renaming or dropping any of these unbinds a slot in every inserted instance.
+The config panel reflects the *deployed* manifest, so a change only shows up
+after a redeploy.
+
+| Key | Data source | Properties |
+| --- | --- | --- |
+| `daily` | 📈 Site Daily Summary | `Date`, `Sessions`, `Engaged Sessions`, `Avg Session Duration`, `Screen Page Views`, `Total Users`, `New Users`, `Key Events` |
+| `acquisition` | 🚥 Traffic Session Source Medium Report | `Date`, `Channel Group`, `Session Source`, `Session Medium`, `Sessions`, `Engaged Sessions`, `New Users`, `User Engagement Duration` |
+| `pages` | 🗂️ Page Performance | `Page`, `Page Type`, `Views`, `Users`, `Engagement (s)`, `Views (28d)`, `Users (28d)`, `Engagement (28d)`, `Matched`, `Source Title` |
+
+**Pages Path Report and Landing Page Report are deliberately absent.**
+`useDataSource` caps at 999 rows with no server-side filter or sort, and both are
+already past it (~1,150 and ~1,160 rows on 2026-08-02, growing ~10/day). Site
+Daily grows one row a day, Page Performance one per URL.
+
+### The analytics, which are the whole point
+
+- **Rates come from summed counts, never averaged row ratios.** `Engagement Rate`
+  and `Avg Session Duration` are stored as per-day means; averaging them across
+  days — all a native Notion chart can do — weights a 3-session Sunday the same
+  as a 78-session Tuesday. All of it lives in
+  `blocks/website-dashboard/src/aggregate.ts`, kept free of React and SDK imports
+  so `test/aggregate.test.ts` can exercise it.
+- On the 2026-08-03 snapshot the engagement-rate correction is small (32.94%
+  weighted vs 32.67% naive) but the **duration correction is not**: 125.5s vs
+  119.0s site-wide, and 134.5s vs 112.4s in May. The tests assert both, so the
+  premise can't rot silently.
+- **`dedupeByDay` is load-bearing, not defensive tidiness.** Site Daily Summary
+  accumulates a duplicate of each of the last four days on every delta run — see
+  the bug below. Summing blindly quadruple-counts the most recent days.
+- **`Total Users` is never totalled.** It is a per-day unique count, so Σ across
+  days is user-*days*. It is carried as `userDays` so the name blocks the misuse,
+  and no tile shows it. Same for `Users` on a page row, which is unique per page.
+- **Key Events is shown as a muted `0` with a footnote**, not hidden. No GA4 key
+  event has ever fired here, and dropping the metric would read as "not measured"
+  rather than "measured, and it's nothing".
+- The prior-window comparison is **withheld** when the data doesn't span it. The
+  property was created 2026-04-12, so "the previous 90 days" reaches back before
+  any data exists and would report a +296% jump that is purely the data starting.
+- Page triage splits unmatched URLs into `missingSource` (19 rows, 165 views — a
+  real worklist of renamed slugs, missing inventory and broken links) and
+  `generated` (28 rows — Bullet's tag and author pages, which correctly have no
+  source record). Lumping them together turns a short worklist into noise.
+
+### Working on it
+
+```shell
+npm run dev:block --workspace=notion-worker-ga4-sync
+```
+
+Then open `?mock` — `blocks/website-dashboard/src/mock.ts` holds a verbatim
+snapshot of all three data sources taken 2026-08-03, so layout and chart work
+needs no binding, no deploy and no Notion. `?mock&theme=dark` for dark mode.
+`.claude/launch.json` at the repo root wires the same server up for the preview
+pane. Refresh the snapshot with the SQL in the fixture's own header comment.
+
+### Known bug in the data it reads
+
+**`siteDailyDelta` inserts instead of upserting**, so Site Daily Summary grows by
+`DELTA_LOOKBACK_DAYS` (4) rows every six hours. `siteDailyDb` declares
+`primaryKeyProperty: "Name"`, and row identity is matched on that property's
+value — but `mapSiteRows` emits `key: date` (GA4's raw `20260801`) while writing
+`Name: Builder.title(isoDate(date))` (`2026-08-01`), so no change ever matches an
+existing row. Every other mapper in the file sets `Name: Builder.title(key)` and
+is unaffected; 🚥 Traffic was verified clean (501 rows, 501 distinct keys).
+
+As of 2026-08-03 that is 124 rows for 113 distinct dates. The fix is `key:
+isoDate(date)` plus deleting the stale rows and re-running `siteDailyBackfill`.
+The block dedupes regardless — historical duplicates outlive the fix.
+
 ## Known data problems (site-side, not worker bugs)
 
 As of 2026-08-02:

@@ -58,6 +58,58 @@ complete in a single `execute` so no pagination cursor is ever persisted — see
 GA4 calls share the `ga4Api` pacer (60/min); Notion writes share `notionApi`
 (3/sec).
 
+## The website dashboard
+
+The worker also ships a **custom block** (Notion alpha) that reads three of the
+reports above and renders them as one dashboard, in `blocks/website-dashboard`.
+
+It exists because Notion's native charts can only sum or average a column, and
+`Engagement Rate` and `Avg Session Duration` are stored as **per-day means** —
+averaging them across days weights a 3-session Sunday the same as a 78-session
+Tuesday. Every rate here is recomputed from the summed counts instead.
+
+Three tabs:
+
+| Tab | Reads | Answers |
+| --- | --- | --- |
+| **Traffic** | Site Daily Summary | How much traffic, trending which way, and how engaged |
+| **Acquisition** | Traffic Session Source Medium | Where it comes from, and which channels are worth more than their volume suggests |
+| **Content** | Page Performance | What people read, and which URLs have no Notion page behind them |
+
+Pages Path Report and Landing Page Report are **not** bound: `useDataSource` caps
+at 999 rows with no server-side filter, and both are already past it.
+
+### Binding it
+
+The block declares the *shape* it needs, not a binding. Insert it with `/custom`
+on a page — not as a database view, which can only bind one data source — then
+map the three keys in its config panel:
+
+| Key | Data source |
+| --- | --- |
+| `daily` | 📈 Site Daily Summary |
+| `acquisition` | 🚥 Traffic Session Source Medium Report |
+| `pages` | 🗂️ Page Performance |
+
+Each key is optional: an unmapped one shows a setup hint on its own tab and
+leaves the others working.
+
+### Developing it
+
+```shell
+npm run dev:block --workspace=notion-worker-ga4-sync
+```
+
+Open `?mock` for a real snapshot of all three data sources — no binding, no
+deploy and no Notion needed. `?mock&theme=dark` for dark mode.
+
+```shell
+npm run test --workspace=notion-worker-ga4-sync
+```
+
+The aggregation is pure and unit-tested against measured figures; see
+`CLAUDE.md` for what those are and why they matter.
+
 ## Authentication
 
 GA4 is reached through the **Zapier connection**, using the `API Request (Beta)`
@@ -162,7 +214,11 @@ useful triage view.
 
 ## Project layout
 
-- `src/index.ts` — worker definition: databases, syncs, row mapping.
+- `src/index.ts` — worker definition: databases, syncs, row mapping, and the
+  `worker.customBlock()` declaration.
+- `blocks/website-dashboard/` — the dashboard's Vite + React frontend. Its
+  `src/aggregate.ts` holds all the arithmetic, pure and unit-tested.
+- `test/aggregate.test.ts` — `tsx --test`, run with `npm run test`.
 - `src/ga4.ts` — Zapier transport, retries, report helper, property-timezone dates.
 - `src/paths.ts` — URL normalisation and page classification.
 - `src/sourcePages.ts` — reads Pages List and Blog Posts, builds the path index.

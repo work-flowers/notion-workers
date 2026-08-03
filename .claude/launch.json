@@ -1,0 +1,19 @@
+{
+	"version": "0.0.1",
+	"configurations": [
+		{
+			"name": "website-dashboard",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-ga4-sync",
+				"--",
+				"--port",
+				"5174",
+				"--strictPort"
+			],
+			"port": 5174
+		}
+	]
+}
