@@ -2,6 +2,7 @@ import type { Client } from "@notionhq/client";
 import type { createZapierSdk } from "@zapier/zapier-sdk";
 import {
 	DEFAULT_INTERNAL_DOMAIN,
+	type EmailCandidate,
 	extractAddresses,
 	resolveContactPageIds,
 } from "@work-flowers/notion-worker-shared";
@@ -53,8 +54,8 @@ interface ResolvedAttendees {
 	internalUserIds: string[];
 	/** Emails of internal-domain attendees (candidates for calendar impersonation). */
 	internalEmails: string[];
-	/** Emails of external attendees resolvable through Notion (members/guests). */
-	externalEmails: string[];
+	/** External attendees resolvable through Notion (members/guests), with names. */
+	externalContacts: EmailCandidate[];
 	/** Attendee user IDs the integration could not resolve (non-guests). */
 	unresolvedCount: number;
 }
@@ -70,7 +71,7 @@ async function resolveAttendees(
 ): Promise<ResolvedAttendees> {
 	const internalUserIds = new Set<string>();
 	const internalEmails = new Set<string>();
-	const externalEmails = new Set<string>();
+	const externalContacts = new Map<string, EmailCandidate>();
 	let unresolvedCount = 0;
 
 	for (const userId of attendeeUserIds) {
@@ -91,14 +92,17 @@ async function resolveAttendees(
 			internalUserIds.add(user.id);
 			internalEmails.add(email);
 		} else {
-			externalEmails.add(email);
+			externalContacts.set(email, {
+				email,
+				name: String(user.name ?? "").trim() || undefined,
+			});
 		}
 	}
 
 	return {
 		internalUserIds: [...internalUserIds],
 		internalEmails: [...internalEmails],
-		externalEmails: [...externalEmails],
+		externalContacts: [...externalContacts.values()],
 		unresolvedCount,
 	};
 }
@@ -127,7 +131,7 @@ export async function handlePageCreated(
 		`meeting_notes block found: start=${start_time}, attendees=${attendees.length}`,
 	);
 
-	const { internalUserIds, internalEmails, externalEmails, unresolvedCount } =
+	const { internalUserIds, internalEmails, externalContacts, unresolvedCount } =
 		await resolveAttendees(notion, attendees);
 
 	// The Notion users API only resolves workspace members and guests. The
@@ -158,22 +162,27 @@ export async function handlePageCreated(
 		);
 	}
 
-	const eventEmails = event
-		? extractAddresses(
-				[
-					event.organizer?.email ?? "",
-					...(event.attendees ?? [])
-						.filter((a) => !a.resource)
-						.map((a) => a.email ?? ""),
-				].join(","),
-			)
+	// Keep each attendee's calendar `displayName` alongside their address: it is
+	// what tells the classifier `migas@nus.edu.sg` is Migas Huang Junwei, and it
+	// becomes the new Contact's title.
+	const eventCandidates: EmailCandidate[] = event
+		? [
+				{ email: event.organizer?.email, name: event.organizer?.displayName },
+				...(event.attendees ?? [])
+					.filter((a) => !a.resource)
+					.map((a) => ({ email: a.email, name: a.displayName })),
+			].flatMap(({ email, name }) => {
+				// extractAddresses normalises and validates a single address here.
+				const [normalised] = extractAddresses(email);
+				return normalised ? [{ email: normalised, name }] : [];
+			})
 		: [];
 
 	// resolveContactPageIds drops internal-domain and blocklisted addresses
 	// itself, so the merged list can safely include internal attendees.
 	const contactPageIds = await resolveContactPageIds(notion, zapier, [
-		...externalEmails,
-		...eventEmails,
+		...externalContacts,
+		...eventCandidates,
 	]);
 
 	const properties: Record<string, any> = {

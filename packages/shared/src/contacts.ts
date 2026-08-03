@@ -10,6 +10,7 @@ export const DEFAULT_CONTACTS_DATA_SOURCE_ID =
 export const DEFAULT_NEW_CONTACT_CAP = 10;
 export const DEFAULT_INTERNAL_DOMAIN = "@work.flowers";
 
+const NAME_PROPERTY = "Name";
 const PRIMARY_EMAIL_PROPERTY = "Primary Email";
 // Secondary Email is a multi_select on the Contacts data source, so lookups
 // use `multi_select.contains` rather than `email.equals`.
@@ -23,29 +24,76 @@ const AI_PROVIDER_ID = "openai";
 const AI_MODEL_ID = "openai/gpt-5-mini";
 const AI_AUTHENTICATION_ID = "0";
 
-const CLASSIFIER_INSTRUCTIONS = `You are an email classifier. The "Emails" input contains one or more email addresses, one per line. For EACH email address in the list, classify whether it belongs to a real individual person or a service/organisational account, and produce one output object per input email. Preserve the original casing of the email in the Email output field.
+// These addresses come from calendar attendee lists and email headers, so the
+// overwhelming majority belong to real people who accepted an invite or wrote a
+// message. The prompt is therefore shaped as a role-account *blocklist* that
+// defaults to true. The earlier version asked the model to prove the local part
+// looked like a personal name and defaulted to false when unsure, which quietly
+// refused to create Contacts for anyone whose name gpt-5-mini didn't recognise
+// (`migas@nus.edu.sg` — Migas Huang Junwei — on 2026-08-03), and did so
+// systematically for non-Anglophone given names.
+const CLASSIFIER_INSTRUCTIONS = `You are classifying email addresses harvested from calendar invitations and email headers. Almost every address in this input belongs to a real person, so true is the default answer.
 
-Classify as false (service/organisational) if the address contains prefixes such as:
+The "Emails" input has one entry per line, formatted either as \`email\` or as \`email — Display Name\` when a display name was available from the source. For EACH line, produce exactly one output object. Preserve the email's original casing in the Email output field, and do not include the display name in that field.
 
-Generic roles: info, contact, hello, support, help, admin, administrator
-No-reply patterns: noreply, no-reply, donotreply, do-not-reply
-Team/group aliases: team, staff, crew, group, all, everyone
-Operational: billing, accounts, finance, legal, hr, careers, jobs, recruiting, sales, marketing, press, media, pr
-Technical: webmaster, postmaster, hostmaster, abuse, security, devops, it
-Automated: bot, automated, notification, alerts, mailer, daemon
-Classify as true (individual) if the address:
+Classify as false (service/organisational) ONLY when the local part — the text before the @ — is clearly a role, group, or automated mailbox rather than a person. These are the patterns that qualify:
 
-Appears to contain a personal name (e.g. john.smith@, jsmith@, j.doe@)
-Uses a name with numbers that suggest a person (e.g. sarah92@)
-Does not match any of the service patterns above
+Generic roles: info, contact, hello, hi, enquiries, inquiries, admin, administrator, office, reception
+No-reply: noreply, no-reply, donotreply, do-not-reply, bounce, mailer-daemon
+Team/group aliases: team, staff, crew, group, all, everyone, members, partners
+Operational: billing, invoices, accounts, accounting, finance, payroll, legal, hr, careers, jobs, recruiting, sales, marketing, press, media
+Technical: webmaster, postmaster, hostmaster, abuse, security, devops, sysadmin, noc, it-support
+Automated: bot, automated, notification, notifications, alerts, alert, mailer, daemon, system, updates, newsletter, digest
 
-When uncertain, default to false. Include rationale for your decision in your output in a separate field.`;
+Otherwise classify as true. In particular:
+
+A display name that reads like a person's name is strong evidence for true, whatever the local part looks like.
+Do NOT answer false merely because the local part is short, is initials, is a username or handle, contains digits, or is a name you do not recognise. Personal names come from every language and writing system, and an unfamiliar local part is still a person.
+When you are genuinely uncertain and no role pattern above matches, answer true.
+
+Include a brief rationale for each decision in a separate field.`;
 
 const EMAIL_REGEX = /[\w.+-]+@[\w-]+\.[\w.-]+/;
 
 export interface Blocklist {
 	exact: Set<string>;
 	substrings: string[];
+}
+
+/**
+ * An address plus the display name the source attached to it (a calendar
+ * attendee's `displayName`, a Notion person's `name`, a mail header's phrase).
+ * The name is optional and only ever helps: it steers the individual-vs-service
+ * classification and becomes the new Contact's title.
+ */
+export interface EmailCandidate {
+	email: string;
+	name?: string;
+}
+
+/** Callers may pass bare addresses or addresses carrying a display name. */
+export type EmailInput = string | EmailCandidate;
+
+/**
+ * Collapse mixed `string | EmailCandidate` input to a lowercase-email → name
+ * map. The first non-empty name wins, so a named source (calendar) beats a
+ * later bare mention of the same address.
+ */
+function normaliseCandidates(inputs: EmailInput[]): Map<string, string | undefined> {
+	const byEmail = new Map<string, string | undefined>();
+	for (const input of inputs) {
+		const raw = typeof input === "string" ? input : input?.email;
+		if (!raw) continue;
+		const email = String(raw).toLowerCase().trim();
+		if (!email) continue;
+		const name =
+			typeof input === "string" ? undefined : input?.name?.trim() || undefined;
+		const existing = byEmail.get(email);
+		if (!byEmail.has(email) || (!existing && name)) {
+			byEmail.set(email, name);
+		}
+	}
+	return byEmail;
 }
 
 export interface ResolveContactsOptions {
@@ -182,10 +230,22 @@ export async function lookupExistingContacts(
 	return map;
 }
 
+interface ClassifierVerdict {
+	email: string;
+	isIndividual: boolean;
+	rationale: string;
+}
+
 async function classifyEmails(
 	zapier: Zapier,
-	emails: string[],
-): Promise<Set<string>> {
+	candidates: Map<string, string | undefined>,
+): Promise<ClassifierVerdict[]> {
+	// One line per address, with the display name appended when we have one —
+	// the prompt treats a person-shaped display name as strong evidence.
+	const lines = [...candidates].map(([email, name]) =>
+		name ? `${email} — ${name}` : email,
+	);
+
 	const { data } = await zapier.runAction({
 		appKey: "AICLIAPI",
 		actionType: "write",
@@ -195,10 +255,10 @@ async function classifyEmails(
 			authentication_id: AI_AUTHENTICATION_ID,
 			model_id: AI_MODEL_ID,
 			instructions: CLASSIFIER_INSTRUCTIONS,
-			inputFields: { Emails: emails.join("\n") },
+			inputFields: { Emails: lines.join("\n") },
 			outputSchema: {
 				Email:
-					"The email address being classified, copied verbatim from the input.",
+					"The email address being classified, copied verbatim from the input. Exclude any display name.",
 				"Is Individual":
 					"Indicates whether the email address belongs to a real individual person (true) or a service/organisational account (false).",
 				Rationale: "Brief reasoning for the classification.",
@@ -216,31 +276,48 @@ async function classifyEmails(
 	const outer: any[] = Array.isArray(data) ? data : data ? [data] : [];
 	const items = outer.flatMap((entry) => {
 		const result = entry?.result;
-		// Zapier's AI action wraps array outputs under `result.items`.
+		// Zapier's AI action wraps array outputs under `result.items`, or
+		// occasionally under `result` / `items` directly.
 		if (Array.isArray(result?.items)) return result.items;
 		if (Array.isArray(result)) return result;
+		if (Array.isArray(entry?.items)) return entry.items;
 		return [entry];
 	});
-	const individuals = new Set<string>();
+
+	const verdicts: ClassifierVerdict[] = [];
 	for (const item of items) {
-		const verdict = item?.["Is Individual"];
-		if (verdict === true || verdict === "true") {
-			const email = String(item?.Email ?? "").toLowerCase().trim();
-			if (email) individuals.add(email);
-		}
+		const email = String(item?.Email ?? "")
+			.toLowerCase()
+			.trim();
+		if (!email) continue;
+		const raw = item?.["Is Individual"];
+		verdicts.push({
+			email,
+			isIndividual: raw === true || raw === "true",
+			rationale: String(item?.Rationale ?? "").trim(),
+		});
 	}
-	return individuals;
+	return verdicts;
 }
 
 async function createNotionContact(
 	dataSourceId: string,
 	email: string,
+	name?: string,
 ): Promise<string | null> {
+	const properties: Record<string, any> = {
+		[PRIMARY_EMAIL_PROPERTY]: { email },
+	};
+	// Without this the Contact's title stays empty and the row reads as its own
+	// email address in every view and relation.
+	if (name) {
+		properties[NAME_PROPERTY] = {
+			title: [{ type: "text", text: { content: name.slice(0, 2000) } }],
+		};
+	}
 	const page = await createPage({
 		parent: { data_source_id: dataSourceId },
-		properties: {
-			[PRIMARY_EMAIL_PROPERTY]: { email },
-		},
+		properties,
 	});
 	return page?.id ?? null;
 }
@@ -251,11 +328,18 @@ async function createNotionContact(
  *  2. Match remaining addresses against Contacts (Primary or Secondary Email).
  *  3. Classify unknown addresses (individual vs. service) with AI by Zapier.
  *  4. Create Contact pages for individuals, capped per run.
+ *
+ * Accepts bare address strings or `{ email, name }` candidates; a display name
+ * improves the step-3 classification and becomes the new Contact's title.
+ *
+ * Every address this drops is logged with the reason. Each stage here can
+ * silently swallow an address, and when one did (see CLASSIFIER_INSTRUCTIONS)
+ * the only evidence in the run log was a contact count that looked plausible.
  */
 export async function resolveContactPageIds(
 	_notion: Client,
 	zapier: Zapier,
-	rawEmails: string[],
+	rawEmails: EmailInput[],
 	options: ResolveContactsOptions = {},
 ): Promise<string[]> {
 	const {
@@ -265,9 +349,27 @@ export async function resolveContactPageIds(
 		internalDomain = DEFAULT_INTERNAL_DOMAIN,
 	} = options;
 
+	const candidates = normaliseCandidates(rawEmails);
+	if (candidates.size === 0) {
+		console.log("No email addresses to resolve.");
+		return [];
+	}
+
 	const blocklist = await loadBlocklist(zapier, blocklistTableId);
-	const filtered = dedupeExternal(rawEmails, blocklist, internalDomain);
+	const filtered = dedupeExternal(
+		[...candidates.keys()],
+		blocklist,
+		internalDomain,
+	);
+
+	const excluded = [...candidates.keys()].filter((e) => !filtered.includes(e));
+	if (excluded.length > 0) {
+		console.log(
+			`Excluded ${excluded.length} internal/blocklisted address(es): ${excluded.join(", ")}`,
+		);
+	}
 	if (filtered.length === 0) return [];
+	console.log(`Resolving ${filtered.length} address(es): ${filtered.join(", ")}`);
 
 	const existing = await lookupExistingContacts(filtered, contactsDataSourceId);
 	const existingPageIds = [
@@ -278,27 +380,78 @@ export async function resolveContactPageIds(
 		),
 	];
 
-	const newEmails = filtered
-		.filter((e) => !existing.has(e))
-		.slice(0, newContactCap);
+	const unknown = filtered.filter((e) => !existing.has(e));
+	console.log(
+		`Matched ${existingPageIds.length} existing Contact(s); ${unknown.length} address(es) unknown.`,
+	);
 
+	const newEmails = unknown.slice(0, newContactCap);
+	if (newEmails.length < unknown.length) {
+		console.log(
+			`newContactCap=${newContactCap} reached; deferring ${unknown.length - newEmails.length} address(es): ${unknown.slice(newContactCap).join(", ")}`,
+		);
+	}
 	if (newEmails.length === 0) return existingPageIds;
 
-	const individuals = await classifyEmails(zapier, newEmails);
-	const toCreate = newEmails.filter((e) => individuals.has(e));
+	const newCandidates = new Map(
+		newEmails.map((email) => [email, candidates.get(email)] as const),
+	);
+	const verdicts = await classifyEmails(zapier, newCandidates);
 
+	for (const v of verdicts) {
+		console.log(
+			`Classifier: ${v.email} → ${v.isIndividual ? "individual" : "service/organisational"}${v.rationale ? ` (${v.rationale})` : ""}`,
+		);
+	}
+
+	const individuals = new Set(
+		verdicts.filter((v) => v.isIndividual).map((v) => v.email),
+	);
+	// An address the classifier never returned a verdict for is dropped just as
+	// silently as one it rejected, so call the two out separately.
+	const unjudged = newEmails.filter(
+		(e) => !verdicts.some((v) => v.email === e),
+	);
+	if (unjudged.length > 0) {
+		console.log(
+			`Classifier returned no verdict for ${unjudged.length} address(es); not creating Contacts for: ${unjudged.join(", ")}`,
+		);
+	}
+	const rejected = newEmails.filter(
+		(e) => !individuals.has(e) && !unjudged.includes(e),
+	);
+	if (rejected.length > 0) {
+		console.log(
+			`Skipped ${rejected.length} address(es) classified as service/organisational: ${rejected.join(", ")}`,
+		);
+	}
+
+	const toCreate = newEmails.filter((e) => individuals.has(e));
 	const results = await Promise.allSettled(
-		toCreate.map((email) => createNotionContact(contactsDataSourceId, email)),
+		toCreate.map((email) =>
+			createNotionContact(
+				contactsDataSourceId,
+				email,
+				newCandidates.get(email),
+			),
+		),
 	);
 
 	const created: string[] = [];
 	results.forEach((r, i) => {
+		const email = toCreate[i];
 		if (r.status === "fulfilled" && r.value) {
 			created.push(r.value);
+			const name = newCandidates.get(email);
+			console.log(
+				`Created Contact ${r.value} for ${email}${name ? ` (${name})` : " (no display name available)"}`,
+			);
 		} else if (r.status === "rejected") {
 			console.log(
-				`Creating Contact for ${toCreate[i]} failed: ${(r.reason as any)?.message ?? r.reason}`,
+				`Creating Contact for ${email} failed: ${(r.reason as any)?.message ?? r.reason}`,
 			);
+		} else {
+			console.log(`Creating Contact for ${email} returned no page id.`);
 		}
 	});
 
