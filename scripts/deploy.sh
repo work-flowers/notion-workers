@@ -92,11 +92,28 @@ mkdir -p "$worker/vendor"
 (cd "$root/packages/shared" && npm run build >/dev/null && npm pack --pack-destination "$worker/vendor" >/dev/null)
 tgz="$(basename "$(ls "$worker/vendor"/*.tgz)")"
 
+# Restore package.json from a byte-for-byte copy, never from git.
+#
+# This used to be `git checkout -- workers/$name/package.json`, which restores
+# from the index and therefore discards *every* uncommitted change to the file,
+# not just the one dependency line rewritten below. Deploying with work in
+# progress silently reverted it — new dependencies, new scripts, all of it. The
+# deploy itself still succeeded, because the upload happens before this trap
+# fires, so the worker in Notion was fine and only the working tree was wrong.
+# That is what made it hard to spot: nothing failed. Hit on 2026-08-01 and
+# again on 2026-08-03, the second time eating a whole block's dependencies.
+#
+# A copy also round-trips the original formatting, which `npm pkg set` can
+# otherwise normalise even when it isn't asked to.
+backup="$(mktemp)"
+cp "$worker/package.json" "$backup"
+
 restore() {
-	git -C "$root" checkout --quiet -- "workers/$name/package.json"
+	cp "$backup" "$worker/package.json"
+	rm -f "$backup"
 	rm -rf "$worker/vendor"
 }
-trap restore EXIT
+trap restore EXIT INT TERM
 
 cd "$worker"
 npm pkg set "dependencies.@work-flowers/notion-worker-shared=file:vendor/$tgz"
