@@ -17,5 +17,10 @@ export type {
 } from "./contacts";
 export { buildInternalUserMap, resolveInternalUserIds } from "./internalUsers";
 export { toNotionMarkdown } from "./markdown";
-export { createPage, queryDataSource, updatePage } from "./notionRaw";
+export {
+	createPage,
+	queryDataSource,
+	retrieveDataSource,
+	updatePage,
+} from "./notionRaw";
 export type { QueryDataSourceResponse } from "./notionRaw";

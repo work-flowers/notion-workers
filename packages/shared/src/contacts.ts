@@ -1,6 +1,6 @@
 import type { Client } from "@notionhq/client";
 import type { createZapierSdk } from "@zapier/zapier-sdk";
-import { createPage, queryDataSource } from "./notionRaw";
+import { createPage, queryDataSource, retrieveDataSource } from "./notionRaw";
 
 type Zapier = ReturnType<typeof createZapierSdk>;
 
@@ -182,6 +182,29 @@ export async function loadBlocklist(
 }
 
 /**
+ * Read the option names of the Secondary Email multi_select, lowercased.
+ *
+ * Notion validates `multi_select.contains` against the property's option list
+ * and returns a 400 `validation_error` for anything else — it does not simply
+ * match nothing. Filtering on an address that has never been a Secondary Email
+ * therefore kills the whole query, and with it every Meeting Note whose
+ * attendees include a genuinely new external address. Since an address absent
+ * from the options cannot possibly match a row, omitting its clause is
+ * equivalent to keeping it, minus the 400. (Learned 2026-08-05, after two
+ * Knoxx standups failed on `j@knoxxfoods.com` / `sai@knoxxfoods.com`.)
+ */
+async function secondaryEmailOptions(
+	dataSourceId: string,
+): Promise<Set<string>> {
+	const ds = await retrieveDataSource(dataSourceId);
+	const options =
+		ds.properties?.[SECONDARY_EMAIL_PROPERTY]?.multi_select?.options ?? [];
+	return new Set(
+		options.map((o: any) => String(o?.name ?? "").toLowerCase()).filter(Boolean),
+	);
+}
+
+/**
  * Look up existing Contact pages by email, matching on Primary Email
  * (email property) OR Secondary Email (multi_select). Returns a
  * lowercase-email → page-id map covering both properties.
@@ -193,14 +216,31 @@ export async function lookupExistingContacts(
 	const map = new Map<string, string>();
 	if (emails.length === 0) return map;
 
+	let knownSecondary: Set<string>;
+	try {
+		knownSecondary = await secondaryEmailOptions(dataSourceId);
+	} catch (err) {
+		// Losing the Secondary Email arm is survivable — Primary Email still
+		// matches, so we may create a duplicate Contact — but a hard failure here
+		// would take out the whole enrichment.
+		console.log(
+			`Could not read ${SECONDARY_EMAIL_PROPERTY} options: ${(err as Error)?.message ?? err}`,
+		);
+		knownSecondary = new Set();
+	}
+
 	for (let i = 0; i < emails.length; i += LOOKUP_CHUNK_SIZE) {
 		const chunk = emails.slice(i, i + LOOKUP_CHUNK_SIZE);
 		const orFilters = chunk.flatMap((email) => [
 			{ property: PRIMARY_EMAIL_PROPERTY, email: { equals: email } },
-			{
-				property: SECONDARY_EMAIL_PROPERTY,
-				multi_select: { contains: email },
-			},
+			...(knownSecondary.has(email)
+				? [
+						{
+							property: SECONDARY_EMAIL_PROPERTY,
+							multi_select: { contains: email },
+						},
+					]
+				: []),
 		]);
 
 		let cursor: string | null = null;

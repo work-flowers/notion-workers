@@ -35,6 +35,12 @@ export interface QueryDataSourceResponse {
 	next_cursor: string | null;
 }
 
+export async function retrieveDataSource(
+	dataSourceId: string,
+): Promise<{ properties?: Record<string, any> }> {
+	return await call("GET", `data_sources/${dataSourceId}`);
+}
+
 export async function queryDataSource(
 	dataSourceId: string,
 	body: Record<string, unknown>,
