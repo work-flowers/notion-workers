@@ -158,6 +158,43 @@ equivalent for querying rows yet.
 - Rows carry their own `update()`; the `pages` API covers create/get/update/delete
   when you don't have a row in hand.
 
+## Writing: a block is not limited to dashboards
+
+Verified on `crm-deal-desk` 2026-08-06. **Full CRUD works, including relations**,
+which is what makes a block usable as an app rather than a report.
+
+- `pages.create({ parent: { type: "data_source_key", key }, properties })`
+  inserts a row into a mapped data source. `properties` accepts your manifest
+  keys, so no raw ids.
+- `row.update({ properties })` edits a row you already have, also by key. The
+  top-level `pages.update()` is keyed by **raw property id only** and each value
+  must repeat its own `id` — prefer the row helper whenever you have a row.
+- **Relation values are writable**: `{ type: "relation", relation: [{ id }] }`.
+  The read shape (`Array<{ id, table }>`) and the write shape are different;
+  don't round-trip one into the other.
+- Other write shapes worth having to hand: `{ type: "status", status: { name } }`,
+  `{ type: "select", select: { name } | null }`, `{ type: "date", date: { start } | null }`,
+  `{ type: "number", number }`, `{ type: "title", title: [{ type: "text", text: { content } }] }`.
+- **Write every field you own on every save, nulls included.** An omitted key
+  leaves the old value in place, so a field that should have been *cleared*
+  silently keeps its previous value.
+- `pages.create` cannot set an icon or cover yet — create, then `pages.update`.
+
+### Read the property's options rather than hardcoding them
+
+`propertySchemasByKey[key].options` gives a select/status property's option
+names, so a block can offer exactly what the bound property accepts. This
+matters more than it sounds: hardcode a status name the bound property lacks and
+you get a save that fails at the API instead of a control that was never
+offered. A `status` property also exposes `groups`, but those only partition the
+options by id — every name is already in `options`, so read that alone.
+
+## The manifest property type is `rich_text`, not `text`
+
+`CustomBlockManifestPropertyType` follows the API's names. Declaring `type:
+"text"` fails the typecheck with a 25-member union in the error message, which
+buries the one-word fix.
+
 ## What a block cannot do
 
 **It cannot open a Notion page.** This is settled — don't spend time on it. The
@@ -187,6 +224,42 @@ tracks the page's theme and accent for free.
 `useTheme()` returns `"light" | "dark"`, and NDS maps it to **`data-display-mode`**
 — *not* `data-theme`, which selects content colour palettes. `<NotionTokenScope>`
 applies theme and contrast mode automatically for React apps.
+
+### Three NDS token names that look obvious and don't exist
+
+A missing custom property makes the **whole declaration invalid**, so the
+failure mode is a transparent background rather than an error — dark text on the
+browser's dark default, which reads as a theme bug rather than a typo:
+
+| Wrong | Right |
+|---|---|
+| `--bg-primary` | `--bg-base` |
+| `--content-orange`, `--content-red` | the `--orange-*` / `--red-*` scales, e.g. `--orange-60` |
+| `--spacing-3` (by step) | `--spacing-12` (by pixel value) |
+
+Also available and easy to miss: `--border-strong`, `--bg-interactive-strong`
+with `--content-on-interactive-strong` for primary buttons, `--radius-*`,
+`--font-sans`, `--font-weight-*`, `--shadow-md`.
+
+### When *not* to use NDS
+
+NDS is right for a block that should dissolve into the page — a dashboard, a
+chart, a view. It is the wrong default for a block that is a **product surface**:
+the app a team works in instead of the database grid. `crm-deal-desk` uses the
+workFlowers design system for exactly that reason, and looking unlike Notion is
+the point rather than a cost.
+
+Two things that bite if you go that way:
+
+- **Bundle the fonts.** A brand stylesheet that `@import`s Google Fonts fails
+  *silently* in the sandbox and you get system sans. Use `@fontsource-*`.
+- **Decide what happens in dark mode before you start.** A brand with no dark
+  palette can't track `useTheme()`, so either commit to painting your own
+  surface (legible on a dark page the way an embedded app is) or derive a dark
+  variant properly. Half-doing it yields a third palette belonging to neither
+  system.
+
+Dropping NDS is also worth ~160 kB of CSS.
 
 ## Chart colour
 
@@ -238,7 +311,7 @@ this is purely about deploys and maintenance:
 dashboard is the primary way the synced data gets consumed, in which case shared
 fate is a feature.
 
-## Two reference implementations
+## Three reference implementations
 
 - **`workers/newsletter-dashboard`** — the simpler one: a single data source,
   charts, a table view, `?mock` fixtures, unit-tested aggregation.
@@ -246,6 +319,28 @@ fate is a feature.
   sync that feeds it, mapping **three** data sources with tabs, optional keys,
   and generic `TrendLines` / `Columns` / `RankedBars` primitives reused across
   all of them. Also the one that hit the `.mts` problem above.
+- **`workers/crm-deal-desk`** — the read/**write** one, and the only app rather
+  than a report: a CRM front end that creates and edits deals, pre-filters a
+  relation picker on another field's value, and gates stage transitions on
+  per-stage requirements. Also the one that leaves NDS behind for the brand
+  system. Its `?mock` mode runs the full create/edit flow with writes held in
+  memory, which is how to demo a writing block without touching real data.
+
+### Making a writing block demo-able
+
+Two habits worth copying from `crm-deal-desk`:
+
+- **Put persistence behind a small interface** (there, a `Store` with
+  `createDeal` / `updateDeal`) and give `?mock` an in-memory implementation. The
+  same UI then exercises the real flows — including the guardrails — with no
+  binding, no deploy and nothing written anywhere. That is the mode to record
+  demos in.
+- **Don't demo against live client data.** Point the fixture and the binding at
+  a fictional template CRM instead, and add a test asserting no real client name
+  appears in the fixture. Sizing matters too: a picker that narrows five
+  contacts to two doesn't look like it's saving anyone from anything, so give
+  the fixture a realistic spread (one company with 18 people, one with 1, two
+  with none) or the demo understates itself.
 
 Each worker's `CLAUDE.md` covers the decisions specific to its block; this file
 covers what generalises.

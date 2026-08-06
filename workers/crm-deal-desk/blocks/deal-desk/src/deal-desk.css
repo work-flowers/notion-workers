@@ -1,0 +1,775 @@
+/*
+ * workFlowers design system, not Notion's.
+ *
+ * `newsletter-dashboard` uses NDS tokens so it dissolves into the page. This
+ * block deliberately does the opposite: it is a *product surface* embedded in a
+ * Notion page — the thing a client's team works in instead of the database
+ * grid — so it should look like a workFlowers app, not like Notion furniture.
+ * Chosen knowingly against the alpha's house guidance.
+ *
+ * Two consequences follow, and both are the point rather than oversights:
+ *
+ * 1. **It does not track the page theme.** The brand has no dark mode
+ *    (`tokens/colors.css` is light-only), and half-inventing one would produce
+ *    a third palette belonging to neither system. Instead the block paints its
+ *    own light surface and stays legible on a dark page the way an embedded
+ *    app does. `useTheme()` and `<NotionTokenScope>` are therefore unused.
+ * 2. **Fonts are bundled, not linked.** The brand's `typography.css` pulls Inter
+ *    and JetBrains Mono from the Google Fonts CDN; the sandbox blocks
+ *    cross-origin requests and the @import fails *silently*, leaving system
+ *    sans. `@fontsource-variable/inter` and `@fontsource/jetbrains-mono` are
+ *    imported from `index.tsx` so they ship as same-origin assets.
+ *
+ * Tokens are copied from the skill rather than imported — the design system
+ * lives outside this repo, so there is nothing to `@import`. Keep the values in
+ * sync by hand; they are the brand's, not this block's, and shouldn't be tuned
+ * here.
+ */
+
+:root {
+	/* ---------- Brand palette (raw) ---------- */
+	--wf-persian-indigo: #2e1b88;
+	--wf-azure: #1479e1;
+	--wf-non-photo-blue: #9ce1fc;
+	--wf-russian-violet: #4e1b61;
+	--wf-ochre: #e17a14;
+	--wf-peach: #f6c696;
+	--wf-eerie-black: #1f1f1f;
+
+	/* ---------- Semantic roles ---------- */
+	--wf-bg: #ffffff;
+	--wf-bg-tint: #f5fafe;
+	--wf-anchor: var(--wf-persian-indigo);
+	--wf-interactive: var(--wf-azure);
+	--wf-interactive-hi: #0e63be;
+	--wf-button: var(--wf-persian-indigo);
+	--wf-button-hi: #241468;
+	--wf-cta: var(--wf-ochre);
+	--wf-cta-hi: #c96a0f;
+	--wf-fg: var(--wf-eerie-black);
+	--wf-fg-muted: #4b4b4b;
+	--wf-fg-subtle: #6b6b6b;
+	--wf-border: rgba(31, 31, 31, 0.12);
+	--wf-border-strong: rgba(31, 31, 31, 0.24);
+	--wf-indigo-10: rgba(46, 27, 136, 0.1);
+	--wf-alert-bg: #fff1de;
+	--wf-alert-fg: #a85a0d;
+
+	--wf-shadow-sm: 0 1px 2px rgba(31, 31, 31, 0.06);
+	--wf-shadow-md: 0 2px 8px rgba(31, 31, 31, 0.1);
+	--wf-shadow-lg: 0 10px 30px rgba(46, 27, 136, 0.14);
+
+	/* ---------- Type ---------- */
+	--wf-font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+		"Segoe UI", Helvetica, Arial, sans-serif;
+	--wf-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+		Consolas, monospace;
+	--wf-w-regular: 400;
+	--wf-w-medium: 500;
+	--wf-w-semibold: 600;
+	--wf-w-bold: 700;
+	--wf-tr-heading: -0.01em;
+	--wf-tr-eyebrow: 0.08em;
+
+	/* ---------- Spacing & radius (4pt grid) ---------- */
+	--wf-sp-1: 4px;
+	--wf-sp-2: 8px;
+	--wf-sp-3: 12px;
+	--wf-sp-4: 16px;
+	--wf-sp-5: 20px;
+	--wf-sp-6: 24px;
+	--wf-sp-8: 32px;
+	--wf-radius-xs: 4px;
+	--wf-radius-sm: 5px;
+	--wf-radius-md: 8px;
+	--wf-radius-pill: 999px;
+
+	/* ---------- Motion ---------- */
+	--wf-ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+	--wf-dur-fast: 120ms;
+	--wf-dur-med: 220ms;
+}
+
+.dd-root {
+	padding: var(--wf-sp-6);
+	border-radius: var(--wf-radius-md);
+	background: var(--wf-bg);
+	color: var(--wf-fg);
+	font-family: var(--wf-font-sans);
+	font-size: 15px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.dd-app[data-stale="true"] {
+	opacity: 0.6;
+	transition: opacity var(--wf-dur-fast) var(--wf-ease);
+}
+
+.dd-muted {
+	color: var(--wf-fg-subtle);
+}
+
+/* Figures are the thing people scan down a column — mono keeps them aligned. */
+.dd-num {
+	font-family: var(--wf-font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dd-root *,
+	.dd-root *::before,
+	.dd-root *::after {
+		transition-duration: 0.01ms !important;
+	}
+}
+
+/* --- header ------------------------------------------------------------- */
+
+.dd-header {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--wf-sp-4);
+	align-items: flex-end;
+	justify-content: space-between;
+	margin-bottom: var(--wf-sp-6);
+	padding-bottom: var(--wf-sp-4);
+	border-bottom: 2px solid var(--wf-anchor);
+}
+
+.dd-title {
+	margin: 0;
+	color: var(--wf-anchor);
+	font-size: 22px;
+	font-weight: var(--wf-w-bold);
+	letter-spacing: var(--wf-tr-heading);
+}
+
+.dd-subtitle {
+	margin: 2px 0 0;
+	color: var(--wf-fg-muted);
+	font-size: 14px;
+}
+
+.dd-tabs {
+	display: flex;
+	gap: var(--wf-sp-2);
+	align-items: center;
+}
+
+.dd-tab {
+	display: inline-flex;
+	gap: var(--wf-sp-2);
+	align-items: center;
+	padding: 9px 16px;
+	border: none;
+	border-radius: var(--wf-radius-sm);
+	background: transparent;
+	color: var(--wf-fg-muted);
+	font: inherit;
+	font-size: 14px;
+	font-weight: var(--wf-w-semibold);
+	cursor: pointer;
+	transition: background var(--wf-dur-med) var(--wf-ease);
+}
+
+.dd-tab:hover {
+	background: rgba(31, 31, 31, 0.05);
+}
+
+.dd-tab[data-active="true"] {
+	background: var(--wf-indigo-10);
+	color: var(--wf-anchor);
+}
+
+.dd-badge {
+	padding: 1px 8px;
+	border-radius: var(--wf-radius-pill);
+	background: var(--wf-cta);
+	color: #fff;
+	font-family: var(--wf-font-mono);
+	font-size: 11px;
+	font-weight: var(--wf-w-bold);
+}
+
+/* --- buttons ------------------------------------------------------------ */
+
+.dd-button {
+	padding: 9px 18px;
+	border: 1.5px solid var(--wf-anchor);
+	border-radius: var(--wf-radius-sm);
+	background: #fff;
+	color: var(--wf-anchor);
+	font: inherit;
+	font-size: 14px;
+	font-weight: var(--wf-w-semibold);
+	line-height: 1;
+	cursor: pointer;
+	transition:
+		background var(--wf-dur-med) var(--wf-ease),
+		transform var(--wf-dur-fast) var(--wf-ease),
+		box-shadow var(--wf-dur-med) var(--wf-ease);
+}
+
+.dd-button:hover:not(:disabled) {
+	background: var(--wf-indigo-10);
+}
+
+.dd-button:active:not(:disabled) {
+	transform: scale(0.98);
+}
+
+.dd-button-primary {
+	border-color: transparent;
+	background: var(--wf-button);
+	color: #fff;
+}
+
+.dd-button-primary:hover:not(:disabled) {
+	transform: translateY(-1px);
+	background: var(--wf-button-hi);
+	box-shadow: var(--wf-shadow-md);
+}
+
+.dd-button:disabled {
+	transform: none;
+	box-shadow: none;
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.dd-button:focus-visible,
+.dd-tab:focus-visible,
+.dd-stage:focus-visible,
+.dd-card:focus-visible,
+.dd-attention-row:focus-visible,
+.dd-input:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 3px rgba(20, 121, 225, 0.35);
+}
+
+/* --- board -------------------------------------------------------------- */
+
+.dd-board {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+	gap: var(--wf-sp-4);
+}
+
+.dd-column-title {
+	display: flex;
+	gap: var(--wf-sp-2);
+	align-items: center;
+	margin: 0 0 var(--wf-sp-3);
+	color: var(--wf-interactive);
+	font-size: 12px;
+	font-weight: var(--wf-w-semibold);
+	letter-spacing: var(--wf-tr-eyebrow);
+	text-transform: uppercase;
+}
+
+.dd-column-count {
+	padding: 1px 8px;
+	border-radius: var(--wf-radius-pill);
+	background: var(--wf-non-photo-blue);
+	color: var(--wf-interactive-hi);
+	font-family: var(--wf-font-mono);
+	font-size: 11px;
+	letter-spacing: 0;
+}
+
+.dd-column-empty {
+	margin: 0;
+	color: var(--wf-fg-subtle);
+	font-size: 13px;
+}
+
+.dd-cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--wf-sp-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.dd-card {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	width: 100%;
+	padding: var(--wf-sp-3) var(--wf-sp-4);
+	border: 1px solid var(--wf-border);
+	border-radius: var(--wf-radius-sm);
+	background: #fff;
+	box-shadow: var(--wf-shadow-sm);
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		transform var(--wf-dur-fast) var(--wf-ease),
+		box-shadow var(--wf-dur-med) var(--wf-ease),
+		border-color var(--wf-dur-med) var(--wf-ease);
+}
+
+.dd-card:hover {
+	transform: translateY(-1px);
+	border-color: rgba(20, 121, 225, 0.35);
+	box-shadow: var(--wf-shadow-md);
+}
+
+/* Ochre is the brand's alert colour; the top rule keeps the cue non-colour too. */
+.dd-card[data-flagged="true"] {
+	border-top: 3px solid var(--wf-cta);
+}
+
+.dd-card-name {
+	color: var(--wf-anchor);
+	font-size: 14px;
+	font-weight: var(--wf-w-bold);
+	line-height: 1.3;
+	letter-spacing: -0.005em;
+}
+
+.dd-card-company,
+.dd-card-contact {
+	color: var(--wf-fg-subtle);
+	font-size: 12px;
+}
+
+.dd-card-meta {
+	color: var(--wf-fg);
+	font-size: 13px;
+	font-weight: var(--wf-w-medium);
+}
+
+/* --- editor ------------------------------------------------------------- */
+
+.dd-editor-head {
+	display: flex;
+	gap: var(--wf-sp-3);
+	align-items: baseline;
+	margin-bottom: var(--wf-sp-4);
+}
+
+.dd-back {
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--wf-interactive);
+	font: inherit;
+	font-size: 14px;
+	font-weight: var(--wf-w-semibold);
+	cursor: pointer;
+}
+
+.dd-back:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.dd-editor-title {
+	margin: 0;
+	color: var(--wf-anchor);
+	font-size: 20px;
+	font-weight: var(--wf-w-bold);
+	letter-spacing: var(--wf-tr-heading);
+}
+
+.dd-stagebar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--wf-sp-2);
+	margin-bottom: var(--wf-sp-4);
+}
+
+.dd-stage {
+	padding: 7px 14px;
+	border: 1.5px solid var(--wf-border-strong);
+	border-radius: var(--wf-radius-pill);
+	background: #fff;
+	color: var(--wf-fg-muted);
+	font: inherit;
+	font-size: 13px;
+	font-weight: var(--wf-w-medium);
+	line-height: 1;
+	cursor: pointer;
+	transition:
+		background var(--wf-dur-med) var(--wf-ease),
+		border-color var(--wf-dur-med) var(--wf-ease);
+}
+
+.dd-stage[data-current="true"] {
+	border-color: var(--wf-anchor);
+	color: var(--wf-anchor);
+	font-weight: var(--wf-w-semibold);
+}
+
+.dd-stage[data-target="true"] {
+	border-color: transparent;
+	background: var(--wf-anchor);
+	color: #fff;
+	font-weight: var(--wf-w-semibold);
+}
+
+.dd-stage[data-blocked="true"] {
+	border-style: dashed;
+	border-color: var(--wf-border);
+	color: var(--wf-fg-subtle);
+}
+
+/* --- requirements ------------------------------------------------------- */
+
+.dd-requirements {
+	margin-bottom: var(--wf-sp-4);
+	padding: var(--wf-sp-3) var(--wf-sp-4);
+	border-radius: var(--wf-radius-sm);
+	background: var(--wf-alert-bg);
+	color: var(--wf-alert-fg);
+}
+
+.dd-requirements-title {
+	margin: 0 0 var(--wf-sp-1);
+	font-size: 14px;
+	font-weight: var(--wf-w-medium);
+}
+
+.dd-requirements ul {
+	margin: 0;
+	padding-left: 18px;
+	font-size: 14px;
+}
+
+.dd-requirements li {
+	margin-top: 2px;
+}
+
+.dd-notice {
+	display: flex;
+	gap: var(--wf-sp-3);
+	align-items: center;
+	margin: 0 0 var(--wf-sp-4);
+	padding: var(--wf-sp-3) var(--wf-sp-4);
+	border-radius: var(--wf-radius-sm);
+	background: var(--wf-non-photo-blue);
+	color: var(--wf-interactive-hi);
+	font-size: 14px;
+	font-weight: var(--wf-w-medium);
+}
+
+.dd-notice-warn {
+	background: var(--wf-alert-bg);
+	color: var(--wf-alert-fg);
+}
+
+.dd-notice-error {
+	background: #fdecec;
+	color: #a32020;
+}
+
+/* --- form --------------------------------------------------------------- */
+
+.dd-form {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+	gap: var(--wf-sp-4);
+	align-items: start;
+}
+
+.dd-field {
+	display: flex;
+	position: relative;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.dd-field-label {
+	color: var(--wf-fg);
+	font-size: 13px;
+	font-weight: var(--wf-w-semibold);
+}
+
+.dd-field-hint {
+	color: var(--wf-fg-subtle);
+	font-size: 12px;
+}
+
+.dd-field[data-invalid="true"] .dd-input,
+.dd-field[data-invalid="true"] .dd-picker-disabled,
+.dd-field[data-invalid="true"] .dd-picker-selected {
+	border-color: var(--wf-cta);
+}
+
+.dd-input {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid var(--wf-border-strong);
+	border-radius: var(--wf-radius-sm);
+	outline: none;
+	background: #fff;
+	color: var(--wf-fg);
+	font: inherit;
+	font-size: 14px;
+	transition:
+		border-color 160ms var(--wf-ease),
+		box-shadow 160ms var(--wf-ease);
+}
+
+.dd-input::placeholder {
+	color: #9a9a9a;
+}
+
+.dd-input:focus {
+	border-color: var(--wf-azure);
+	box-shadow: 0 0 0 3px rgba(20, 121, 225, 0.18);
+}
+
+.dd-textarea {
+	line-height: 1.5;
+	resize: vertical;
+}
+
+/* --- pickers ------------------------------------------------------------ */
+
+.dd-orphan {
+	display: flex;
+	gap: var(--wf-sp-2);
+	align-items: baseline;
+	padding: 9px 12px;
+	border: 1px solid var(--wf-cta);
+	border-radius: var(--wf-radius-sm);
+	background: var(--wf-alert-bg);
+	color: var(--wf-alert-fg);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.dd-orphan-clear {
+	flex: none;
+	margin-left: auto;
+	padding: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	font-weight: var(--wf-w-semibold);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	cursor: pointer;
+}
+
+.dd-picker-disabled {
+	padding: 10px 12px;
+	border: 1px dashed var(--wf-border-strong);
+	border-radius: var(--wf-radius-sm);
+	background: var(--wf-bg-tint);
+	color: var(--wf-fg-muted);
+	font-size: 13px;
+}
+
+.dd-picker-selected {
+	display: flex;
+	gap: var(--wf-sp-2);
+	align-items: baseline;
+	padding: 9px 12px;
+	border: 1px solid var(--wf-azure);
+	border-radius: var(--wf-radius-sm);
+	background: var(--wf-bg-tint);
+}
+
+.dd-picker-selected-name {
+	font-size: 14px;
+	font-weight: var(--wf-w-semibold);
+}
+
+.dd-picker-selected-secondary {
+	flex: 1;
+	overflow: hidden;
+	color: var(--wf-fg-subtle);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dd-picker-change,
+.dd-picker-clear {
+	flex: none;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--wf-interactive);
+	font: inherit;
+	font-size: 12px;
+	font-weight: var(--wf-w-semibold);
+	cursor: pointer;
+}
+
+.dd-picker-change {
+	margin-left: auto;
+}
+
+.dd-picker-change:hover,
+.dd-picker-clear:hover {
+	color: var(--wf-interactive-hi);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.dd-picker-clear {
+	font-size: 16px;
+	line-height: 1;
+}
+
+/*
+ * Overlaid rather than in flow. An 18-name list in the layout stretches its
+ * grid row and shoves the rest of the form down the page — on a long roster the
+ * Save button leaves the viewport, which in a Notion iframe means the block
+ * grows and the page reflows around it every time you open a picker.
+ */
+.dd-picker-list {
+	position: absolute;
+	z-index: 2;
+	top: 100%;
+	right: 0;
+	left: 0;
+	max-height: 240px;
+	margin: var(--wf-sp-1) 0 0;
+	padding: 0;
+	overflow-y: auto;
+	border: 1px solid var(--wf-border);
+	border-radius: var(--wf-radius-sm);
+	background: #fff;
+	box-shadow: var(--wf-shadow-lg);
+	list-style: none;
+}
+
+.dd-picker-option {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	padding: 8px 12px;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.dd-picker-option:hover {
+	background: var(--wf-bg-tint);
+}
+
+.dd-picker-option-name {
+	font-size: 14px;
+	font-weight: var(--wf-w-medium);
+}
+
+.dd-picker-option-secondary {
+	color: var(--wf-fg-subtle);
+	font-size: 12px;
+}
+
+.dd-picker-empty {
+	padding: 12px;
+	color: var(--wf-fg-subtle);
+	font-size: 13px;
+}
+
+/* --- actions ------------------------------------------------------------ */
+
+.dd-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--wf-sp-3);
+	align-items: center;
+	margin-top: var(--wf-sp-6);
+	padding-top: var(--wf-sp-4);
+	border-top: 1px solid var(--wf-border);
+}
+
+.dd-actions-hint {
+	color: var(--wf-fg-subtle);
+	font-size: 13px;
+}
+
+/* --- attention ---------------------------------------------------------- */
+
+.dd-attention-intro {
+	margin: 0 0 var(--wf-sp-4);
+	color: var(--wf-fg-muted);
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.dd-attention-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--wf-sp-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.dd-attention-row {
+	display: grid;
+	grid-template-columns: minmax(180px, 1.2fr) 110px 2fr;
+	gap: var(--wf-sp-3);
+	align-items: baseline;
+	width: 100%;
+	padding: var(--wf-sp-3) var(--wf-sp-4);
+	border: 1px solid var(--wf-border);
+	border-left: 3px solid var(--wf-cta);
+	border-radius: var(--wf-radius-sm);
+	background: #fff;
+	box-shadow: var(--wf-shadow-sm);
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background var(--wf-dur-med) var(--wf-ease);
+}
+
+.dd-attention-row:hover {
+	background: var(--wf-alert-bg);
+}
+
+.dd-attention-name {
+	color: var(--wf-anchor);
+	font-size: 14px;
+	font-weight: var(--wf-w-semibold);
+}
+
+.dd-attention-stage {
+	color: var(--wf-fg-subtle);
+	font-size: 12px;
+	font-weight: var(--wf-w-medium);
+	letter-spacing: var(--wf-tr-eyebrow);
+	text-transform: uppercase;
+}
+
+.dd-attention-labels {
+	color: var(--wf-alert-fg);
+	font-size: 13px;
+}
+
+@media (width < 640px) {
+	.dd-attention-row {
+		grid-template-columns: 1fr;
+		gap: 3px;
+	}
+}
+
+/* --- placeholders ------------------------------------------------------- */
+
+.dd-placeholder {
+	padding: var(--wf-sp-8) 0;
+	color: var(--wf-fg-muted);
+	font-size: 14px;
+}
+
+.dd-error {
+	color: var(--wf-fg);
+}
