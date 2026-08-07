@@ -40,6 +40,21 @@ function teamId(): string {
 	return requireEnv("LINEAR_TEAM_ID");
 }
 
+/**
+ * The label every triage issue carries, so they can be filtered out of — or
+ * into — a team's backlog. Optional, and deliberately an id rather than a name:
+ * `labels` on `create_issue` is a dynamic enum over the workspace's existing
+ * labels, and Zapier resolves it by **id**. A name that does not exist is not
+ * created, so hard-coding one would fail on every ticket.
+ *
+ * Unset means no label, which is a working configuration rather than an error —
+ * a missing label must not stop a failure being reported.
+ */
+function labelIds(): string[] {
+	const id = process.env.LINEAR_LABEL_ID;
+	return id ? [id] : [];
+}
+
 export type LinearIssue = { id: string; url?: string };
 
 /**
@@ -131,10 +146,12 @@ export async function createIssue(
 	description: string,
 	pacer?: Pacer,
 ): Promise<LinearIssue | undefined> {
+	const labels = labelIds();
 	const results = await runAction("write", "create_issue", {
 		team_id: teamId(),
 		title,
 		description,
+		...(labels.length > 0 ? { labels } : {}),
 	}, pacer);
 	for (const record of results) {
 		const issue = extractIssue(record);

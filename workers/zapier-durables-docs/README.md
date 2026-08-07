@@ -374,6 +374,18 @@ ntn workers env set LINEAR_TEAM_ID=7031cc50-fb43-43ea-9f8b-dd62b38efde7
 `7031cc50-…` is **Internal**. Both are ids, not credentials: the connection id
 names a stored Zapier connection, so neither needs rotating.
 
+`LINEAR_LABEL_ID` is optional and tags every triage issue, so they can be
+filtered out of (or into) the team's backlog:
+
+```shell
+ntn workers env set LINEAR_LABEL_ID=<label-id>
+```
+
+It is an **id, not a name**, because `labels` on `create_issue` is a dynamic
+enum over the workspace's existing labels — Zapier resolves it by id, and a name
+that does not exist is silently not created. Unset means no label, which is a
+working configuration: a missing label must never stop a failure being reported.
+
 Optional overrides: `ZAP_DOCS_REPO` (default `work-flowers/zapier-sdk`) and
 `NOTION_PEOPLE_DATA_SOURCE_ID` (default is the work.flowers People data source).
 

@@ -18,8 +18,9 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Error Triage"** — written only through
   `errorsDelta`. Every column in it is machine-written now; see *Error triage*.
 - **Linear**, through the **Zapier** Linear connection
-  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`. Write-only in practice:
-  `errorsDelta` opens one issue per error signature and comments on recurrences.
+  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`, optionally labelled
+  `LINEAR_LABEL_ID`. Write-only in practice: `errorsDelta` opens one issue per
+  error signature and comments on recurrences.
 
 There is also a **hand-made `🚨 Error Triage` data source**
 (`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
@@ -161,6 +162,12 @@ Zapier app action against a stored connection, so `src/linear.ts` names actions
 writing queries, and no Linear token is held here. Each call costs a Zapier task,
 which is the right trade at triage volume (~8 signatures in two months) and would
 be the wrong one on a per-run path.
+
+**`LINEAR_LABEL_ID` is an id, not a name, and is optional.** `labels` on
+`create_issue` is a dynamic enum over the workspace's *existing* labels — Zapier
+resolves it by id, and a name that is not already there is not created, so a
+hard-coded name would fail on every ticket. Unset means no label, deliberately:
+a label misconfiguration must never be what stops a failure being reported.
 
 **The issue title carries a `[zap-err:xxxxxxxx]` marker, and it is load-bearing.**
 `ticketTitle` tracks the *newest* occurrence, so the visible part of the title
