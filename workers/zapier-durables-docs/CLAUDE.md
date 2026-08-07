@@ -132,22 +132,32 @@ way on 2026-07-29: `Status`, `Priority`, `Assignee`, `Resolution Notes` and
 `Resolved on` were declared and deliberately never written, and the result was
 five read-only columns and a triage table nobody could triage in. They then lived
 as hand-made properties outside the schema, which worked but was not reproducible
-from code. Linear has all five natively, so they were **deleted** rather than
-reimplemented. For the record, their shape was:
+from code. Linear has all five natively, so new tickets are triaged there.
 
-| Property | Type | Options |
+**The hand-made properties are not to be deleted on migration — they hold live
+triage history.** Read back off the live data source
+(`db78a092-515d-40e6-9416-aab114460f86`) on 2026-08-07, there are **seven**
+editable properties, not the five recorded here previously:
+
+| Property | Type | Notes |
 |---|---|---|
-| `Status` | status | To-do: `Untriaged` (gray) · In progress: `Ready for Claude` (purple), `Ready for human review` (orange), `In progress` (blue) · Complete: `Resolved` (green), `Won't fix` (brown) |
+| `Status` | status | To-do: `Untriaged` (gray) · In progress: `Ready for Claude` (purple), `Ready for GLM` (yellow), `Ready for human review` (orange), `In progress` (blue) · Complete: `Resolved` (green), `Won't fix` (brown) |
 | `Priority` | select | `High` (red), `Medium` (yellow), `Low` (gray) |
 | `Assignee` | person | — |
-| `Resolution Notes` | text | — |
-| `Resolved on` | date | — Set by a Notion automation when `Status` moves to a Complete option. |
+| `Resolution Notes` | text | Carries real prose on resolved tickets. Deleting the column destroys it. |
+| `Resolved on` | date | Set by a Notion automation when `Status` moves to a Complete option. |
+| `Ticket ID` | auto_increment_id | `ZAP-25`. **Keep this.** The agent write-ups in page bodies refer to tickets by this number, and the Linear attachment title carries it across. |
+| `GitHub Pull Requests` | relation | To `collection://3ad91b07-11ac-805d-8a56-000b61b9143a`. Someone added it by hand; nothing in this repo writes it. |
 
-**Undeclaring a property releases it rather than dropping it.** Removing those
-five from the schema and redeploying left every one in place, options and status
+`Ticket` (title) also reports as editable, because Notion cannot mark a title
+`readOnly`. The sync still owns it.
+
+**Undeclaring a property releases it rather than dropping it.** Removing five of
+these from the schema and redeploying left every one in place, options and status
 groups intact, and simply cleared `readOnly`. Nothing was lost and nothing had to
 be recreated — worth knowing before panicking about a schema change. It is also
-why deleting them is a *manual* action in Notion: a code change cannot do it.
+why deleting them would be a *manual* action in Notion: a code change cannot do
+it, which is the safety net here rather than an inconvenience.
 
 **The Notion Linear connection cannot be used from a worker — this was checked,
 do not retry it.** Notion's Linear connector is a workspace integration for
@@ -169,6 +179,20 @@ be the wrong one on a per-run path.
 resolves it by id, and a name that is not already there is not created, so a
 hard-coded name would fail on every ticket. Unset means no label, deliberately:
 a label misconfiguration must never be what stops a failure being reported.
+
+**The Linear issue carries a link back to its Notion row, attached on a *later*
+execution.** A sync's `changes` are applied after `execute` returns, so on the
+execution that first sees a signature the row does not exist and the lookup
+correctly finds nothing; the ticket stays `notionAttached: false` until it does.
+At one durable per execution that is usually seconds. Do not "fix" this by
+attaching at creation time — there is nothing to attach to yet.
+
+**The back-link needs `NOTION_TRIAGE_DATA_SOURCE_ID`
+(`db78a092-515d-40e6-9416-aab114460f86`) because a worker cannot discover its own
+database.** `worker.database()` returns an opaque `DatabaseHandle` — `{ key,
+config }` and nothing else — so there is no runtime route from the handle to the
+data source the platform created for it. Unset means no attachment, which is a
+working configuration: it is necessarily a post-deploy value.
 
 **`list_issue_labels` without a `name` filter does not return every label.** It
 listed 20 and reported `hasNextPage: false` while omitting `Zap Error`, which a

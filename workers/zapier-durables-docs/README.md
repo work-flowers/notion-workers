@@ -96,11 +96,21 @@ Linear issue on first sight, and the Notion row links to it through
 | **Linear** | status, priority, assignee, the diagnosis and its discussion |
 | **Notion** | the signature, `Occurrences`, first/last seen, and the two-way relations to Zaps and Zap Runs |
 
-This replaced five hand-made properties — `Status`, `Priority`, `Assignee`,
+This replaces five hand-made properties — `Status`, `Priority`, `Assignee`,
 `Resolution Notes`, `Resolved on` — that had to live outside the managed schema,
 because declaring a property is what makes Notion mark it `readOnly` and not
 writing a value does not help. They were therefore not reproducible from code.
-Linear has all five natively, so they were removed rather than reimplemented.
+Linear has all five natively, so new tickets are triaged there.
+
+**Those columns are not deleted by this change, and should not be deleted
+casually** — they hold the triage history of every ticket resolved before the
+move, including `Resolution Notes` prose. New tickets simply leave them empty.
+The database also carries a `Ticket ID` (`ZAP-25`) that the write-ups refer to by
+number; the Linear attachment title carries it across, so keep it.
+
+The Linear issue links back to its Notion row as an attachment. It is added on a
+later execution than the one that opened the issue, because a sync's changes land
+after `execute` returns — on first sight the row does not exist yet.
 
 Two rules govern the issue:
 
@@ -386,6 +396,17 @@ It is an **id, not a name**, because `labels` on `create_issue` is a dynamic
 enum over the workspace's existing labels — Zapier resolves it by id, and a name
 that does not exist is silently not created. Unset means no label, which is a
 working configuration: a missing label must never stop a failure being reported.
+
+`NOTION_TRIAGE_DATA_SOURCE_ID` is optional and enables the Linear → Notion
+back-link:
+
+```shell
+ntn workers env set NOTION_TRIAGE_DATA_SOURCE_ID=db78a092-515d-40e6-9416-aab114460f86
+```
+
+It is needed because a worker cannot discover its own database — `worker.database()`
+returns an opaque handle with no data source id — so the row can only be found by
+querying the data source directly. Unset means no attachment.
 
 Optional overrides: `ZAP_DOCS_REPO` (default `work-flowers/zapier-sdk`) and
 `NOTION_PEOPLE_DATA_SOURCE_ID` (default is the work.flowers People data source).

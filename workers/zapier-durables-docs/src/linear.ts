@@ -160,6 +160,23 @@ export async function createIssue(
 	return undefined;
 }
 
+/**
+ * Attach a link to the issue's Linear sidebar.
+ *
+ * An attachment rather than a line in the description, because the description
+ * is written once and never rewritten — and because at creation time the Notion
+ * row does not exist yet, so its URL is not knowable then. See
+ * `findTriagePageUrl`.
+ */
+export async function attachLink(
+	issueId: string,
+	url: string,
+	title: string,
+	pacer?: Pacer,
+): Promise<void> {
+	await runAction("write", "createIssueAttachment", { issue: issueId, url, title }, pacer);
+}
+
 /** Post a recurrence note. Comments accumulate; the description does not move. */
 export async function commentOnIssue(
 	issueId: string,

@@ -159,6 +159,10 @@ export type TicketState = {
 	 *  `count` is what a recurrence comment reports, and keeping it means a
 	 *  quiet cycle posts nothing. */
 	noticedCount?: number;
+	/** Whether the Notion row's URL has been attached to the Linear issue. False
+	 *  until the row exists — a sync's changes land after `execute` returns, so
+	 *  a brand-new ticket cannot be linked on the execution that created it. */
+	notionAttached?: boolean;
 };
 
 export type Occurrence = {

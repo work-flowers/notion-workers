@@ -20,7 +20,8 @@ import {
 	ticketTitle,
 	type TicketState,
 } from "./errors.js";
-import { commentOnIssue, createIssue, findIssueByMarker } from "./linear.js";
+import { attachLink, commentOnIssue, createIssue, findIssueByMarker } from "./linear.js";
+import { findTriagePage, triageDataSourceId } from "./triage-page.js";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "@work-flowers/notion-worker-shared";
 import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
@@ -582,6 +583,13 @@ const MAX_TRIAGE_DETAIL_FETCHES = 40;
  */
 const INITIAL_PAGES_PER_EXECUTION = 4;
 
+/**
+ * Notion lookups per execution for the Linear → Notion back-link. Normally zero
+ * — a ticket is attached once and never revisited. This only binds after a state
+ * reset, which leaves every live signature unattached at the same time.
+ */
+const MAX_ATTACHES_PER_EXECUTION = 10;
+
 type TriageState = {
 	watermarks?: Record<string, string>;
 	index?: number;
@@ -798,6 +806,44 @@ worker.sync("errorsDelta", {
 						error instanceof Error ? error.message : String(error)
 					}); the Notion row is still written and the next cycle retries.`,
 				);
+			}
+		}
+
+		// -- Back-link Linear → Notion -----------------------------------------
+		// Over every unattached ticket, not just this execution's, because a
+		// ticket's row does not exist on the execution that created it — the
+		// platform applies `changes` after `execute` returns. The next execution
+		// picks it up, which at one durable per execution is seconds later.
+		//
+		// Bounded per execution so a state reset, which leaves every ticket
+		// unattached at once, cannot turn one cycle into a hundred Notion
+		// queries. The remainder is picked up on subsequent executions.
+		if (triageDataSourceId()) {
+			let attaches = 0;
+			for (const [signature, ticket] of Object.entries(tickets)) {
+				if (attaches >= MAX_ATTACHES_PER_EXECUTION) break;
+				if (!ticket.issueId || ticket.notionAttached) continue;
+				attaches++;
+				try {
+					const page = await findTriagePage(signature, notionApi);
+					// No row yet. Correct on the execution that created the ticket,
+					// so this is silent rather than a warning.
+					if (!page) continue;
+					// `ZAP-25 · Zapier Error Triage` when the hand-made `Ticket ID`
+					// property is present — the number is what the triage write-ups
+					// refer to, so it is worth carrying across.
+					const title = page.ticketId
+						? `${page.ticketId} · Zapier Error Triage`
+						: "Zapier Error Triage";
+					await attachLink(ticket.issueId, page.url, title, linearApi);
+					ticket.notionAttached = true;
+				} catch (error) {
+					console.warn(
+						`${signature}: could not attach the Notion link (${
+							error instanceof Error ? error.message : String(error)
+						}); retrying next execution.`,
+					);
+				}
 			}
 		}
 
