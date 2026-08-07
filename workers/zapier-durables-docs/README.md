@@ -375,10 +375,11 @@ ntn workers env set LINEAR_TEAM_ID=7031cc50-fb43-43ea-9f8b-dd62b38efde7
 names a stored Zapier connection, so neither needs rotating.
 
 `LINEAR_LABEL_ID` is optional and tags every triage issue, so they can be
-filtered out of (or into) the team's backlog:
+filtered out of (or into) the team's backlog. `d4cfb106-…` is the workspace's
+**Zap Error** label:
 
 ```shell
-ntn workers env set LINEAR_LABEL_ID=<label-id>
+ntn workers env set LINEAR_LABEL_ID=d4cfb106-526e-4af0-9610-389b859a7c43
 ```
 
 It is an **id, not a name**, because `labels` on `create_issue` is a dynamic

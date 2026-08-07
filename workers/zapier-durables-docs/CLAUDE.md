@@ -18,9 +18,10 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Error Triage"** — written only through
   `errorsDelta`. Every column in it is machine-written now; see *Error triage*.
 - **Linear**, through the **Zapier** Linear connection
-  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`, optionally labelled
-  `LINEAR_LABEL_ID`. Write-only in practice: `errorsDelta` opens one issue per
-  error signature and comments on recurrences.
+  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`, labelled
+  `LINEAR_LABEL_ID` (`d4cfb106-…`, the **Zap Error** label). Write-only in
+  practice: `errorsDelta` opens one issue per error signature and comments on
+  recurrences.
 
 There is also a **hand-made `🚨 Error Triage` data source**
 (`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
@@ -168,6 +169,11 @@ be the wrong one on a per-run path.
 resolves it by id, and a name that is not already there is not created, so a
 hard-coded name would fail on every ticket. Unset means no label, deliberately:
 a label misconfiguration must never be what stops a failure being reported.
+
+**`list_issue_labels` without a `name` filter does not return every label.** It
+listed 20 and reported `hasNextPage: false` while omitting `Zap Error`, which a
+name-filtered call then found. Do not conclude a label is missing from an
+unfiltered listing — query it by name before creating a duplicate.
 
 **The issue title carries a `[zap-err:xxxxxxxx]` marker, and it is load-bearing.**
 `ticketTitle` tracks the *newest* occurrence, so the visible part of the title
