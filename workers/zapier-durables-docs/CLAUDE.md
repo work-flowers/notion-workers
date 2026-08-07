@@ -15,13 +15,10 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Zaps"** — written only through `zapsSync`.
 - **Managed database "Zapier Zap Runs"** — written through `runsBackfill` and
   `runsDelta`.
-- **Managed database "Zapier Error Triage"** — written only through
-  `errorsDelta`. Every column in it is machine-written now; see *Error triage*.
-- **Linear**, through the **Zapier** Linear connection
-  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`, labelled
-  `LINEAR_LABEL_ID` (`d4cfb106-…`, the **Zap Error** label). Write-only in
-  practice: `errorsDelta` opens one issue per error signature and comments on
-  recurrences.
+- **Managed database "Zapier Error Triage"**
+  (`db78a092-515d-40e6-9416-aab114460f86`) — written only through `errorsDelta`,
+  and only its machine columns. A downstream durable opens a Linear issue per new
+  row; this worker does not touch Linear. See *Error triage*.
 
 There is also a **hand-made `🚨 Error Triage` data source**
 (`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
@@ -120,24 +117,24 @@ genuinely different apps and must stay.
 
 ## Error triage
 
-**Triage lives in Linear; this database is the machine index.** Notion holds the
-signature, `Occurrences`, first/last seen and the relations to Zaps and Zap Runs.
-Linear holds status, priority, assignee and the diagnosis. Changed 2026-08-07.
+The **data source is `db78a092-515d-40e6-9416-aab114460f86`**. A worker cannot
+discover this for itself — see the note on `DatabaseHandle` below — so anything
+outside the sync that needs to reach these rows has to be told.
 
-**This is what dissolved the read-only-column problem, so do not reintroduce
-those columns.** Declaring a property in a managed schema makes it `readOnly` in
-Notion — a person cannot edit it — and not emitting a value does not help,
-because managed-ness follows the *declaration*, not the writes. Verified the hard
-way on 2026-07-29: `Status`, `Priority`, `Assignee`, `Resolution Notes` and
-`Resolved on` were declared and deliberately never written, and the result was
-five read-only columns and a triage table nobody could triage in. They then lived
-as hand-made properties outside the schema, which worked but was not reproducible
-from code. Linear has all five natively, so new tickets are triaged there.
+**Declaring a property in a managed schema makes it `readOnly` in Notion — a
+person cannot edit it.** Not emitting a value does not help; managed-ness follows
+the *declaration*, not the writes. Verified the hard way on 2026-07-29: `Status`,
+`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` were declared in the
+schema and deliberately never written, and the result was five read-only columns
+and a triage table nobody could triage in.
 
-**The hand-made properties are not to be deleted on migration — they hold live
-triage history.** Read back off the live data source
-(`db78a092-515d-40e6-9416-aab114460f86`) on 2026-08-07, there are **seven**
-editable properties, not the five recorded here previously:
+So those are **hand-made properties on the data source, not in the schema**.
+Anything a human must edit has to stay out of `worker.database()`.
+
+**There are seven of them, not five, and they hold live triage history.** Read
+back off the live data source on 2026-08-07 — the five-property list recorded
+here previously was incomplete, and deleting these columns would destroy real
+content (`Resolution Notes` carries full write-ups on resolved tickets):
 
 | Property | Type | Notes |
 |---|---|---|
@@ -146,7 +143,7 @@ editable properties, not the five recorded here previously:
 | `Assignee` | person | — |
 | `Resolution Notes` | text | Carries real prose on resolved tickets. Deleting the column destroys it. |
 | `Resolved on` | date | Set by a Notion automation when `Status` moves to a Complete option. |
-| `Ticket ID` | auto_increment_id | `ZAP-25`. **Keep this.** The agent write-ups in page bodies refer to tickets by this number, and the Linear attachment title carries it across. |
+| `Ticket ID` | auto_increment_id | `ZAP-25`. The agent write-ups in page bodies refer to tickets by this number. |
 | `GitHub Pull Requests` | relation | To `collection://3ad91b07-11ac-805d-8a56-000b61b9143a`. Someone added it by hand; nothing in this repo writes it. |
 
 `Ticket` (title) also reports as editable, because Notion cannot mark a title
@@ -155,86 +152,64 @@ editable properties, not the five recorded here previously:
 **Undeclaring a property releases it rather than dropping it.** Removing five of
 these from the schema and redeploying left every one in place, options and status
 groups intact, and simply cleared `readOnly`. Nothing was lost and nothing had to
-be recreated — worth knowing before panicking about a schema change. It is also
-why deleting them would be a *manual* action in Notion: a code change cannot do
-it, which is the safety net here rather than an inconvenience.
+be recreated — worth knowing before panicking about a schema change.
 
-**The Notion Linear connection cannot be used from a worker — this was checked,
-do not retry it.** Notion's Linear connector is a workspace integration for
-search and link previews (it is what lets Notion AI read Linear). The Workers
-runtime exposes exactly two routes to a third-party credential: `worker.oauth()`
-with an OAuth app you own, and a Notion-managed `provider:` shorthand that is
-private alpha. Neither reaches a connector configured in Notion's settings, and
-`@notionhq/workers@0.8.1` has no connection concept at all. Hence Zapier.
+**Properties carry only metadata lifted off the run. Diagnosis lives in the page
+body, and an agent owns that body — so `errorsDelta` must never write it.**
+`pageContentMarkdown` replaces a page body *in its entirety* (see the note on
+`zapsSync` above: it wipes appended blocks and trashes child pages). A ticket is
+re-upserted every time its signature recurs, so emitting a body here would
+destroy the agent's analysis on the next recurrence, silently and repeatedly.
+There is no `pageContentMarkdown` in the triage `changes`, and none may be added.
 
-**Linear is reached with `sdk().runAction`, not GraphQL.** `runAction` executes a
-Zapier app action against a stored connection, so `src/linear.ts` names actions
-(`create_issue`, `create_comment`, `issues_by_name`) and fields instead of
-writing queries, and no Linear token is held here. Each call costs a Zapier task,
-which is the right trade at triage volume (~8 signatures in two months) and would
-be the wrong one on a per-run path.
+### Linear issues are created downstream, not here
 
-**`LINEAR_LABEL_ID` is an id, not a name, and is optional.** `labels` on
-`create_issue` is a dynamic enum over the workspace's *existing* labels — Zapier
-resolves it by id, and a name that is not already there is not created, so a
-hard-coded name would fail on every ticket. Unset means no label, deliberately:
-a label misconfiguration must never be what stops a failure being reported.
+Decided 2026-08-07 after building the in-worker version and throwing it away. A
+separate Code Workflow durable triggers on Notion's `new_data_source_item` for
+this data source and opens the Linear issue. **Do not re-add Linear code to this
+worker** — the downstream shape wins on three counts:
 
-**The Linear issue carries a link back to its Notion row, attached on a *later*
-execution.** A sync's `changes` are applied after `execute` returns, so on the
-execution that first sees a signature the row does not exist and the lookup
-correctly finds nothing; the ticket stays `notionAttached: false` until it does.
-At one durable per execution that is usually seconds. Do not "fix" this by
-attaching at creation time — there is nothing to attach to yet.
+- **Idempotency is free.** The sync upserts on signature, so a row is *created*
+  exactly once and updated thereafter; the trigger fires once per signature by
+  construction. The in-worker version needed a hashed title marker and a search
+  before every create, purely to survive an execution dying between the create
+  and its state write.
+- **The Notion page URL is in the trigger payload.** In-worker it was not
+  knowable: a sync's `changes` are applied *after* `execute` returns, so on the
+  execution that first sees a signature the row does not exist yet. Linking
+  needed a second deferred pass over unattached tickets.
+- **No `runAction` from a worker**, which was never verified end to end.
 
-**The back-link needs `NOTION_TRIAGE_DATA_SOURCE_ID`
-(`db78a092-515d-40e6-9416-aab114460f86`) because a worker cannot discover its own
-database.** `worker.database()` returns an opaque `DatabaseHandle` — `{ key,
-config }` and nothing else — so there is no runtime route from the handle to the
-data source the platform created for it. Unset means no attachment, which is a
-working configuration: it is necessarily a post-deploy value.
+The known gap: **recurrences are silent in Linear.** `new_data_source_item` fires
+on creation only, and `updated_data_source_item_properties` is not a substitute —
+`Last Seen` moves every cycle and Zapier cannot express "only when `Occurrences`
+increased". The count lives in `Occurrences` here; follow the link.
 
-**`list_issue_labels` without a `name` filter does not return every label.** It
-listed 20 and reported `hasNextPage: false` while omitting `Zap Error`, which a
-name-filtered call then found. Do not conclude a label is missing from an
-unfiltered listing — query it by name before creating a duplicate.
+Also note **`Linear Issue` cannot be a managed property.** A downstream Zap or
+durable writing the issue URL back would be blocked by `readOnly`, so that
+back-reference has to be hand-made on the data source, or skipped in favour of a
+one-directional Linear → Notion link.
 
-**The issue title carries a `[zap-err:xxxxxxxx]` marker, and it is load-bearing.**
-`ticketTitle` tracks the *newest* occurrence, so the visible part of the title
-moves when a later failure names a different step. The marker is hashed from the
-signature alone, so it does not. It is the anchor `issues_by_name` searches on
-when a retried execution needs to find an issue it already opened — searching the
-display title would miss and open a duplicate. Do not "tidy" it out of the title.
+For whoever builds it: the Linear team is **Internal**
+(`7031cc50-fb43-43ea-9f8b-dd62b38efde7`), the label is **Zap Error**
+(`d4cfb106-526e-4af0-9610-389b859a7c43`), and `labels` on `create_issue` takes an
+**id, not a name** — it is a dynamic enum over existing labels, and a name that
+is not already there is silently not created.
 
-**Properties carry only metadata lifted off the run. Diagnosis lives in the
-Linear issue, and an agent owns it.** Two consequences, both deliberate:
+### Two runtime limits worth not rediscovering
 
-- `errorsDelta` must never write a Notion page body. `pageContentMarkdown`
-  replaces a body *in its entirety* (see the note on `zapsSync` above: it wipes
-  appended blocks and trashes child pages), and a ticket is re-upserted every
-  time its signature recurs. There is no `pageContentMarkdown` in the triage
-  `changes`, and none may be added.
-- The Linear **description is written once at creation and never rewritten**, for
-  exactly the same reason. Recurrences post a *comment*. This is why
-  `issueDescription` carries no counts: they would be stale within the hour and
-  could never be corrected without destroying the analysis below them.
+**A worker cannot discover its own database.** `worker.database()` returns an
+opaque `DatabaseHandle` — `{ key, config }` and nothing else — so there is no
+route from the handle to the data source the platform created for it. Anything
+needing the id must be given it.
 
-**A recurrence comment is one per cycle, not one per run.** `noticedCount` holds
-the count at the last note, so a fault that failed nine more times in an hour
-gets one comment saying so. Without it the overlap window would post a comment an
-hour on every unfixed fault — noise on precisely the tickets that matter most.
-
-**The sync never touches status, priority or assignee — including on
-recurrence.** A resolved issue that recurs gets a comment, not a reopening. That
-mirrors what `Status` always was here: the human's. It does mean a fault marked
-"Won't fix" recurs quietly into a closed issue's comments, which is the intended
-reading of "won't fix".
-
-**A Linear failure must never fail the sync.** Each ticket's Linear work is
-wrapped individually and a failure is logged, not thrown: the Notion row is the
-durable record of the failure, and losing the sync to a Linear blip would lose
-the walk's progress with it. The next cycle retries — `needsNotice` stays true
-while a ticket has no issue id or an unreported count.
+**The Notion Linear connection cannot be used from a worker.** Notion's Linear
+connector is a workspace integration for search and link previews (it is what
+lets Notion AI read Linear). The Workers runtime exposes exactly two routes to a
+third-party credential: `worker.oauth()` with an OAuth app you own, and a
+Notion-managed `provider:` shorthand that is private alpha. Neither reaches a
+connector configured in Notion's settings, and `@notionhq/workers@0.8.1` has no
+connection concept at all.
 
 **Zapier Manager's `zap_error_alert` trigger does not fire for Code Workflows.**
 Probed 2026-08-07 and the reason is structural, so do not re-litigate it without

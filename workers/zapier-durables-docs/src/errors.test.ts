@@ -7,16 +7,11 @@ import {
 	evictOldest,
 	isFullWalkDue,
 	isTriageable,
-	issueDescription,
-	linearTitle,
 	MAX_RUNS_PER_TICKET,
-	needsNotice,
 	normaliseMessage,
 	type Occurrence,
 	occurrenceFrom,
-	recurrenceComment,
 	signatureFor,
-	signatureMarker,
 	type TicketState,
 	ticketTitle,
 } from "./errors.js";
@@ -372,100 +367,4 @@ test("the title needs neither a step nor a message", () => {
 		}),
 	);
 	assert.equal(ticketTitle(tickets["sig-bare"]), "enrich-contact-records · execution_failed");
-});
-
-// -- The Linear issue -------------------------------------------------------
-
-test("the marker is derived from the signature, not the display title", () => {
-	// The whole point: `ticketTitle` tracks the newest occurrence, so it moves
-	// when a later failure names a different step. Searching Linear on a moving
-	// title would miss and open a duplicate.
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z", { step: "step-a" }));
-	const signature = Object.keys(tickets)[0];
-	const before = signatureMarker(signature);
-
-	accumulate(tickets, occurrence("run-2", "2026-07-26T12:09:47.803Z", { signature, step: "step-b" }));
-	assert.notEqual(ticketTitle(tickets[signature]), "", "sanity: there is a title");
-	assert.equal(signatureMarker(signature), before, "the marker must not move");
-});
-
-test("different signatures get different markers", () => {
-	assert.notEqual(signatureMarker("sig-one"), signatureMarker("sig-two"));
-});
-
-test("the Linear title carries both the display title and the marker", () => {
-	const tickets: Record<string, TicketState> = {};
-	accumulate(
-		tickets,
-		occurrence("run-1", "2026-07-24T00:02:08.069Z", { step: "update-contact-record" }),
-	);
-	const signature = Object.keys(tickets)[0];
-	const title = linearTitle(tickets[signature], signature);
-	assert.ok(title.startsWith("enrich-contact-records · StepExhaustedError in update-contact-record"));
-	assert.ok(title.includes(signatureMarker(signature)), "the marker must be searchable in the title");
-});
-
-test("a new signature always owes Linear a notice", () => {
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
-	assert.equal(needsNotice(Object.values(tickets)[0]), true);
-});
-
-test("a ticket whose count has not moved says nothing", () => {
-	// The overlap window re-lists the same runs every cycle. Without this a
-	// stale fault would post a comment an hour until someone fixed it.
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
-	const ticket = Object.values(tickets)[0];
-	ticket.issueId = "issue-1";
-	ticket.noticedCount = ticket.count;
-	assert.equal(needsNotice(ticket), false);
-});
-
-test("a recurrence past the last notice owes a comment", () => {
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
-	const signature = Object.keys(tickets)[0];
-	tickets[signature].issueId = "issue-1";
-	tickets[signature].noticedCount = 1;
-	accumulate(tickets, occurrence("run-2", "2026-07-26T12:09:47.803Z", { signature }));
-	assert.equal(needsNotice(tickets[signature]), true);
-});
-
-test("a recurrence comment reports the gap and the total, not one line per run", () => {
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
-	const signature = Object.keys(tickets)[0];
-	for (const [i, at] of ["2026-07-26T12:09:47.803Z", "2026-07-26T12:54:42.151Z"].entries()) {
-		accumulate(tickets, occurrence(`run-${i + 2}`, at, { signature }));
-	}
-	const comment = recurrenceComment(tickets[signature], 1);
-	assert.ok(comment.includes("2 times"), comment);
-	assert.ok(comment.includes("3 occurrences in total"), comment);
-});
-
-test("a single recurrence reads as once, not 1 times", () => {
-	const tickets: Record<string, TicketState> = {};
-	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
-	assert.ok(recurrenceComment(Object.values(tickets)[0], 0).includes("Recurred once"));
-});
-
-test("the issue description carries first-sight facts and no counts", () => {
-	// It is written once and never rewritten — see the note on issueDescription.
-	// A count baked in here would be wrong within the hour and could never be
-	// corrected without destroying the agent's analysis below it.
-	const tickets: Record<string, TicketState> = {};
-	accumulate(
-		tickets,
-		occurrence("run-1", "2026-07-24T00:02:08.069Z", { step: "update-contact-record" }),
-	);
-	const signature = Object.keys(tickets)[0];
-	const body = issueDescription(tickets[signature], signature);
-	assert.ok(body.includes("enrich-contact-records"), body);
-	assert.ok(body.includes("StepExhaustedError"), body);
-	assert.ok(body.includes("update-contact-record"), body);
-	assert.ok(body.includes("2026-07-24T00:02:08.069Z"), body);
-	assert.ok(body.includes(signature), "the full signature belongs in the body");
-	assert.ok(!/occurrence/i.test(body.replace(/Recurrences arrive as comments/i, "")), body);
 });
