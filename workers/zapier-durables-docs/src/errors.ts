@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RunError, WorkflowRun } from "./runs.js";
 
 /**
@@ -148,6 +149,16 @@ export type TicketState = {
 	lastSeen: string;
 	/** Newest first, capped at MAX_RUNS_PER_TICKET. */
 	runIds: string[];
+	/** The Linear issue this signature owns, once opened. Absent means it has
+	 *  never been opened — or that opening it failed, which is the same thing
+	 *  as far as the next cycle is concerned. */
+	issueId?: string;
+	/** Linear's URL for that issue, mirrored into Notion for the link. */
+	issueUrl?: string;
+	/** `count` as of the last note posted to Linear. The gap between this and
+	 *  `count` is what a recurrence comment reports, and keeping it means a
+	 *  quiet cycle posts nothing. */
+	noticedCount?: number;
 };
 
 export type Occurrence = {
@@ -261,6 +272,100 @@ export function ticketTitle(ticket: TicketState): string {
 			? `${normalised.slice(0, TITLE_MESSAGE_MAX).trimEnd()}…`
 			: normalised;
 	return `${ticket.zapName} · ${ticket.errorType}: ${summary}`;
+}
+
+// -- The Linear issue -------------------------------------------------------
+//
+// Linear owns triage; Notion keeps the machine facts. The split is not
+// arbitrary — each side holds what the other cannot:
+//
+//   - Linear has native status, priority, assignee and comments. Notion could
+//     not: declaring a property in a managed schema marks it `readOnly`, so the
+//     five triage columns had to be hand-made on the data source and were not
+//     reproducible from code.
+//   - Notion has the two-way relations to the Zaps and Zap Runs databases, and
+//     a sortable `Occurrences` number. Linear has no arbitrary custom fields, so
+//     none of that survives a move into an issue body.
+
+/** How much of the signature hash the marker carries. Eight hex characters is
+ *  ~4 billion values against a ceiling of MAX_TICKETS live signatures. */
+const MARKER_HASH_CHARS = 8;
+
+/**
+ * The stable handle for a signature, carried in the issue title.
+ *
+ * The title itself is **not** stable — `ticketTitle` tracks the newest
+ * occurrence, so a later failure naming a different step rewrites it. Searching
+ * on it would therefore miss, and a miss means a duplicate issue. The marker is
+ * derived from the signature alone, so it survives every display change.
+ *
+ * Hashed rather than inlined because a signature runs to ~180 characters and
+ * embeds the raw error message; the whole thing in a title would be unreadable.
+ * The signature stays visible in full on the Notion row and in the issue body.
+ */
+export function signatureMarker(signature: string): string {
+	const hash = createHash("sha256").update(signature).digest("hex");
+	return `zap-err:${hash.slice(0, MARKER_HASH_CHARS)}`;
+}
+
+/** `<ticket title> [zap-err:a1b2c3d4]` — see `signatureMarker` for the suffix. */
+export function linearTitle(ticket: TicketState, signature: string): string {
+	return `${ticketTitle(ticket)} [${signatureMarker(signature)}]`;
+}
+
+/**
+ * The issue description, written **once at creation and never rewritten**.
+ *
+ * This is the same rule the Notion page body follows, for the same reason: an
+ * agent owns the prose below the metadata, and a ticket is touched again every
+ * time its signature recurs. Rewriting would destroy that analysis silently and
+ * repeatedly. Recurrences post a comment instead — see `recurrenceComment`.
+ *
+ * So everything here is what is knowable at first sight. Counts deliberately are
+ * not: they go stale immediately and the live number is on the Notion row.
+ */
+export function issueDescription(ticket: TicketState, signature: string): string {
+	const lines = [
+		`**Zap** ${ticket.zapName}`,
+		`**Error** \`${ticket.errorType}\``,
+	];
+	if (ticket.step) lines.push(`**Failing step** \`${ticket.step}\``);
+	lines.push(`**First seen** ${ticket.firstSeen}`);
+	lines.push("", "```", clip(ticket.message, 1000), "```");
+	lines.push(
+		"",
+		`<sub>Grouped on \`${signature}\` — opened by the \`zapier-durables-docs\` worker. ` +
+			"Recurrences arrive as comments; this description is not rewritten.</sub>",
+	);
+	return lines.join("\n");
+}
+
+/**
+ * A recurrence note.
+ *
+ * One per **cycle**, not per failed run — `since` is the count at the last note,
+ * so a fault that failed nine more times in an hour gets one comment saying so
+ * rather than nine. The alternative was noise on exactly the faults that matter
+ * most, which is how a triage surface gets muted.
+ */
+export function recurrenceComment(ticket: TicketState, since: number): string {
+	const added = ticket.count - since;
+	const times = added === 1 ? "once" : `${added} times`;
+	const lines = [`Recurred ${times} — ${ticket.count} occurrences in total, latest ${ticket.lastSeen}.`];
+	if (ticket.step) lines.push("", `Failing step: \`${ticket.step}\``);
+	return lines.join("\n");
+}
+
+/**
+ * Whether a ticket has anything to say to Linear this cycle.
+ *
+ * A brand-new signature always does. An existing one only when its count has
+ * moved since the last note, which is what keeps the re-scanned overlap window
+ * from generating a comment an hour for a fault nobody has fixed yet.
+ */
+export function needsNotice(ticket: TicketState): boolean {
+	if (!ticket.issueId) return true;
+	return ticket.count > (ticket.noticedCount ?? 0);
 }
 
 // -- The account-wide gate --------------------------------------------------

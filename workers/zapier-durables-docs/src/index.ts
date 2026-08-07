@@ -10,11 +10,17 @@ import {
 	GATE_PAGE_SIZE,
 	isFullWalkDue,
 	isTriageable,
+	issueDescription,
+	linearTitle,
 	MAX_TICKETS,
+	needsNotice,
 	occurrenceFrom,
+	recurrenceComment,
+	signatureMarker,
 	ticketTitle,
 	type TicketState,
 } from "./errors.js";
+import { commentOnIssue, createIssue, findIssueByMarker } from "./linear.js";
 import { fetchRepoZaps, indexByWorkflowId } from "./github.js";
 import { toNotionMarkdown } from "@work-flowers/notion-worker-shared";
 import { assertDeclared, SEEDED_APPS, SEEDED_CONNECTION_ALIASES } from "./options.js";
@@ -132,22 +138,25 @@ const runs = worker.database("runs", {
 // One row per *recurring error signature*, not per failed run — see the header
 // of src/errors.ts for why, and for what the signature is keyed on.
 //
-// **The triage workflow columns are deliberately NOT declared here.** `Status`,
-// `Priority`, `Assignee`, `Resolution Notes` and `Resolved on` live on the data
-// source as ordinary hand-made properties instead.
+// **Triage happens in Linear, not here.** This database is the machine index:
+// the signature, the counts, and the relations to the Zaps and Zap Runs
+// databases. `Linear Issue` links out to where a human actually works.
 //
-// Declaring a property in a managed schema is what makes Notion mark it
-// `readOnly: true` — verified 2026-07-29, when all five were declared here and
-// nobody could set a status. Simply never emitting a value does *not* help:
-// managed-ness follows the declaration, not the writes. So anything a human has
-// to edit must stay out of this schema.
+// That split is what dissolved this schema's worst problem. `Status`,
+// `Priority`, `Assignee`, `Resolution Notes` and `Resolved on` used to be
+// hand-made properties on the data source, because declaring a property in a
+// managed schema is what makes Notion mark it `readOnly: true` — verified
+// 2026-07-29, when all five were declared here and nobody could set a status.
+// Never emitting a value does *not* help; managed-ness follows the declaration.
+// They were therefore not reproducible from code. Linear has all five natively,
+// so they are gone rather than reimplemented — see CLAUDE.md for the removal.
 //
-// The cost is that those five are not reproducible from code. Their intended
-// shape is recorded in this worker's CLAUDE.md; if this database is ever
-// recreated they have to be added back by hand.
+// Everything still declared here is machine-written, which is why `readOnly` is
+// now the correct answer rather than the problem.
 //
-// **Properties hold only metadata lifted off the run. Diagnosis goes in the page
-// body, which an agent owns — so this sync must never write the body.**
+// **Properties carry only metadata lifted off the run. Diagnosis goes in the
+// Linear issue, which an agent owns — so this sync must never write a page
+// body.**
 // `pageContentMarkdown` replaces a page body *in its entirety*: verified
 // elsewhere in this worker that it wipes appended blocks and moves child pages to
 // trash. A ticket is re-upserted every time its signature recurs, so emitting a
@@ -155,9 +164,14 @@ const runs = worker.database("runs", {
 // and repeatedly. There is deliberately no `pageContentMarkdown` in `changes`
 // below, and none may be added.
 //
+// The same rule now governs the Linear issue: `issueDescription` is written once
+// at creation and never rewritten, and recurrences arrive as comments. See
+// src/linear.ts.
+//
 // This is why there is no `Root Cause` property. The root cause is available to
-// whatever writes the body via `fetchRunDetail(durableRunId).rootCause`, which
-// reads it out of the operations journal — see `failureDetail` in src/runs.ts.
+// whatever writes the diagnosis via `fetchRunDetail(durableRunId).rootCause`,
+// which reads it out of the operations journal — see `failureDetail` in
+// src/runs.ts.
 const errorTickets = worker.database("errors", {
 	type: "managed",
 	initialTitle: "Zapier Error Triage",
@@ -183,6 +197,9 @@ const errorTickets = worker.database("errors", {
 			Occurrences: Schema.number(),
 			"First Seen": Schema.date(),
 			"Last Seen": Schema.date(),
+			// The triage surface. Machine-written, so being readOnly is correct
+			// here — unlike the five columns this database used to carry.
+			"Linear Issue": Schema.url(),
 		},
 	},
 });
@@ -195,6 +212,10 @@ const errorTickets = worker.database("errors", {
 const githubApi = worker.pacer("githubApi", { allowedRequests: 30, intervalMs: 60_000 });
 const zapierApi = worker.pacer("zapierApi", { allowedRequests: 30, intervalMs: 60_000 });
 const notionApi = worker.pacer("notionApi", { allowedRequests: 30, intervalMs: 60_000 });
+// Linear is reached through Zapier action executions, which are far scarcer than
+// HTTP calls — a cycle makes one or two in a bad week. Paced anyway so a state
+// reset, which re-opens every live signature at once, cannot burst.
+const linearApi = worker.pacer("linearApi", { allowedRequests: 20, intervalMs: 60_000 });
 
 // Content hashes keyed by workflow id, covering the page body only — see the
 // note at the point of use for why properties are deliberately excluded.
@@ -725,6 +746,61 @@ worker.sync("errorsDelta", {
 			touched.add(occurrence.signature);
 		}
 
+		// -- Linear -----------------------------------------------------------
+		// After the whole walk, so a Zapier outage mid-listing cannot leave a
+		// half-written trail of issues, and each ticket's result is committed to
+		// `tickets` the moment it lands.
+		//
+		// Every ticket is isolated: Linear failing must not fail the sync. The
+		// Notion row is the durable record and still gets written, and the next
+		// cycle retries — `needsNotice` stays true for a ticket with no issue id,
+		// and a recurrence note is owed until `noticedCount` catches up.
+		for (const signature of touched) {
+			const ticket = tickets[signature];
+			if (!needsNotice(ticket)) continue;
+			try {
+				if (!ticket.issueId) {
+					const marker = signatureMarker(signature);
+					// The retry guard. Only on first sight, so it costs nothing on
+					// the common path — see findIssueByMarker.
+					const existing =
+						(await findIssueByMarker(marker, linearApi)) ??
+						(await createIssue(
+							linearTitle(ticket, signature),
+							issueDescription(ticket, signature),
+							linearApi,
+						));
+					if (!existing) {
+						console.warn(
+							`${signature}: Linear returned no issue id; leaving the ticket ` +
+								`unlinked so the next cycle retries.`,
+						);
+						continue;
+					}
+					ticket.issueId = existing.id;
+					if (existing.url) ticket.issueUrl = existing.url;
+					ticket.noticedCount = ticket.count;
+					continue;
+				}
+
+				await commentOnIssue(
+					ticket.issueId,
+					recurrenceComment(ticket, ticket.noticedCount ?? 0),
+					linearApi,
+				);
+				ticket.noticedCount = ticket.count;
+			} catch (error) {
+				// Deliberately swallowed. See the note above: the Notion row is the
+				// record of the failure, and losing the sync over a Linear blip
+				// would lose the walk's progress with it.
+				console.warn(
+					`${signature}: could not reach Linear (${
+						error instanceof Error ? error.message : String(error)
+					}); the Notion row is still written and the next cycle retries.`,
+				);
+			}
+		}
+
 		const changes = [...touched].map((signature) => {
 			const ticket = tickets[signature];
 			return {
@@ -747,6 +823,9 @@ worker.sync("errorsDelta", {
 					// a transient `getDurableRun` failure cannot erase a step name an
 					// earlier occurrence established.
 					...(ticket.step ? { "Failing Step": Builder.richText(ticket.step) } : {}),
+					// Same rule: omitted, never blanked. A cycle where Linear was
+					// unreachable must not clear a link an earlier cycle established.
+					...(ticket.issueUrl ? { "Linear Issue": Builder.url(ticket.issueUrl) } : {}),
 				},
 			};
 		});

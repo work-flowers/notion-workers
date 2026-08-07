@@ -87,17 +87,38 @@ dumps, ids, timestamps, version numbers — while keeping quoted substrings, whi
 are normally the discriminating part (`"new Date()"`,
 `Step "update-contact-record"`).
 
-**The triage workflow columns are not in the managed schema at all.** `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` are ordinary hand-made
-properties on the data source. Declaring a property in a managed schema is what
-makes Notion mark it `readOnly`, and not writing a value does not help —
-managed-ness follows the declaration, not the writes. Declared, they produced
-five read-only columns and a triage table nobody could triage in. Their intended
-shape is recorded in this worker's `CLAUDE.md`, since it is no longer expressed
-in code.
+**Triage happens in Linear; Notion is the machine index.** Each ticket opens a
+Linear issue on first sight, and the Notion row links to it through
+`Linear Issue`. The two halves hold what the other cannot:
 
-A consequence: `Status` is *empty* on a new ticket rather than "Untriaged" —
-filter on empty, or set the property's default in Notion.
+| | holds |
+|---|---|
+| **Linear** | status, priority, assignee, the diagnosis and its discussion |
+| **Notion** | the signature, `Occurrences`, first/last seen, and the two-way relations to Zaps and Zap Runs |
+
+This replaced five hand-made properties — `Status`, `Priority`, `Assignee`,
+`Resolution Notes`, `Resolved on` — that had to live outside the managed schema,
+because declaring a property is what makes Notion mark it `readOnly` and not
+writing a value does not help. They were therefore not reproducible from code.
+Linear has all five natively, so they were removed rather than reimplemented.
+
+Two rules govern the issue:
+
+- **The description is written once at creation and never rewritten.** An agent
+  owns the prose below the metadata, and a ticket is touched again every time its
+  signature recurs — the same reason the sync never writes a Notion page body.
+- **Recurrences are comments, one per cycle rather than one per run.** A fault
+  that failed nine more times in an hour gets a single comment saying so.
+  `noticedCount` in sync state is what makes a quiet cycle post nothing.
+
+The issue title carries a `[zap-err:xxxxxxxx]` marker hashed from the signature.
+It exists so a retried execution can find an issue it already opened: the visible
+part of the title tracks the newest occurrence and therefore moves, so searching
+on it would miss and open a duplicate.
+
+Status, priority and assignee are never written by the sync — including on
+recurrence. A resolved issue that recurs gets a comment, not a reopening; that
+call is a human's, exactly as `Status` always was.
 
 **The failing step is display-only, and deliberately not part of the signature.**
 It comes from the operations journal, a separate call that can fail; keying on it
@@ -345,7 +366,13 @@ ntn workers env set ZAPIER_CLIENT_ID=xxx
 ntn workers env set ZAPIER_CLIENT_SECRET=xxx
 ntn workers env set ZAPIER_GITHUB_CONNECTION_ID=02581386-b46a-8abe-ad7a-bb264a3bd2ff
 ntn workers env set ZAPIER_NOTION_CONNECTION_ID=02b73654-15c8-85c3-b16a-07304d2beb17
+ntn workers env set ZAPIER_LINEAR_CONNECTION_ID=02657f6e-5360-8418-ba05-cb02eb2b95f5
+ntn workers env set LINEAR_TEAM_ID=7031cc50-fb43-43ea-9f8b-dd62b38efde7
 ```
+
+`LINEAR_TEAM_ID` is the Linear team new triage issues are opened in —
+`7031cc50-…` is **Internal**. Both are ids, not credentials: the connection id
+names a stored Zapier connection, so neither needs rotating.
 
 Optional overrides: `ZAP_DOCS_REPO` (default `work-flowers/zapier-sdk`) and
 `NOTION_PEOPLE_DATA_SOURCE_ID` (default is the work.flowers People data source).
@@ -412,9 +439,15 @@ ntn workers sync trigger errorsDelta
 ```
 
 To recompute every ticket's `Occurrences` from scratch (after changing the
-signature scheme, for instance). Human triage columns are untouched by this,
-because the sync never writes them:
+signature scheme, for instance):
 
 ```shell
 ntn workers sync state reset errorsDelta && ntn workers sync trigger errorsDelta
 ```
+
+**A reset drops the signature → Linear issue mapping with the rest of the
+state.** The rebuild searches Linear for each signature's marker before opening
+anything, so live issues are adopted rather than duplicated — but if Linear's
+search omits completed issues, a signature whose issue was resolved and then
+recurred will get a fresh one. A visible duplicate is the deliberate trade
+against a silently lost ticket.

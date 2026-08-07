@@ -16,7 +16,10 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Zap Runs"** — written through `runsBackfill` and
   `runsDelta`.
 - **Managed database "Zapier Error Triage"** — written only through
-  `errorsDelta`, and only its machine columns.
+  `errorsDelta`. Every column in it is machine-written now; see *Error triage*.
+- **Linear**, through the **Zapier** Linear connection
+  (`ZAPIER_LINEAR_CONNECTION_ID`), team `LINEAR_TEAM_ID`. Write-only in practice:
+  `errorsDelta` opens one issue per error signature and comments on recurrences.
 
 There is also a **hand-made `🚨 Error Triage` data source**
 (`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
@@ -115,16 +118,20 @@ genuinely different apps and must stay.
 
 ## Error triage
 
-**Declaring a property in a managed schema makes it `readOnly` in Notion — a
-person cannot edit it.** Not emitting a value does not help; managed-ness follows
-the *declaration*, not the writes. Verified the hard way on 2026-07-29: `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` were declared in the
-schema and deliberately never written, and the result was five read-only columns
-and a triage table nobody could triage in.
+**Triage lives in Linear; this database is the machine index.** Notion holds the
+signature, `Occurrences`, first/last seen and the relations to Zaps and Zap Runs.
+Linear holds status, priority, assignee and the diagnosis. Changed 2026-08-07.
 
-So those five are **hand-made properties on the data source, not in the schema**.
-Anything a human must edit has to stay out of `worker.database()`. Their intended
-shape, for rebuilding by hand if this database is ever recreated:
+**This is what dissolved the read-only-column problem, so do not reintroduce
+those columns.** Declaring a property in a managed schema makes it `readOnly` in
+Notion — a person cannot edit it — and not emitting a value does not help,
+because managed-ness follows the *declaration*, not the writes. Verified the hard
+way on 2026-07-29: `Status`, `Priority`, `Assignee`, `Resolution Notes` and
+`Resolved on` were declared and deliberately never written, and the result was
+five read-only columns and a triage table nobody could triage in. They then lived
+as hand-made properties outside the schema, which worked but was not reproducible
+from code. Linear has all five natively, so they were **deleted** rather than
+reimplemented. For the record, their shape was:
 
 | Property | Type | Options |
 |---|---|---|
@@ -132,20 +139,74 @@ shape, for rebuilding by hand if this database is ever recreated:
 | `Priority` | select | `High` (red), `Medium` (yellow), `Low` (gray) |
 | `Assignee` | person | — |
 | `Resolution Notes` | text | — |
-| `Resolved on` | date | — Set by a Notion automation when `Status` moves to a Complete option. Distinct from the `Status` option also called `Resolved`. |
+| `Resolved on` | date | — Set by a Notion automation when `Status` moves to a Complete option. |
 
 **Undeclaring a property releases it rather than dropping it.** Removing those
 five from the schema and redeploying left every one in place, options and status
 groups intact, and simply cleared `readOnly`. Nothing was lost and nothing had to
-be recreated — worth knowing before panicking about a schema change.
+be recreated — worth knowing before panicking about a schema change. It is also
+why deleting them is a *manual* action in Notion: a code change cannot do it.
 
-**Properties carry only metadata lifted off the run. Diagnosis lives in the page
-body, and an agent owns that body — so `errorsDelta` must never write it.**
-`pageContentMarkdown` replaces a page body *in its entirety* (see the note on
-`zapsSync` above: it wipes appended blocks and trashes child pages). A ticket is
-re-upserted every time its signature recurs, so emitting a body here would
-destroy the agent's analysis on the next recurrence, silently and repeatedly.
-There is no `pageContentMarkdown` in the triage `changes`, and none may be added.
+**The Notion Linear connection cannot be used from a worker — this was checked,
+do not retry it.** Notion's Linear connector is a workspace integration for
+search and link previews (it is what lets Notion AI read Linear). The Workers
+runtime exposes exactly two routes to a third-party credential: `worker.oauth()`
+with an OAuth app you own, and a Notion-managed `provider:` shorthand that is
+private alpha. Neither reaches a connector configured in Notion's settings, and
+`@notionhq/workers@0.8.1` has no connection concept at all. Hence Zapier.
+
+**Linear is reached with `sdk().runAction`, not GraphQL.** `runAction` executes a
+Zapier app action against a stored connection, so `src/linear.ts` names actions
+(`create_issue`, `create_comment`, `issues_by_name`) and fields instead of
+writing queries, and no Linear token is held here. Each call costs a Zapier task,
+which is the right trade at triage volume (~8 signatures in two months) and would
+be the wrong one on a per-run path.
+
+**The issue title carries a `[zap-err:xxxxxxxx]` marker, and it is load-bearing.**
+`ticketTitle` tracks the *newest* occurrence, so the visible part of the title
+moves when a later failure names a different step. The marker is hashed from the
+signature alone, so it does not. It is the anchor `issues_by_name` searches on
+when a retried execution needs to find an issue it already opened — searching the
+display title would miss and open a duplicate. Do not "tidy" it out of the title.
+
+**Properties carry only metadata lifted off the run. Diagnosis lives in the
+Linear issue, and an agent owns it.** Two consequences, both deliberate:
+
+- `errorsDelta` must never write a Notion page body. `pageContentMarkdown`
+  replaces a body *in its entirety* (see the note on `zapsSync` above: it wipes
+  appended blocks and trashes child pages), and a ticket is re-upserted every
+  time its signature recurs. There is no `pageContentMarkdown` in the triage
+  `changes`, and none may be added.
+- The Linear **description is written once at creation and never rewritten**, for
+  exactly the same reason. Recurrences post a *comment*. This is why
+  `issueDescription` carries no counts: they would be stale within the hour and
+  could never be corrected without destroying the analysis below them.
+
+**A recurrence comment is one per cycle, not one per run.** `noticedCount` holds
+the count at the last note, so a fault that failed nine more times in an hour
+gets one comment saying so. Without it the overlap window would post a comment an
+hour on every unfixed fault — noise on precisely the tickets that matter most.
+
+**The sync never touches status, priority or assignee — including on
+recurrence.** A resolved issue that recurs gets a comment, not a reopening. That
+mirrors what `Status` always was here: the human's. It does mean a fault marked
+"Won't fix" recurs quietly into a closed issue's comments, which is the intended
+reading of "won't fix".
+
+**A Linear failure must never fail the sync.** Each ticket's Linear work is
+wrapped individually and a failure is logged, not thrown: the Notion row is the
+durable record of the failure, and losing the sync to a Linear blip would lose
+the walk's progress with it. The next cycle retries — `needsNotice` stays true
+while a ticket has no issue id or an unreported count.
+
+**Zapier Manager's `zap_error_alert` trigger does not fire for Code Workflows.**
+Probed 2026-08-07 and the reason is structural, so do not re-litigate it without
+re-probing: Zapier Manager's object model is classic Zaps only. Its "Zap"
+dropdown lists 45 classic Zaps and none of the 49 durables; `node_id` is typed
+`int` while durables are UUIDs; and its find-a-Zap action returns `[]` for
+`xero-invoice-alerts` and `enrich-contact-records` while resolving a classic Zap
+by exact title. This is why triage is a walk on a schedule and not an
+event-driven Zap — the tempting simplification is not available.
 
 **That is why there is no `Root Cause` property.** It was there, and was removed
 2026-07-29 at Dennis's request for exactly this reason. Whatever writes the body
