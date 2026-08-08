@@ -17,8 +17,7 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
   `runsDelta`.
 - **Managed database "Zapier Error Triage"**
   (`db78a092-515d-40e6-9416-aab114460f86`) — written only through `errorsDelta`,
-  and only its machine columns. A downstream durable opens a Linear issue per new
-  row; this worker does not touch Linear. See *Error triage*.
+  and only its machine columns. See *Error triage*.
 
 There is also a **hand-made `🚨 Error Triage` data source**
 (`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
@@ -162,54 +161,27 @@ re-upserted every time its signature recurs, so emitting a body here would
 destroy the agent's analysis on the next recurrence, silently and repeatedly.
 There is no `pageContentMarkdown` in the triage `changes`, and none may be added.
 
-### Linear issues are created downstream, not here
+**Triage stays in this Notion database — the issue-tracker route was evaluated
+and dropped, 2026-08-07.** Moving ticket creation into Linear was built and then
+reverted; the current setup works, and Linear is reserved for external client
+delivery rather than internal Zapier workflows. Do not add issue-tracker code to
+this worker. If it is ever revisited, the shape that survived scrutiny was a
+downstream durable on Notion's `new_data_source_item` rather than anything
+in-worker, for two reasons that are properties of syncs and not of Linear:
 
-Decided 2026-08-07 after building the in-worker version and throwing it away. A
-separate Code Workflow durable triggers on Notion's `new_data_source_item` for
-this data source and opens the Linear issue. **Do not re-add Linear code to this
-worker** — the downstream shape wins on three counts:
-
-- **Idempotency is free.** The sync upserts on signature, so a row is *created*
-  exactly once and updated thereafter; the trigger fires once per signature by
-  construction. The in-worker version needed a hashed title marker and a search
-  before every create, purely to survive an execution dying between the create
-  and its state write.
-- **The Notion page URL is in the trigger payload.** In-worker it was not
-  knowable: a sync's `changes` are applied *after* `execute` returns, so on the
-  execution that first sees a signature the row does not exist yet. Linking
-  needed a second deferred pass over unattached tickets.
-- **No `runAction` from a worker**, which was never verified end to end.
-
-The known gap: **recurrences are silent in Linear.** `new_data_source_item` fires
-on creation only, and `updated_data_source_item_properties` is not a substitute —
-`Last Seen` moves every cycle and Zapier cannot express "only when `Occurrences`
-increased". The count lives in `Occurrences` here; follow the link.
-
-Also note **`Linear Issue` cannot be a managed property.** A downstream Zap or
-durable writing the issue URL back would be blocked by `readOnly`, so that
-back-reference has to be hand-made on the data source, or skipped in favour of a
-one-directional Linear → Notion link.
-
-For whoever builds it: the Linear team is **Internal**
-(`7031cc50-fb43-43ea-9f8b-dd62b38efde7`), the label is **Zap Error**
-(`d4cfb106-526e-4af0-9610-389b859a7c43`), and `labels` on `create_issue` takes an
-**id, not a name** — it is a dynamic enum over existing labels, and a name that
-is not already there is silently not created.
-
-### Two runtime limits worth not rediscovering
+- **A sync upserts, so a row is created exactly once** and updated thereafter. A
+  create-triggered consumer therefore fires once per signature by construction,
+  where the in-worker version needed a hashed title marker and a search before
+  every create just to survive an execution dying mid-write.
+- **A sync cannot know its own row's page URL.** `changes` are applied *after*
+  `execute` returns, so on the execution that first sees a signature the row does
+  not exist yet. Anything wanting that link needs a deferred second pass, or a
+  trigger payload that already carries it.
 
 **A worker cannot discover its own database.** `worker.database()` returns an
 opaque `DatabaseHandle` — `{ key, config }` and nothing else — so there is no
 route from the handle to the data source the platform created for it. Anything
 needing the id must be given it.
-
-**The Notion Linear connection cannot be used from a worker.** Notion's Linear
-connector is a workspace integration for search and link previews (it is what
-lets Notion AI read Linear). The Workers runtime exposes exactly two routes to a
-third-party credential: `worker.oauth()` with an OAuth app you own, and a
-Notion-managed `provider:` shorthand that is private alpha. Neither reaches a
-connector configured in Notion's settings, and `@notionhq/workers@0.8.1` has no
-connection concept at all.
 
 **Zapier Manager's `zap_error_alert` trigger does not fire for Code Workflows.**
 Probed 2026-08-07 and the reason is structural, so do not re-litigate it without
