@@ -105,14 +105,13 @@ destroy.
 A consequence: `Status` is *empty* on a new ticket rather than "Untriaged" —
 filter on empty, or set the property's default in Notion.
 
-**Linear issues are created downstream of this worker, not by it.** A separate
-Code Workflow durable triggers on Notion's `new_data_source_item` for this data
-source (`db78a092-515d-40e6-9416-aab114460f86`) and opens the issue. Keeping it
-there rather than in the sync means the trigger fires exactly once per signature
-— the sync upserts, so a row is created once and updated thereafter — and the
-Notion page URL is in the trigger payload, which it is not inside the sync. The
-trade is that recurrences are silent in Linear; the count lives in `Occurrences`
-here.
+This database is where triage happens. Pushing tickets into an issue tracker was
+evaluated and dropped in August 2026 — see this worker's `CLAUDE.md` if it ever
+comes up again.
+
+The data source is `db78a092-515d-40e6-9416-aab114460f86`. A worker cannot
+discover this for itself, so anything reaching these rows from outside the sync
+has to be told it.
 
 **The failing step is display-only, and deliberately not part of the signature.**
 It comes from the operations journal, a separate call that can fail; keying on it
@@ -362,10 +361,6 @@ ntn workers env set ZAPIER_GITHUB_CONNECTION_ID=02581386-b46a-8abe-ad7a-bb264a3b
 ntn workers env set ZAPIER_NOTION_CONNECTION_ID=02b73654-15c8-85c3-b16a-07304d2beb17
 ```
 
-Nothing here is Linear-related: issue creation lives in a downstream durable, so
-its team, label and connection ids are that durable's configuration, not this
-worker's.
-
 Optional overrides: `ZAP_DOCS_REPO` (default `work-flowers/zapier-sdk`) and
 `NOTION_PEOPLE_DATA_SOURCE_ID` (default is the work.flowers People data source).
 
@@ -438,6 +433,6 @@ because the sync never writes them:
 ntn workers sync state reset errorsDelta && ntn workers sync trigger errorsDelta
 ```
 
-A reset re-upserts existing rows rather than creating them, so it does not
-re-fire the downstream Linear trigger. Changing the *signature scheme* would,
-because that mints new primary keys — expect an issue per new signature.
+A reset re-upserts existing rows rather than creating them. Changing the
+*signature scheme* is the one thing that mints new primary keys, and so the one
+thing that produces new rows rather than updating the ones already there.
