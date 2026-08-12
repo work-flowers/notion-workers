@@ -10,6 +10,10 @@ export const DEFAULT_CONTACTS_DATA_SOURCE_ID =
 export const DEFAULT_NEW_CONTACT_CAP = 10;
 export const DEFAULT_INTERNAL_DOMAIN = "@work.flowers";
 
+// Resolves `@now` / `@today` in the Contacts template. Internal integrations
+// default to UTC, which is eight hours behind the workspace.
+const TEMPLATE_TIMEZONE = "Asia/Singapore";
+
 const NAME_PROPERTY = "Name";
 const PRIMARY_EMAIL_PROPERTY = "Primary Email";
 // Secondary Email is a multi_select on the Contacts data source, so lookups
@@ -340,6 +344,24 @@ async function classifyEmails(
 	return verdicts;
 }
 
+/**
+ * Create a Contact from the data source's default template.
+ *
+ * `POST /v1/pages` defaults to `template: { type: "none" }`, so a Contact
+ * created without this parameter comes out blank — none of the page content or
+ * property defaults a hand-created Contact gets. `type: "default"` is only
+ * valid while the Contacts data source has a default template configured in the
+ * Notion app; if that template is removed the request starts failing rather
+ * than quietly falling back to a blank page.
+ *
+ * Two consequences of applying a template:
+ *  - `children` becomes forbidden on the same request (none is sent), and
+ *    Notion applies the template asynchronously *after* responding, so the page
+ *    returned here is blank apart from its id. Only the id is used downstream.
+ *  - Template variables (`@now`, `@today`) resolve in UTC for internal
+ *    integrations — which is what `NOTION_API_TOKEN` is — so the timezone is
+ *    passed explicitly to keep them on workspace time.
+ */
 async function createNotionContact(
 	dataSourceId: string,
 	email: string,
@@ -349,7 +371,8 @@ async function createNotionContact(
 		[PRIMARY_EMAIL_PROPERTY]: { email },
 	};
 	// Without this the Contact's title stays empty and the row reads as its own
-	// email address in every view and relation.
+	// email address in every view and relation. Values passed here are merged
+	// into whatever the template sets.
 	if (name) {
 		properties[NAME_PROPERTY] = {
 			title: [{ type: "text", text: { content: name.slice(0, 2000) } }],
@@ -358,6 +381,7 @@ async function createNotionContact(
 	const page = await createPage({
 		parent: { data_source_id: dataSourceId },
 		properties,
+		template: { type: "default", timezone: TEMPLATE_TIMEZONE },
 	});
 	return page?.id ?? null;
 }
