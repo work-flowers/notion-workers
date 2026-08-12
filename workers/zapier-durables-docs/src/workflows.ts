@@ -57,6 +57,38 @@ export async function listWorkflows(pacer?: Pacer): Promise<WorkflowSummary[]> {
 }
 
 /**
+ * The identity and display name of one durable — all the run syncs need of a
+ * workflow while walking the list.
+ *
+ * Deliberately narrow: this is held in sync state between executions, and a full
+ * `WorkflowSummary` would put descriptions and trigger payloads in there for no
+ * reader.
+ */
+export type WorkflowRef = { id: string; name: string };
+
+/**
+ * The durable list for one sync cycle, fetched once and carried in sync state.
+ *
+ * The run syncs walk the list across many executions, indexing into it — and
+ * every execution used to re-fetch the whole list just to find its own entry.
+ * At 57 durables that was 58 `listWorkflows` calls per cycle where one does,
+ * against a pacer shared with two other syncs.
+ *
+ * It also makes the walk **stable**. Previously a durable deployed or deleted
+ * mid-cycle shifted every later index, so the walk could silently skip a durable
+ * or visit one twice. Pass `undefined` at the start of a cycle (`index === 0`)
+ * to re-list, and the cached value thereafter.
+ */
+export async function listWorkflowRefs(
+	cached: WorkflowRef[] | undefined,
+	pacer?: Pacer,
+): Promise<WorkflowRef[]> {
+	if (cached && cached.length > 0) return cached;
+	const workflows = await listWorkflows(pacer);
+	return workflows.map((workflow) => ({ id: workflow.id, name: workflow.name }));
+}
+
+/**
  * Fetch `current_version` for one workflow — the only place `connections`,
  * `dependencies` and `zapier_durable_version` are exposed.
  *

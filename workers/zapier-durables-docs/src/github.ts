@@ -49,20 +49,43 @@ async function githubRaw(path: string, pacer?: Pacer): Promise<string | undefine
 }
 
 /**
- * One Zap directory in the repo.
+ * What is remembered about one directory between cycles, keyed by directory name.
  *
- * `workflowIds` is plural on purpose: `luma-event-to-notion/zap.json` uses a
- * `deployments[]` array and maps one directory onto two deployed workflows.
- * Both rows then share the same README body, which is acceptable.
+ * `sha` is the directory's tree sha from the repo listing, which changes whenever
+ * anything inside it changes — so it is an exact "has this Zap's docs moved"
+ * signal, obtained from a call we make anyway.
+ *
+ * `workflowIds` has to be cached alongside it because it is the join key onto the
+ * deployed durables and is only readable from `zap.json`. It is small; READMEs
+ * deliberately are not cached, which is why an unchanged directory reports
+ * `unchanged` rather than replaying its body.
  */
-export type RepoZap = {
-	directory: string;
+export type RepoDirState = {
+	sha: string;
+	/** Empty means "not a deployed Zap directory" — cached too, so a docs-only
+	 *  directory stops costing a `zap.json` fetch every cycle. */
 	workflowIds: string[];
-	readme?: string;
-	htmlUrl: string;
 };
 
-type ContentEntry = { name: string; type: string };
+type ContentEntry = { name: string; type: string; sha?: string };
+
+/**
+ * Whether a directory can be taken from the cache instead of re-read.
+ *
+ * Pulled out as a pure function because the rest of this module needs live
+ * credentials to exercise, and this is the part with edges: a listing entry
+ * carrying no `sha` must force a re-read rather than matching an
+ * `undefined === undefined` cache entry, which would pin the directory to
+ * whatever was cached forever.
+ */
+export function isDirCached(
+	entry: { name: string; sha?: string },
+	cached: Record<string, RepoDirState> | undefined,
+): boolean {
+	if (!entry.sha) return false;
+	const previous = cached?.[entry.name];
+	return previous !== undefined && previous.sha === entry.sha;
+}
 
 /** Every `workflow_id` a zap.json declares, across both known shapes. */
 function extractWorkflowIds(zapJson: unknown): string[] {
@@ -84,50 +107,68 @@ function extractWorkflowIds(zapJson: unknown): string[] {
 	return [...new Set(ids)];
 }
 
+/** A directory entry from the repo listing: its name and its current tree sha. */
+export type RepoDirEntry = { name: string; sha?: string };
+
 /**
- * Read every Zap directory in the repo.
+ * List the Zap directories, one call, no contents.
  *
- * Directories without a `zap.json` (or whose `zap.json` declares no workflow
- * id) are skipped — they are not deployed durables, so nothing can join to
- * them. The README is enrichment only; a directory that has a workflow id but
- * no README still yields a row with an empty body.
+ * Split from reading them so `zapsSync` can spread a cold cycle over several
+ * executions — reading all 48 directories in one execution is ~97 GitHub calls,
+ * which is what put the sync past its timeout. See `readRepoDir`.
  */
-export async function fetchRepoZaps(pacer?: Pacer): Promise<RepoZap[]> {
+export async function listRepoDirs(pacer?: Pacer): Promise<RepoDirEntry[]> {
 	const slug = repo();
 	const entries = await githubJson<ContentEntry[]>(`/repos/${slug}/contents/`, pacer);
-	const directories = entries.filter((e) => e.type === "dir" && !e.name.startsWith("."));
+	return entries
+		.filter((e) => e.type === "dir" && !e.name.startsWith("."))
+		.map((e) => ({ name: e.name, sha: e.sha }));
+}
 
-	const zaps: RepoZap[] = [];
-	for (const dir of directories) {
-		const rawZapJson = await githubRaw(`/repos/${slug}/contents/${dir.name}/zap.json`, pacer);
-		if (!rawZapJson) continue;
+/** The repo URL for a directory. Derived, so it needs no call. */
+export function dirHtmlUrl(directory: string): string {
+	return `https://github.com/${repo()}/tree/main/${directory}`;
+}
 
-		let workflowIds: string[];
+/**
+ * Read one Zap directory: its `zap.json`, and its `README.md` if it declares any
+ * workflow id. One or two calls.
+ *
+ * A directory without a `zap.json`, or whose `zap.json` declares no workflow id,
+ * yields `workflowIds: []` — it is not a deployed durable, so nothing can join to
+ * it. That empty result is still worth caching, so a docs-only directory stops
+ * costing a call every cycle. The README is enrichment only; a directory with a
+ * workflow id but no README still yields a row with an empty body.
+ *
+ * Returns `undefined` when `zap.json` is malformed, which must *not* be cached —
+ * the next cycle should retry rather than remember a parse failure until someone
+ * happens to touch the directory again.
+ */
+export async function readRepoDir(
+	directory: string,
+	pacer?: Pacer,
+): Promise<{ workflowIds: string[]; readme?: string } | undefined> {
+	const slug = repo();
+	const rawZapJson = await githubRaw(`/repos/${slug}/contents/${directory}/zap.json`, pacer);
+
+	let workflowIds: string[] = [];
+	if (rawZapJson) {
 		try {
 			workflowIds = extractWorkflowIds(JSON.parse(rawZapJson));
 		} catch {
-			// A malformed zap.json is a repo problem, not a reason to fail the
-			// whole sync — skip the directory and keep going.
-			continue;
+			return undefined;
 		}
-		if (workflowIds.length === 0) continue;
-
-		zaps.push({
-			directory: dir.name,
-			workflowIds,
-			readme: await githubRaw(`/repos/${slug}/contents/${dir.name}/README.md`, pacer),
-			htmlUrl: `https://github.com/${slug}/tree/main/${dir.name}`,
-		});
 	}
 
-	return zaps;
+	if (workflowIds.length === 0) return { workflowIds };
+	return {
+		workflowIds,
+		readme: await githubRaw(`/repos/${slug}/contents/${directory}/README.md`, pacer),
+	};
 }
 
-/** Index repo directories by the workflow ids they declare. */
-export function indexByWorkflowId(zaps: RepoZap[]): Map<string, RepoZap> {
-	const index = new Map<string, RepoZap>();
-	for (const zap of zaps) {
-		for (const id of zap.workflowIds) index.set(id, zap);
-	}
-	return index;
-}
+/**
+ * `workflowIds` is plural throughout because `luma-event-to-notion/zap.json` uses
+ * a `deployments[]` array and maps one directory onto two deployed workflows. Both
+ * rows then share the same README body, which is acceptable.
+ */

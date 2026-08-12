@@ -14,7 +14,7 @@ Runs** (one row per run, related back to its Zap) and **Zapier Error Triage**
 
 ## What it does
 
-### `zapsSync` — replace mode, every 6 hours
+### `zapsSync` — replace mode, daily
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -26,15 +26,37 @@ Runs** (one row per run, related back to its Zap) and **Zapier Error Triage**
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
-A cycle is roughly 3 upstream calls per durable plus a repo listing — twelve
-durables at the time of writing, so ~40 calls, comfortably inside GitHub's
-authenticated 5000/hour at any sensible cadence. The count moves as Zaps are
-added; nothing is hardcoded to it.
+It runs **daily**, and a cycle costs roughly 3 upstream calls per durable that
+has *changed* rather than per durable. Two caches in sync state, each keyed on an
+identity the cheap listing calls already return:
+
+- `versions`, keyed on `current_version_id`, skips `getWorkflow` — and with it
+  the `listConnections` / `getApp` lookups — until the Zap is republished.
+- `dirs`, keyed on each repo directory's tree sha, skips the `zap.json` and
+  `README.md` reads until someone edits that directory.
+
+So a cycle in which nothing was republished or edited is two calls: one
+`listWorkflows` and one repo listing. A cycle after one republish pays for that
+one Zap. Both caches self-heal — a missing or unreadable entry falls back to
+fetching — so a state reset costs one expensive cycle and nothing more.
+
+**Every row is still emitted every cycle regardless.** This is replace mode, so
+any row a completed cycle does not emit is swept. The saving is in not
+re-*deriving* unchanged data, never in skipping the write.
+
+The cycle is **spread over several executions**, walking repo directories first
+and then any workflow no directory claimed. Measured on the 2026-08-12 deploy: a
+cold cycle is ~6 executions of 9-69s each, emitting all 57 rows; before the
+change a single execution ran 290-310s and was killed. That pagination is not a nicety: doing it all in one execution
+is what pushed this sync past the ~300s timeout in August 2026, where it failed
+325 times in a row. A timed-out handler never commits its state, so without
+committable slices the memoisation above could never take hold — every retry
+would be another cold start.
 
 ### `runsBackfill` / `runsDelta` — run history
 
-`runsBackfill` (manual) walks all history, one durable per execution chain.
-`runsDelta` (every 6 hours) re-scans the recent window. Both write to **Zapier Zap
+`runsBackfill` (manual) walks all history, one page per execution chain.
+`runsDelta` (daily) re-scans the recent window. Both write to **Zapier Zap
 Runs**, and the `Zap` relation sets itself: it matches on the Zaps primary key,
 which is `Workflow ID`.
 
@@ -135,21 +157,20 @@ So `errorsDelta` does both jobs: with no watermark for a durable it walks that
 durable's whole history across as many executions as it takes, and afterwards
 re-scans only the one-hour overlap window.
 
-**It runs hourly**, unlike the 6h run syncs — a failure is worth seeing sooner
+**It runs hourly**, unlike the daily run syncs — a failure is worth seeing sooner
 than the next working day. A cycle with nothing new emits no changes, so it costs
 no Notion writes and leaves every ticket untouched.
 
 #### The gate
 
-A *walking* cycle costs two Zapier calls per durable — `listWorkflows` plus one
-`listRunsPage`, because every execution re-lists the workflows to find its own —
-so ~54 at 27 durables. Hourly, most cycles would spend all of that to discover
+A *walking* cycle costs one `listWorkflows` plus one `listRunsPage` per durable —
+so ~58 at 57 durables. Hourly, most cycles would spend all of that to discover
 nothing happened.
 
 `listDurableRuns` answers "did anything fail anywhere" in **one** call. It takes no
 `workflow`, returns newest-first across the whole account, and carries `status`
 and `error`. So the sync asks it first and skips the walk when the answer is no: a
-quiet cycle costs 1 call instead of ~54.
+quiet cycle costs 1 call instead of ~50.
 
 It cannot replace the per-durable listing. Its fields are exactly `id`, `status`,
 `input`, `output`, `error`, `execution_id`, `is_private`, `created_at`,
@@ -229,8 +250,9 @@ The gap is branching: a Zap with 6 step call sites runs 4–5 of them depending 
 which path it takes. Zero operations is legitimate — a run can fail before any
 step executes.
 
-Run status is therefore up to 6 hours stale, which is the trade for the lighter
-cadence. The delta caps the fetch at the newest 60 rows per execution and logs the
+Run status is therefore up to a day stale, which is the trade for the lighter
+cadence — failures are not, because `errorsDelta` sees those hourly. The delta
+caps the fetch at the newest 60 rows per durable and logs the
 shortfall rather than passing silently. The **backfill fetches detail for every
 row**, so a one-off re-run populates these columns across all history — at the
 cost of one extra call and ~12 KB per run (26 KB observed), which is why it
