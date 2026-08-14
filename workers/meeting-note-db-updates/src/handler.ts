@@ -49,6 +49,44 @@ function stripHtml(html: string): string {
 		.trim();
 }
 
+const BARE_EMAIL_LINE = /^[\w.+-]+@[\w-]+\.[\w.-]+$/;
+
+/**
+ * Cal.com-booked events list each attendee's name on its own line immediately
+ * above their email in the description's "Who:" block, e.g.:
+ *   Who:
+ *   Dennis Chiuten - Organizer
+ *   dennis@work.flowers
+ *   Sam Douglass
+ *   info@kbdwellness.com.au
+ * Google Calendar's attendee objects don't carry a displayName for guests who
+ * booked through a business inbox (`info@kbdwellness.com.au` for Sam
+ * Douglass), so the classifier only ever saw the bare address and rejected it
+ * as a role account. This recovers the name from that free-text block as a
+ * fallback when the attendee object itself has none. (Learned 2026-08-14.)
+ */
+function parseDescriptionAttendeeNames(description: string): Map<string, string> {
+	const names = new Map<string, string>();
+	const cleaned = stripHtml(description);
+	const whoMatch = cleaned.match(/(?:^|\n)Who:\n([\s\S]*?)(?:\n\n|$)/);
+	if (!whoMatch) return names;
+
+	const lines = whoMatch[1]
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	let pendingName: string | null = null;
+	for (const line of lines) {
+		if (BARE_EMAIL_LINE.test(line)) {
+			if (pendingName) names.set(line.toLowerCase(), pendingName);
+			pendingName = null;
+		} else {
+			pendingName = line.replace(/\s*-\s*Organizer\s*$/i, "").trim();
+		}
+	}
+	return names;
+}
+
 interface ResolvedAttendees {
 	/** Notion user IDs of internal-domain attendees (for the people property). */
 	internalUserIds: string[];
@@ -165,6 +203,9 @@ export async function handlePageCreated(
 	// Keep each attendee's calendar `displayName` alongside their address: it is
 	// what tells the classifier `migas@nus.edu.sg` is Migas Huang Junwei, and it
 	// becomes the new Contact's title.
+	const descriptionNames = event?.description
+		? parseDescriptionAttendeeNames(event.description)
+		: new Map<string, string>();
 	const eventCandidates: EmailCandidate[] = event
 		? [
 				{ email: event.organizer?.email, name: event.organizer?.displayName },
@@ -174,7 +215,17 @@ export async function handlePageCreated(
 			].flatMap(({ email, name }) => {
 				// extractAddresses normalises and validates a single address here.
 				const [normalised] = extractAddresses(email);
-				return normalised ? [{ email: normalised, name }] : [];
+				if (!normalised) return [];
+				// The attendee object itself wins when it has a name; the
+				// description's "Who:" block is only a fallback for the ones that
+				// booked through a shared inbox with no displayName attached.
+				const resolvedName = name?.trim() || descriptionNames.get(normalised);
+				if (!name?.trim() && resolvedName) {
+					console.log(
+						`Recovered name "${resolvedName}" for ${normalised} from event description.`,
+					);
+				}
+				return [{ email: normalised, name: resolvedName }];
 			})
 		: [];
 
