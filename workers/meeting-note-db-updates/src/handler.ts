@@ -145,6 +145,45 @@ async function resolveAttendees(
 	};
 }
 
+/**
+ * Copy each Contact's `Related Company` and `Deals` relations so they can be
+ * written onto the Meeting Note's own `Companies` / `Deals` properties. The
+ * native "link Deals/Companies from Contacts" DB automation doesn't fire on
+ * this worker's API-driven update (same reason the icon sync below is an
+ * explicit webhook call), so the worker does the linking itself.
+ *
+ * `pages.retrieve` returns at most 25 refs per relation — ample for one
+ * Contact's companies and deals. Contacts created moments ago by
+ * resolveContactPageIds usually have neither relation yet (the
+ * link-contact-to-company worker fills Related Company asynchronously), so
+ * an empty result for a brand-new Contact is normal, not an error.
+ */
+async function collectContactRelations(
+	notion: Client,
+	contactPageIds: string[],
+): Promise<{ companyIds: string[]; dealIds: string[] }> {
+	const companyIds = new Set<string>();
+	const dealIds = new Set<string>();
+	for (const contactId of contactPageIds) {
+		let page: any;
+		try {
+			page = await notion.pages.retrieve({ page_id: contactId });
+		} catch (err) {
+			console.log(
+				`Could not read relations from Contact ${contactId}: ${(err as Error)?.message ?? err}`,
+			);
+			continue;
+		}
+		for (const rel of page?.properties?.["Related Company"]?.relation ?? []) {
+			if (rel?.id) companyIds.add(rel.id);
+		}
+		for (const rel of page?.properties?.["Deals"]?.relation ?? []) {
+			if (rel?.id) dealIds.add(rel.id);
+		}
+	}
+	return { companyIds: [...companyIds], dealIds: [...dealIds] };
+}
+
 export async function handlePageCreated(
 	body: unknown,
 	{ notion, zapier }: { notion: Client; zapier: Zapier },
@@ -261,6 +300,23 @@ export async function handlePageCreated(
 		properties["Contacts"] = {
 			relation: contactPageIds.map((id) => ({ id })),
 		};
+		const { companyIds, dealIds } = await collectContactRelations(
+			notion,
+			contactPageIds,
+		);
+		if (companyIds.length > 0) {
+			properties["Companies"] = {
+				relation: companyIds.map((id) => ({ id })),
+			};
+		}
+		if (dealIds.length > 0) {
+			properties["Deals"] = {
+				relation: dealIds.map((id) => ({ id })),
+			};
+		}
+		console.log(
+			`Contact relations: ${companyIds.length} company(ies), ${dealIds.length} deal(s)`,
+		);
 	}
 	if (internalUserIds.length > 0) {
 		properties["Internal Attendees"] = {
