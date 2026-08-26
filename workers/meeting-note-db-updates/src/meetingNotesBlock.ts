@@ -8,6 +8,12 @@ export interface MeetingNotesCalendarEvent {
 
 export interface MeetingNotesBlock {
 	id: string;
+	/**
+	 * The block's own title. Notion's calendar integration syncs this straight
+	 * from the Google event's `summary`, so it matches byte-for-byte and is a
+	 * reliable discriminator when several events share a start time.
+	 */
+	title: string;
 	calendar_event: MeetingNotesCalendarEvent;
 }
 
@@ -56,6 +62,9 @@ async function findMeetingNotesBlock(
 				if (calendarEvent?.start_time) {
 					return {
 						id: block.id,
+						title: (block.meeting_notes?.title ?? [])
+							.map((t: any) => t.plain_text ?? "")
+							.join(""),
 						calendar_event: calendarEvent,
 					};
 				}

@@ -92,14 +92,28 @@ export async function getAccessToken(subject: string): Promise<string> {
 }
 
 /**
- * Find the event on `subject`'s primary calendar that starts exactly at
- * `startTime`. The time window catches overlapping events (all-day events,
- * still-running earlier meetings), so results are filtered to an exact
- * start match rather than relying on a title search.
+ * Find the event on `subject`'s primary calendar identified by the composite
+ * of `startTime` and `title`. The time window catches overlapping events
+ * (all-day events, still-running earlier meetings), so results are filtered
+ * locally on an exact start match plus an exact title match against the
+ * event's `summary`.
+ *
+ * Both halves of the composite are needed: two meetings can start at the same
+ * minute (2026-08-26 had a webinar and a co-working session both at 12:00), and
+ * a start-time-only match then picks whichever the API happened to return
+ * first. `title` comes from the `meeting_notes` block, which Notion's calendar
+ * integration syncs from the event's own `summary` — so this is an identity
+ * check, not a fuzzy search, and matching is done here rather than through the
+ * API's `q` parameter (a fuzzy AND across summary, description, location and
+ * attendees, which guarantees neither exactness nor uniqueness).
+ *
+ * Returns null when the composite matches nothing: enriching a page from the
+ * wrong event is worse than leaving it unenriched.
  */
 export async function findCalendarEvent(
 	subject: string,
 	startTime: string,
+	title: string,
 ): Promise<CalendarEvent | null> {
 	const token = await getAccessToken(subject);
 	const startMs = new Date(startTime).getTime();
@@ -118,13 +132,23 @@ export async function findCalendarEvent(
 		);
 	}
 	const body = (await res.json()) as { items?: CalendarEvent[] };
-	const matches = (body.items ?? []).filter(
+	const startMatches = (body.items ?? []).filter(
 		(e) =>
 			e.start?.dateTime && new Date(e.start.dateTime).getTime() === startMs,
 	);
+	const wanted = title.trim();
+	const matches = startMatches.filter((e) => (e.summary ?? "").trim() === wanted);
+
+	if (matches.length === 0 && startMatches.length > 0) {
+		console.log(
+			`${startMatches.length} calendar event(s) start at ${startTime} on ${subject}'s calendar but none is titled "${wanted}" (found: ${startMatches
+				.map((e) => `"${e.summary ?? ""}"`)
+				.join(", ")}); treating as no match.`,
+		);
+	}
 	if (matches.length > 1) {
 		console.log(
-			`Multiple calendar events start at ${startTime} on ${subject}'s calendar; using the first.`,
+			`Multiple calendar events at ${startTime} on ${subject}'s calendar are titled "${wanted}"; using the first.`,
 		);
 	}
 	return matches[0] ?? null;
