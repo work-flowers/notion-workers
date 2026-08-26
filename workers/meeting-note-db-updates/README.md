@@ -96,7 +96,11 @@ GOOGLE_SA_KEY_BASE64=$(op document get google-sa-notion-workers | base64 | tr -d
 
 - The Worker waits up to ~90s for the `meeting_notes` block to appear (Notion populates it asynchronously after page creation). If the block never appears, the run is a no-op — same behaviour as the Zap's "Only continue if found" filter.
 - The `meeting_notes` block's attendee user IDs are **global** Notion user IDs; `users.retrieve` only dereferences workspace members and guests (this is Notion policy — it prevents email harvesting). The service-account calendar lookup is what makes non-guest external attendees resolvable.
-- The event match is by **exact start time** on the impersonated attendee's primary calendar (not title search). Overlapping/all-day events are filtered out; if two events share the same start, the first is used and a warning is logged.
+- The event match is a **composite of exact start time and exact title** on the impersonated attendee's primary calendar. The API is queried on a 60-second window around the start (which catches overlapping and all-day events); both filters are then applied locally to the returned array — one request, no `q` search. `q` is deliberately avoided: it is a fuzzy AND across summary, description, location and attendees, so it guarantees neither exactness nor uniqueness.
+
+  Both halves are needed. Start time alone is not unique: on 2026-08-26 a Goldcast webinar and the *Notion APAC Ambassadors Co-working* session both started at 12:00, and the start-only matcher took whichever the API returned first — enriching the note with the webinar's id, description and (empty) attendee list, so Contacts came out at 0. The title is a safe discriminator because Notion's calendar integration syncs the `meeting_notes` block's title straight from the event's `summary`, so it is an identity check rather than a heuristic.
+
+  **If the composite matches nothing, the lookup returns null and the run degrades to block-resolved data only** — enriching a page from the wrong event is worse than leaving it unenriched. A start-time hit whose title doesn't match is logged with the titles that were found.
 - **`[Table] Meeting Note IDs` is keyed on the occurrence id, and must stay that way.** A Google event carries two identifiers and they are not interchangeable:
 
   | | `id` — the **occurrence** | `iCalUID` — the **series** |

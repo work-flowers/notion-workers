@@ -205,7 +205,7 @@ export async function handlePageCreated(
 	const { start_time, end_time, attendees = [] } =
 		meetingNotesBlock.calendar_event;
 	console.log(
-		`meeting_notes block found: start=${start_time}, attendees=${attendees.length}`,
+		`meeting_notes block found: title="${meetingNotesBlock.title}", start=${start_time}, attendees=${attendees.length}`,
 	);
 
 	const { internalUserIds, internalEmails, externalContacts, unresolvedCount } =
@@ -219,10 +219,14 @@ export async function handlePageCreated(
 	const subject = internalEmails[0];
 	if (subject) {
 		try {
-			event = await findCalendarEvent(subject, start_time);
+			event = await findCalendarEvent(
+				subject,
+				start_time,
+				meetingNotesBlock.title,
+			);
 			if (!event) {
 				console.log(
-					`No calendar event at ${start_time} on ${subject}'s calendar`,
+					`No calendar event titled "${meetingNotesBlock.title}" at ${start_time} on ${subject}'s calendar`,
 				);
 			}
 		} catch (err) {
