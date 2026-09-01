@@ -5,6 +5,7 @@ import {
 	type EmailCandidate,
 	extractAddresses,
 	resolveContactPageIds,
+	retrieveDataSource,
 } from "@work-flowers/notion-worker-shared";
 import { findCalendarEvent, type CalendarEvent } from "./googleCalendar";
 import { upsertMeetingNoteIdRow } from "./meetingNoteIdsTable";
@@ -152,6 +153,8 @@ async function resolveAttendees(
  * this worker's API-driven update (same reason the icon sync below is an
  * explicit webhook call), so the worker does the linking itself.
  *
+ * Deals are filtered to open stages only — see filterOpenDeals.
+ *
  * `pages.retrieve` returns at most 25 refs per relation — ample for one
  * Contact's companies and deals. Contacts created moments ago by
  * resolveContactPageIds usually have neither relation yet (the
@@ -181,7 +184,84 @@ async function collectContactRelations(
 			if (rel?.id) dealIds.add(rel.id);
 		}
 	}
-	return { companyIds: [...companyIds], dealIds: [...dealIds] };
+	return {
+		companyIds: [...companyIds],
+		dealIds: await filterOpenDeals(notion, [...dealIds]),
+	};
+}
+
+/** work.flowers CRM Deals data source (Core CRM Objects → Deals). */
+const DEALS_DATA_SOURCE_ID = "21a91b07-11ac-808d-9657-000b1390d20b";
+
+/**
+ * Names of the Deal Status options in the status property's "Complete" group
+ * (currently Closed Won / Closed Lost / Declined). Read from the schema on
+ * each run rather than hardcoded, so a status later added to the group is
+ * picked up with no code change. Returns null when the schema can't be read
+ * or parsed; callers must treat null as "don't filter".
+ */
+async function closedDealStatusNames(): Promise<Set<string> | null> {
+	let ds: { properties?: Record<string, any> };
+	try {
+		ds = await retrieveDataSource(DEALS_DATA_SOURCE_ID);
+	} catch (err) {
+		console.log(
+			`Could not read Deals schema: ${(err as Error)?.message ?? err}`,
+		);
+		return null;
+	}
+	const status = ds.properties?.["Status"]?.status;
+	const complete = (status?.groups ?? []).find(
+		(g: any) => String(g?.name ?? "").toLowerCase() === "complete",
+	);
+	if (!complete) {
+		console.log(
+			'Deals Status property has no "Complete" group; not filtering deals.',
+		);
+		return null;
+	}
+	const optionIds = new Set<string>(complete.option_ids ?? []);
+	const names = new Set<string>();
+	for (const opt of status?.options ?? []) {
+		if (opt?.id && optionIds.has(opt.id) && opt?.name) names.add(opt.name);
+	}
+	return names.size > 0 ? names : null;
+}
+
+/**
+ * Drop deals whose Status sits in the "Complete" group, so a meeting note
+ * only links deals that are still open. Every uncertainty fails open —
+ * schema unreadable, deal page unreadable, Status empty — because linking a
+ * closed deal is a cosmetic nuisance, while silently dropping an open one
+ * loses the meeting from that deal's timeline.
+ */
+async function filterOpenDeals(
+	notion: Client,
+	dealIds: string[],
+): Promise<string[]> {
+	if (dealIds.length === 0) return dealIds;
+	const closed = await closedDealStatusNames();
+	if (!closed) return dealIds;
+	const open: string[] = [];
+	for (const dealId of dealIds) {
+		let statusName: string | undefined;
+		try {
+			const page: any = await notion.pages.retrieve({ page_id: dealId });
+			statusName = page?.properties?.["Status"]?.status?.name;
+		} catch (err) {
+			console.log(
+				`Could not read Status of Deal ${dealId}; keeping it: ${(err as Error)?.message ?? err}`,
+			);
+			open.push(dealId);
+			continue;
+		}
+		if (statusName && closed.has(statusName)) {
+			console.log(`Skipping closed deal ${dealId} (${statusName}).`);
+		} else {
+			open.push(dealId);
+		}
+	}
+	return open;
 }
 
 export async function handlePageCreated(
