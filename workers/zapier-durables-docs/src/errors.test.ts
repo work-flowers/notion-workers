@@ -11,6 +11,8 @@ import {
 	normaliseMessage,
 	type Occurrence,
 	occurrenceFrom,
+	RELINK_WINDOW_MS,
+	relinkable,
 	signatureFor,
 	type TicketState,
 	ticketTitle,
@@ -306,6 +308,30 @@ test("eviction is a no-op below the ceiling", () => {
 	accumulate(tickets, occurrence("run-1", "2026-07-24T00:02:08.069Z"));
 	assert.deepEqual(evictOldest(tickets, 10), []);
 	assert.equal(Object.keys(tickets).length, 1);
+});
+
+test("recently-seen tickets are relink candidates, old ones are not", () => {
+	// A ticket minted before its Zap or run rows exist has its relations
+	// silently dropped, and a one-off failure is never re-upserted — so
+	// completed walks re-emit everything seen inside the window to heal them.
+	const tickets: Record<string, TicketState> = {};
+	const now = Date.parse("2026-09-01T12:00:00.000Z");
+	accumulate(tickets, occurrence("run-1", "2026-09-01T11:04:00.000Z", { signature: "sig-fresh" }));
+	accumulate(tickets, occurrence("run-2", "2026-08-30T12:00:00.000Z", { signature: "sig-edge" }));
+	accumulate(tickets, occurrence("run-3", "2026-08-01T00:00:00.000Z", { signature: "sig-old" }));
+
+	const candidates = relinkable(tickets, now);
+	assert.ok(candidates.includes("sig-fresh"));
+	assert.ok(candidates.includes("sig-edge"), "exactly at the window edge still relinks");
+	assert.ok(!candidates.includes("sig-old"), "stale tickets must not be rewritten every walk");
+	assert.equal(now - Date.parse("2026-08-30T12:00:00.000Z") <= RELINK_WINDOW_MS, true);
+});
+
+test("a ticket with an unparseable lastSeen is never a relink candidate", () => {
+	const tickets: Record<string, TicketState> = {};
+	accumulate(tickets, occurrence("run-1", "2026-09-01T11:04:00.000Z", { signature: "sig-bad" }));
+	tickets["sig-bad"].lastSeen = "not a date";
+	assert.deepEqual(relinkable(tickets, Date.parse("2026-09-01T12:00:00.000Z")), []);
 });
 
 test("the title names the Zap, the error and the failing step", () => {

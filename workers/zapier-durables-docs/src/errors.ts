@@ -239,6 +239,46 @@ export function evictOldest(
 	return evicted;
 }
 
+// -- Relation healing ---------------------------------------------------------
+
+/**
+ * How far back a completed walk re-emits tickets it did not otherwise touch.
+ *
+ * The `Zap` and `Zap Runs` relations resolve against rows owned by the *daily*
+ * `zapsSync` and `runsDelta`, but tickets are minted by the *hourly*
+ * `errorsDelta` — so a ticket for a durable deployed since the last daily cycle
+ * (or linking runs the daily delta has not written yet) points at primary-key
+ * values that do not exist, and the platform silently drops those links.
+ * Observed live on 2026-09-01: `slack-thread-to-notion-discussion` was deployed
+ * and failed the same morning, and its ticket (ZAP-34) landed with both
+ * relations empty. Because a ticket is only re-upserted when its signature is
+ * touched again, a one-off failure would stay unlinked forever.
+ *
+ * The heal: every *completed* walk re-emits tickets last seen inside this
+ * window, so the relations are re-resolved once the daily syncs have landed the
+ * rows. Re-upserting is idempotent — the sync never writes the page body or the
+ * hand-made triage columns, so nothing human- or agent-owned is disturbed.
+ *
+ * 48h covers the worst case with margin: a ticket minted just after a daily
+ * cycle waits up to ~24h for its Zap row, plus up to `FULL_WALK_INTERVAL_MS`
+ * for the next forced walk to re-emit it.
+ */
+export const RELINK_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Signatures whose ticket was last seen inside the relink window — the
+ * candidates for a healing re-upsert. `now` is injectable for tests.
+ */
+export function relinkable(
+	tickets: Record<string, TicketState>,
+	now = Date.now(),
+): string[] {
+	return Object.keys(tickets).filter((signature) => {
+		const at = Date.parse(tickets[signature].lastSeen);
+		return Number.isFinite(at) && now - at <= RELINK_WINDOW_MS;
+	});
+}
+
 /** How much message a title carries when there is no failing step to name. */
 const TITLE_MESSAGE_MAX = 70;
 

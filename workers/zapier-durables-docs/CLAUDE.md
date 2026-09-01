@@ -350,6 +350,21 @@ reached yet. That is what `pendingWatermark` is for — do not "simplify" it int
 **`Occurrences` is the count; the `Zap Runs` relation is a 25-run sample.** Do not
 present the number of links as the number of failures.
 
+**A ticket minted before its Zap/run rows exist lands with both relations
+empty, and completed walks re-emit recent tickets to heal that.** The `Zap` and
+`Zap Runs` relations resolve against rows the *daily* `zapsSync` and `runsDelta`
+own, but tickets come from the *hourly* `errorsDelta` — so a durable deployed
+and failing the same day gets a ticket whose relation keys match nothing, and
+the platform drops the links silently. Observed live 2026-09-01 (ZAP-34,
+`slack-thread-to-notion-discussion`). Since a ticket is only re-upserted when
+its signature recurs, a one-off failure would stay unlinked forever; the fix is
+`relinkable` in `src/errors.ts` — every completed walk re-emits tickets seen in
+the last `RELINK_WINDOW_MS` (48h), which re-resolves the relations once the
+daily syncs have landed the rows. Safe because the triage sync never writes
+page bodies or the hand-made columns. Do not shrink the window below ~30h: a
+ticket minted just after a daily cycle waits up to ~24h for its Zap row plus up
+to `FULL_WALK_INTERVAL_MS` for the next forced walk.
+
 **A durable with no runs at all never gets a watermark**, so it is re-walked every
 cycle. That is one list call and no failures — correct, just not free. Writing a
 watermark for it would need a sentinel, which is not worth the confusion.

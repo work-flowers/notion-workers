@@ -12,6 +12,7 @@ import {
 	isTriageable,
 	MAX_TICKETS,
 	occurrenceFrom,
+	relinkable,
 	ticketTitle,
 	type TicketState,
 } from "./errors.js";
@@ -1137,6 +1138,21 @@ worker.sync("errorsDelta", {
 			if (budget.exhausted()) break;
 		}
 
+		// The cycle ends only once every durable is covered and nothing is mid-walk.
+		// A cleared cycle still returns hasMore: false from the gate above; this
+		// path is the walking one.
+		const cycleComplete = index >= workflows.length && !cursor;
+
+		// A completed walk also re-emits every ticket seen inside the relink
+		// window, touched or not. Tickets are minted hourly but the Zap and run
+		// rows their relations resolve against are written by the *daily* syncs, so
+		// a ticket for a freshly deployed durable lands with both relations dropped
+		// — and a one-off failure would never be re-upserted to heal them. See
+		// RELINK_WINDOW_MS in src/errors.ts.
+		if (cycleComplete) {
+			for (const signature of relinkable(tickets)) touched.add(signature);
+		}
+
 		const changes = [...touched].map((signature) => {
 			const ticket = tickets[signature];
 			return {
@@ -1175,10 +1191,6 @@ worker.sync("errorsDelta", {
 			);
 		}
 
-		// The cycle ends only once every durable is covered and nothing is mid-walk.
-		// A cleared cycle still returns hasMore: false from the gate above; this
-		// path is the walking one.
-		const cycleComplete = index >= workflows.length && !cursor;
 		return {
 			changes,
 			hasMore: !cycleComplete,
