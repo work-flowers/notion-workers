@@ -9,9 +9,12 @@ export interface MeetingNotesCalendarEvent {
 export interface MeetingNotesBlock {
 	id: string;
 	/**
-	 * The block's own title. Notion's calendar integration syncs this straight
-	 * from the Google event's `summary`, so it matches byte-for-byte and is a
-	 * reliable discriminator when several events share a start time.
+	 * The block's own title. This is NOT the Google event summary: Notion leaves
+	 * it as a placeholder (`Meeting <date>`) until the meeting actually runs, and
+	 * only then syncs it from the event. For disambiguating same-start calendar
+	 * events, use the parent page title instead (the calendar integration sets it
+	 * to `<summary> <ISO timestamp>` from creation) — see fetchPageTitle /
+	 * stripTrailingTimestamp in handler.ts. This is kept only as a fallback.
 	 */
 	title: string;
 	calendar_event: MeetingNotesCalendarEvent;
