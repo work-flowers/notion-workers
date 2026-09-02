@@ -33,6 +33,51 @@ function extractPageId(body: unknown): string | null {
 	);
 }
 
+/**
+ * Notion's Google Calendar integration names a meeting note's parent page
+ * `<event summary> <ISO start timestamp>` — e.g.
+ * `[ZC26 Session Recording] … weigh in 2026-09-03T21:30:00.000+08:00`. Stripping
+ * that trailing timestamp recovers the event summary byte-for-byte, which the
+ * `meeting_notes` block title does NOT give us: the block title stays Notion's
+ * placeholder (`Meeting <date>`) until the meeting happens, so it can't
+ * disambiguate same-start events for notes enriched ahead of time. The page
+ * title carries the real summary from creation, in both phases.
+ *
+ * The trailing token may be a full datetime (with optional fractional seconds
+ * and `Z`/`±HH:MM` offset) or a bare date for all-day events; anything else is
+ * left untouched, so a manually-titled page passes through unchanged.
+ */
+const TRAILING_TIMESTAMP =
+	/\s+\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+
+function stripTrailingTimestamp(title: string): string {
+	return title.replace(TRAILING_TIMESTAMP, "").trim();
+}
+
+async function fetchPageTitle(
+	notion: Client,
+	pageId: string,
+): Promise<string | null> {
+	let page: any;
+	try {
+		page = await notion.pages.retrieve({ page_id: pageId });
+	} catch (err) {
+		console.log(
+			`Could not read page title for ${pageId}: ${(err as Error)?.message ?? err}`,
+		);
+		return null;
+	}
+	for (const prop of Object.values(page?.properties ?? {})) {
+		if ((prop as any)?.type === "title") {
+			const text = ((prop as any).title ?? [])
+				.map((t: any) => t.plain_text ?? "")
+				.join("");
+			return text || null;
+		}
+	}
+	return null;
+}
+
 function stripHtml(html: string): string {
 	return html
 		.replace(/<\s*br\s*\/?\s*>/gi, "\n")
@@ -295,18 +340,25 @@ export async function handlePageCreated(
 	// calendar event — read from an internal attendee's calendar via the
 	// domain-wide-delegated service account — supplies everyone else's email,
 	// plus event metadata (call link, description, iCalUID).
+	// The `meeting_notes` block title is a placeholder until the meeting runs, so
+	// disambiguate same-start calendar events on the parent page title instead —
+	// it holds the event summary (plus a trailing ISO timestamp) from creation.
+	// Fall back to the block title if the page title can't be read.
+	const pageTitle = await fetchPageTitle(notion, pageId);
+	const eventTitle =
+		(pageTitle && stripTrailingTimestamp(pageTitle)) || meetingNotesBlock.title;
+	if (pageTitle) {
+		console.log(`Disambiguation title (from page): "${eventTitle}"`);
+	}
+
 	let event: CalendarEvent | null = null;
 	const subject = internalEmails[0];
 	if (subject) {
 		try {
-			event = await findCalendarEvent(
-				subject,
-				start_time,
-				meetingNotesBlock.title,
-			);
+			event = await findCalendarEvent(subject, start_time, eventTitle);
 			if (!event) {
 				console.log(
-					`No calendar event titled "${meetingNotesBlock.title}" at ${start_time} on ${subject}'s calendar`,
+					`No calendar event titled "${eventTitle}" at ${start_time} on ${subject}'s calendar`,
 				);
 			}
 		} catch (err) {
