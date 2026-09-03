@@ -45,7 +45,7 @@ Two credentials are duplicated widely enough to need a checklist (as of 2026-07-
 | Credential | Workers holding it |
 |---|---|
 | `ZAPIER_CLIENT_ID` + `ZAPIER_CLIENT_SECRET` | `bq-sync`, `buttondown-tools`, `email-db-updates`, `ga4-sync`, `luma-guest-sync`, `meeting-note-db-updates`, `xero-invoice-sync`, `zapier-durables-docs` |
-| `NOTION_API_TOKEN` | `api-changelog-sync`, `buttondown-sync`, `create-newsletter-page`, `email-db-updates`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `luma-guest-sync`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `zapier-durables-docs` |
+| `NOTION_API_TOKEN` | `api-changelog-sync`, `buttondown-sync`, `create-newsletter-page`, `email-db-updates`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `luma-guest-sync`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `supercut-sync`, `zapier-durables-docs` |
 
 That table is a snapshot and will drift. Regenerate it rather than trusting it — this prints every worker's variable *names* only, never a value:
 

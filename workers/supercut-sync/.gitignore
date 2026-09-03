@@ -1,0 +1,9 @@
+.env
+.env.*
+dist/
+node_modules/
+workers.*.json
+.claude/settings.local.json
+
+# 1Password reference template — contains no secret values, safe to commit
+!.env.tpl
