@@ -19,27 +19,35 @@ const db = worker.database("myDb", {
       ID: Schema.richText(),
     },
   },
-});
+})
 
 worker.sync("mySync", {
   database: db,
   execute: async (state, { notion }) => ({
     changes: [
-      { type: "upsert", key: "1", properties: { Name: Builder.title("Item 1"), ID: Builder.richText("1") } },
+      {
+        type: "upsert",
+        key: "1",
+        properties: {
+          Name: Builder.title("Item 1"),
+          ID: Builder.richText("1"),
+        },
+      },
     ],
     hasMore: false,
     nextState: undefined,
   }),
-});
+})
 ```
 
 Each call returns `{ changes, hasMore, nextState }`. If `hasMore` is `true`, the runtime calls `execute` again with `nextState`. This continues until `hasMore` is `false`, completing a **cycle**. The next cycle begins at the scheduled interval with the state from the end of the previous cycle.
 
 **Imports:**
+
 ```ts
-import { Worker } from "@notionhq/workers";
-import * as Builder from "@notionhq/workers/builder";
-import * as Schema from "@notionhq/workers/schema";
+import { Worker } from "@notionhq/workers"
+import * as Builder from "@notionhq/workers/builder"
+import * as Schema from "@notionhq/workers/schema"
 ```
 
 ## Decision Framework
@@ -48,25 +56,31 @@ import * as Schema from "@notionhq/workers/schema";
 
 The deciding factor is **API capability and dataset size**. Two tiers:
 
-| Condition | Architecture |
-|---|---|
-| Small source (<1k records) or API with no change tracking | **Simple replace sync** — one sync, `mode: "replace"` |
+| Condition                                                         | Architecture                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Small source (<1k records) or API with no change tracking         | **Simple replace sync** — one sync, `mode: "replace"`              |
 | Everything else (API supports `updated_at`, change feeds, events) | **Backfill + delta pair** — two syncs writing to the same database |
 
 **Simple replace sync**: One sync returns the full dataset each cycle. After the final `hasMore: false`, any records not seen are deleted automatically. Use when the dataset is small enough to re-fetch entirely.
 
 **Backfill + delta pair**: Two syncs share a single database. The **backfill sync** (`mode: "replace"`, `schedule: "manual"`) re-fetches everything when triggered. The **delta sync** (`mode: "incremental"`, frequent schedule) fetches only changes since the last run. This separates concerns cleanly — no bi-modal state machine, no backfill-to-delta transition bugs.
 
+Initialize the delta cursor before starting the backfill. When both syncs can
+write the same record, include `upstreamUpdatedAt` on each upsert so a stale
+backfill response cannot overwrite a newer delta response.
+
 ### Step 2: Understand Your API's Pagination
 
 Most APIs require paginating through results. Return batches of ~100 changes. Returning too many changes in one `execute` call will fail.
 
 **Backfill pagination** (full dataset load):
+
 1. **Opaque cursor token** — GraphQL `endCursor`, Stripe `starting_after`
 2. **Page number / offset** — `?page=N&limit=100`
 3. **Keyset (timestamp + id)** — `WHERE created_at > X OR (created_at = X AND id > Y)` — the gold standard for timestamp-sorted mutable data
 
 **Delta pagination** (change-only loads, incremental mode):
+
 1. **Timestamp cursor** — `?updated_since=<cursor>` with consistency buffer
 2. **Keyset on updated_at + id** — same keyset pattern on the modification timestamp
 3. **Event/changelog feed** — `GET /events?after=<eventId>`
@@ -77,11 +91,14 @@ Most APIs require paginating through results. Return batches of ~100 changes. Re
 APIs tend to be eventually consistent. A record that was just written or updated may not appear in query results immediately. Since the cursor never resets in incremental mode, if it advances past a record that hasn't been indexed yet, that record is skipped permanently. Lag the cursor 10-60 seconds behind "now":
 
 ```ts
-const bufferMs = 15_000;
-const maxCursor = new Date(Date.now() - bufferMs).toISOString();
-const nextCursor = records.length > 0
-  ? min(lastRecord.updatedAt, maxCursor)
-  : maxCursor;
+const bufferMs = 15_000
+const maxCursor = new Date(Date.now() - bufferMs).toISOString()
+function minTimestamp(a: string, b: string): string {
+  return Date.parse(a) <= Date.parse(b) ? a : b
+}
+
+const nextCursor =
+  records.length > 0 ? minTimestamp(lastRecord.updatedAt, maxCursor) : maxCursor
 ```
 
 ### Step 4: Deletion Strategies
@@ -102,33 +119,36 @@ const db = worker.database("records", {
   schema: {
     properties: { Name: Schema.title(), ID: Schema.richText() },
   },
-});
+})
 
 const apiPacer = worker.pacer("myApi", {
   allowedRequests: 10,
   intervalMs: 1000,
-});
+})
 
 worker.sync("recordsBackfill", {
   database: db,
   mode: "replace",
-  schedule: "manual",  // trigger manually or on a slow schedule
+  schedule: "manual", // trigger manually or on a slow schedule
   execute: async (state) => {
-    const page = state?.page ?? 1;
-    await apiPacer.wait();
-    const { items, totalPages } = await fetchPage(page, 100);
-    const hasMore = page < totalPages;
+    const page = state?.page ?? 1
+    await apiPacer.wait()
+    const { items, totalPages } = await fetchPage(page, 100)
+    const hasMore = page < totalPages
     return {
       changes: items.map((item) => ({
         type: "upsert" as const,
         key: item.id,
-        properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+        properties: {
+          Name: Builder.title(item.name),
+          ID: Builder.richText(item.id),
+        },
       })),
       hasMore,
       nextState: hasMore ? { page: page + 1 } : undefined,
-    };
+    }
   },
-});
+})
 ```
 
 See `examples/replace-simple.ts` and `examples/replace-paginated.ts` for complete working examples.
@@ -145,25 +165,31 @@ worker.sync("recordsDelta", {
   mode: "incremental",
   schedule: "5m",
   execute: async (state: { cursor: string } | undefined) => {
-    const cursor = state?.cursor ?? new Date(0).toISOString();
-    const bufferTs = new Date(Date.now() - 15_000).toISOString();
+    const cursor = state?.cursor ?? new Date(0).toISOString()
+    const bufferTs = new Date(Date.now() - 15_000).toISOString()
 
-    await apiPacer.wait();
-    const { items, nextCursor } = await fetchChanges(cursor);
-    const done = !nextCursor;
+    await apiPacer.wait()
+    // fetchChanges must apply bufferTs as an upstream upper bound.
+    const { items, nextCursor } = await fetchChanges(cursor, bufferTs)
+    const done = !nextCursor
 
     return {
       changes: items.map(toUpsert),
       hasMore: !done,
       nextState: {
-        cursor: done ? min(nextCursor ?? cursor, bufferTs) : nextCursor,
+        // This example assumes nextCursor is an ISO timestamp. Opaque cursors
+        // must not be compared with the timestamp buffer.
+        cursor: done
+          ? minTimestamp(nextCursor ?? cursor, bufferTs)
+          : nextCursor,
       },
-    };
+    }
   },
-});
+})
 ```
 
 **Key points:**
+
 - The delta sync's state is simple — just a cursor. No phase discrimination needed.
 - The backfill sync (replace mode) handles the initial full load and periodic cleanup of deleted records.
 - Both syncs write to the same database via the shared `db` handle.
@@ -175,37 +201,48 @@ See `examples/incremental-basic.ts`, `examples/incremental-bimodal.ts`, and `exa
 
 Define the Notion database shape with `Schema` types and build values with `Builder`:
 
-| Schema type | Builder value | Notes |
-|---|---|---|
-| `Schema.title()` | `Builder.title("text")` | Primary display field. Every schema needs exactly one. |
-| `Schema.richText()` | `Builder.richText("text")` | Text content, IDs |
-| `Schema.url()` | `Builder.url("https://...")` | URL field |
-| `Schema.email()` | `Builder.email("a@b.com")` | Email field |
-| `Schema.phoneNumber()` | `Builder.phoneNumber("+1...")` | Phone field |
-| `Schema.checkbox()` | `Builder.checkbox(true)` | Boolean |
-| `Schema.file()` | `Builder.file("https://...", "name")` | File URL + optional display name |
-| `Schema.number()` | `Builder.number(42)` | Number. Optional format: `Schema.number("percent")` |
-| `Schema.date()` | `Builder.date("2024-01-15")` | Date (YYYY-MM-DD). Also: `Builder.dateTime("2024-01-15T10:30:00Z")`, `Builder.dateRange(start, end)` |
-| `Schema.select([...])` | `Builder.select("Option A")` | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])`. **Options must have non-empty `name` values** — `Schema.select([])` and `{ name: "" }` are not supported. |
-| `Schema.multiSelect([...])` | `Builder.multiSelect("A", "B")` | Multi select |
-| `Schema.status(...)` | `Builder.status("Done")` | Status with groups |
-| `Schema.people()` | `Builder.people("email@co.com")` | People by email |
-| `Schema.place()` | `Builder.place({ latitude, longitude })` | Geographic location |
-| `Schema.relation("syncKey")` | `[Builder.relation("pk")]` | Relation. Value is an **array**. |
+| Schema type                      | Builder value                              | Notes                                                                                                                                                                                     |
+| -------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Schema.title()`                 | `Builder.title("text")`                    | Primary display field. Every schema needs exactly one.                                                                                                                                    |
+| `Schema.richText()`              | `Builder.richText("text")`                 | Text content, IDs                                                                                                                                                                         |
+| `Schema.url()`                   | `Builder.url("https://...")`               | URL field                                                                                                                                                                                 |
+| `Schema.email()`                 | `Builder.email("a@b.com")`                 | Email field                                                                                                                                                                               |
+| `Schema.phoneNumber()`           | `Builder.phoneNumber("+1...")`             | Phone field                                                                                                                                                                               |
+| `Schema.checkbox()`              | `Builder.checkbox(true)`                   | Boolean                                                                                                                                                                                   |
+| `Schema.file()`                  | `Builder.file("https://...", "name")`      | File URL + optional display name                                                                                                                                                          |
+| `Schema.number()`                | `Builder.number(42)`                       | Number. Optional format: `Schema.number("percent")`                                                                                                                                       |
+| `Schema.date()`                  | `Builder.date("2024-01-15")`               | Date (YYYY-MM-DD). Also: `Builder.dateTime("2024-01-15T10:30:00Z")`, `Builder.dateRange(start, end)`                                                                                      |
+| `Schema.select([...])`           | `Builder.select("Option A")`               | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])`. **Options must have non-empty `name` values** — `Schema.select([])` and `{ name: "" }` are not supported. |
+| `Schema.multiSelect([...])`      | `Builder.multiSelect("A", "B")`            | Multi select                                                                                                                                                                              |
+| `Schema.status(...)`             | `Builder.status("Done")`                   | Status with groups                                                                                                                                                                        |
+| `Schema.people()`                | `Builder.people("email@co.com")`           | People by email                                                                                                                                                                           |
+| `Schema.place()`                 | `Builder.place({ lat: 40.7, lon: -74.0 })` | Geographic location                                                                                                                                                                       |
+| `Schema.relation("databaseKey")` | `[Builder.relation("pk")]`                 | Relation to another managed database. Value is an **array**.                                                                                                                              |
 
-Relations support two-way config:
+Relations use the related database key. Two-way relations are configured the same way:
+
 ```ts
-Schema.relation("otherSync", { twoWay: true, relatedPropertyName: "Back Link" })
+Schema.relation("otherDatabase", {
+  twoWay: true,
+  relatedPropertyName: "Back Link",
+})
 ```
 
 Row-level icons and page content:
+
 ```ts
-changes: [{
-  type: "upsert", key: "1",
-  properties: { ... },
-  icon: Builder.emojiIcon("🎯"),               // or Builder.notionIcon("rocket", "blue")
-  pageContentMarkdown: "## Details\nSome text", // Markdown body for the page
-}]
+changes: [
+  {
+    type: "upsert",
+    key: "1",
+    properties: {
+      Name: Builder.title("Example"),
+      // ... other properties ...
+    },
+    icon: Builder.emojiIcon("🎯"), // or Builder.notionIcon("rocket", "blue")
+    pageContentMarkdown: "## Details\nSome text", // Markdown body for the page
+  },
+]
 ```
 
 ## Common Mistakes
