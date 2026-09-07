@@ -11,47 +11,47 @@
  * - Database is declared separately via worker.database() and referenced by handle
  */
 
-import { Worker } from "@notionhq/workers";
-import * as Builder from "@notionhq/workers/builder";
-import * as Schema from "@notionhq/workers/schema";
+import { Worker } from "@notionhq/workers"
+import * as Builder from "@notionhq/workers/builder"
+import * as Schema from "@notionhq/workers/schema"
 
-const worker = new Worker();
-export default worker;
+const worker = new Worker()
+export default worker
 
 const teamDb = worker.database("teamDb", {
-	type: "managed",
-	initialTitle: "Team Members",
-	primaryKeyProperty: "Member ID",
-	schema: {
-		properties: {
-			Name: Schema.title(),
-			"Member ID": Schema.richText(),
-		},
-	},
-});
+  type: "managed",
+  initialTitle: "Team Members",
+  primaryKeyProperty: "Member ID",
+  schema: {
+    properties: {
+      Name: Schema.title(),
+      "Member ID": Schema.richText(),
+    },
+  },
+})
 
 worker.sync("teamSync", {
-	database: teamDb,
-	mode: "replace",
-	execute: async () => {
-		// In a real sync, you'd fetch this from an API
-		const members = [
-			{ id: "m-1", name: "Alice" },
-			{ id: "m-2", name: "Bob" },
-			{ id: "m-3", name: "Charlie" },
-		];
+  database: teamDb,
+  mode: "replace",
+  execute: async () => {
+    // In a real sync, you'd fetch this from an API
+    const members = [
+      { id: "m-1", name: "Alice" },
+      { id: "m-2", name: "Bob" },
+      { id: "m-3", name: "Charlie" },
+    ]
 
-		return {
-			changes: members.map((m) => ({
-				type: "upsert" as const,
-				key: m.id,
-				properties: {
-					Name: Builder.title(m.name),
-					"Member ID": Builder.richText(m.id),
-				},
-			})),
-			// No more pages — cycle is complete
-			hasMore: false,
-		};
-	},
-});
+    return {
+      changes: members.map((m) => ({
+        type: "upsert" as const,
+        key: m.id,
+        properties: {
+          Name: Builder.title(m.name),
+          "Member ID": Builder.richText(m.id),
+        },
+      })),
+      // No more pages — cycle is complete
+      hasMore: false,
+    }
+  },
+})

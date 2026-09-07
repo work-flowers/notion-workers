@@ -1,6 +1,6 @@
 ---
 name: auth-guide
-description: Guide to setting up third-party authentication for a Notion Worker. Covers external-service API keys / personal access tokens and OAuth. Use when the worker needs credentials for a non-Notion API, not for Notion API tokens or `ntn login`.
+description: Guide to setting up third-party authentication for a Notion Worker. Covers brokered credentials for external-service API keys / personal access tokens, OAuth, and plaintext environment secrets only when worker code needs the value. Use when the worker needs credentials for a non-Notion API, not for Notion API tokens or `ntn login`.
 user-invocable: false
 ---
 
@@ -10,10 +10,14 @@ This guide is for authentication against the **third-party service** your worker
 
 Use it when the worker needs credentials for a non-Notion API. Do not use it for Notion API tokens, `ntn login`, or general Notion workspace setup.
 
+Never ask the user to send secret or environment-variable values in chat. For environment secrets, tell the user which variables are needed and have them enter the values directly in `.env` themselves. Do not open or print `.env` after they add them.
+
 Most workers will use one of two auth patterns from the upstream service:
 
 - personal API key / personal access token
 - OAuth
+
+For a personal API key / PAT, use a brokered credential unless worker code must read the plaintext value.
 
 ## Decision framework
 
@@ -27,14 +31,35 @@ Always research the provider's current auth docs on the web before advising the 
 
 Then choose mechanically:
 
-1. **Service offers personal API keys / PATs?** Recommend API key / PAT first. It is usually the simplest fit for an individual-scoped worker.
+1. **Service offers personal API keys / PATs?** Recommend a brokered credential first when the credential is only used in outbound request headers to known domains. Otherwise, use the API key / PAT as an environment secret because worker code needs the plaintext value. It is usually the simplest fit for an individual-scoped worker.
 2. **Service is OAuth-only?** Use OAuth.
 3. **Both exist, but the worker should not depend on one person's credential or should be easy to re-auth if that person leaves?** Recommend OAuth.
 4. **Service has neither?** See "When neither option is available" at the end of this guide.
 
-State the recommendation in one sentence with the reason. Example: "Linear offers personal API keys, so use an API key; it's the simplest fit here."
+State the recommendation in one sentence with the reason. Example: "Linear offers personal API keys, so use a brokered credential; it's the simplest fit and keeps the token out of the worker runtime."
 
-## Setup: API key
+## Setup: brokered credential
+
+Pattern: declare where the credential may be injected with `worker.credential()`. The Workers service injects it into outbound request headers outside the worker runtime.
+
+```ts
+import { CREDENTIAL_VALUE } from "@notionhq/workers"
+
+worker.credential("LINEAR_API_TOKEN", {
+  network: [
+    {
+      domain: "api.linear.app",
+      transform: [{ headers: { Authorization: CREDENTIAL_VALUE } }],
+    },
+  ],
+})
+```
+
+Do not read a brokered credential from `process.env` or add its header in `fetch`. Deploy the declaration, then have the user set its value themselves with `ntn workers env set LINEAR_API_TOKEN=<paste token>`. Use the narrowest exact domains that work.
+
+## Setup: API key as an environment secret
+
+Use this fallback only when worker code must read the plaintext value, such as for webhook verification, signing or encryption, a request body or query parameter, or a non-HTTP client.
 
 Pattern: store the credential in `.env` (or directly in the deployed worker's secrets), read it from `process.env` inside the capability's `execute`, push `.env` to the deployed worker before going live.
 
@@ -51,11 +76,11 @@ Pattern: store the credential in `.env` (or directly in the deployed worker's se
 3. Read the token inside `execute` (this is the part you write):
 
    ```ts
-   const token = process.env.GITHUB_API_TOKEN ?? "";
+   const token = process.env.GITHUB_API_TOKEN ?? ""
 
    const res = await fetch("https://api.github.com/user", {
      headers: { Authorization: `Bearer ${token}` },
-   });
+   })
    ```
 
 4. If auth seems broken, test the token outside the worker first against a simple authenticated endpoint from the provider docs. Example for GitHub:
@@ -94,10 +119,12 @@ const myAuth = worker.oauth("myAuth", {
   scope: "read write",
   clientId: process.env.MY_OAUTH_CLIENT_ID ?? "",
   clientSecret: process.env.MY_OAUTH_CLIENT_SECRET ?? "",
-  // Optional: extra params the provider needs on the auth URL
-  authorizationParams: { ... },
-});
+})
 ```
+
+If the provider requires extra authorization parameters, add a concrete
+string-valued object, for example
+`authorizationParams: { access_type: "offline" }`.
 
 Setup steps:
 
@@ -145,10 +172,10 @@ Setup steps:
 8. **Use the token inside `execute`:**
 
    ```ts
-   const token = await myAuth.accessToken();
+   const token = await myAuth.accessToken()
    const res = await fetch("https://provider.example.com/v1/things", {
      headers: { Authorization: `Bearer ${token}` },
-   });
+   })
    ```
 
    `accessToken()` returns a valid, refreshed access token. The runtime handles refresh automatically — you don't need to track expiry yourself.
@@ -173,13 +200,13 @@ Caveats:
 
 ## Common pitfalls
 
-1. **Hardcoded credentials in source.** Tokens and secrets must come from `process.env` — never inline them in `src/index.ts`. Even in personal repos, committed secrets get scraped.
+1. **Hardcoded credentials in source.** Use a brokered credential, or `process.env` when worker code needs the plaintext value — never inline secrets in `src/index.ts`. Even in personal repos, committed secrets get scraped.
 
 2. **Forgetting `ntn workers env push`.** Local works, deploy fails with auth errors. Always push secrets after changing `.env`. The deployed worker doesn't see local `.env`.
 
 3. **Debugging worker code before testing the raw token.** If API key auth is failing, hit a simple authenticated endpoint with `curl` first so you can separate bad credentials from worker bugs.
 
-4. **Pushing secrets after `ntn workers deploy` for OAuth.** OAuth `clientId` is read from `process.env` during capability registration — push secrets *before* `deploy`, or use the `create` → `env push` → `deploy` sequence.
+4. **Pushing secrets after `ntn workers deploy` for OAuth.** OAuth `clientId` is read from `process.env` during capability registration — push secrets _before_ `deploy`, or use the `create` → `env push` → `deploy` sequence.
 
 5. **Wrong redirect URL for OAuth.** `redirect_uri_mismatch` is the #1 OAuth failure mode. Always run `ntn workers oauth show-redirect-url` and verify the user has set the exact URL at the provider.
 
@@ -219,9 +246,9 @@ If the service offers neither an API key nor an OAuth flow, the honest first ans
 
 Before giving up, there are a few **indirect paths** worth considering.
 
-- **OAuth into a related service that already has the data.** Sometimes the data flows downstream into a place you *can* reach with proper auth — a calendar provider, file storage, a shared workspace. Following the data to a sanctioned interface is preferable to forcing a connection at the original source.
+- **OAuth into a related service that already has the data.** Sometimes the data flows downstream into a place you _can_ reach with proper auth — a calendar provider, file storage, a shared workspace. Following the data to a sanctioned interface is preferable to forcing a connection at the original source.
 - **Have the user export and upload.** If the service offers a manual data export (CSV/JSON), the user can drop files somewhere the worker can read (S3, Drive, etc.) and the worker syncs from there. Higher-friction but unambiguously sanctioned.
 - **Pull data out of the user's own email.** If the service sends the user emails containing the data (digests, notifications, exports, receipts), OAuth into the user's own email account (Gmail, etc.) and parse those messages. The user owns the inbox, the service is sending them the data on purpose, and the email provider has a real OAuth API. Indirect but stable.
 - **Use the service's own internal/frontend endpoints** (the JSON routes its web app calls). Sometimes the only thing the service exposes is the API its own UI talks to — you can authenticate as the logged-in user (session cookie, captured bearer token) and call those routes from the worker. Honest caveats: it's often flaky (the routes can change with any frontend release), it relies on credentials that probably weren't intended for programmatic use, and **the user needs to confirm this doesn't violate the service's terms of service** before doing it. Reasonable for a personal tool or hobby integration; not something to lean on for serious production use. Don't recommend it as a first choice — but if the user goes this way knowingly, help them do it carefully (sane pacers, descriptive `User-Agent`, manual credential rotation, no rate-limit evasion).
 
-   **Tip for discovery:** ask the user to export a `.har` file from their browser's devtools (Network tab → right-click → "Save all as HAR with content"). HAR files capture every request/response the page made — URLs, methods, headers, bodies — which lets you see the exact endpoint shape without the user having to describe it.
+  **Tip for discovery:** ask the user to export a `.har` file from their browser's devtools (Network tab → right-click → "Save all as HAR with content"). HAR files capture every request/response the page made — URLs, methods, headers, bodies — which lets you see the exact endpoint shape without the user having to describe it.

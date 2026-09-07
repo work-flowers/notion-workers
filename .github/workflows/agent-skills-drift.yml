@@ -1,0 +1,95 @@
+# Watches Notion's vendored agent skills for upstream drift.
+#
+# `.agents/` in every worker is vendored from makenotion/notion-cookbook's
+# default worker template. `ntn workers new` downloads it at scaffold time, so
+# nothing refreshes it once a worker exists and it silently goes stale. This
+# re-runs the vendoring script weekly and opens a PR when upstream has moved.
+#
+# The PR is deliberately not auto-merged: the diff is guidance our agents read,
+# and it has previously changed advice (schema property ordering, credential
+# handling) that deserves a human read.
+
+name: Agent skills drift
+
+on:
+  schedule:
+    # Mondays 00:30 UTC = 08:30 Asia/Singapore
+    - cron: "30 0 * * 1"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "notion-cookbook ref to vendor (branch, tag or SHA)"
+        default: "main"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vendor upstream agent skills
+        run: ./scripts/sync-agent-skills.sh "${{ inputs.ref || 'main' }}"
+
+      - name: Detect drift
+        id: drift
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Vendored skills already match upstream."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Upstream agent skills have drifted"
+              echo
+              echo '```'
+              git diff --stat
+              git status --porcelain --untracked-files=all
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open refresh PR
+        if: steps.drift.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="$(sed -n 's/.*@\([0-9a-f]*\):.*/\1/p' .agents/UPSTREAM_REF)"
+          branch="chore/agent-skills-${sha:0:10}"
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists — a refresh PR for this ref is already open or merged."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "chore: refresh vendored Notion agent skills to ${sha:0:10}
+
+          Re-vendored from makenotion/notion-cookbook:workers/templates/workers-default/.agents
+          via ./scripts/sync-agent-skills.sh.
+
+          Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+          git push -u origin "$branch"
+
+          # PR creation needs "Allow GitHub Actions to create and approve pull
+          # requests" (Settings -> Actions -> General). If it is off, the branch
+          # is already pushed, so surface the compare link instead of failing the
+          # run -- the refresh is still one click away.
+          if ! gh pr create \
+              --title "chore: refresh vendored Notion agent skills to ${sha:0:10}" \
+              --body-file .github/agent-skills-pr-body.md; then
+            {
+              echo "Could not open a PR automatically (Actions may not be permitted to create PRs)."
+              echo
+              echo "Branch \`$branch\` is pushed. Open it here:"
+              echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$branch?expand=1"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

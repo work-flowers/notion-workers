@@ -77,6 +77,17 @@ See `workers/link-contact-to-company/src/index.ts` (`extractContactPageId`) for 
 
 Building a custom block (or a custom database view — same capability) is different enough from a sync to have its own guide: **[`docs/custom-blocks.md`](docs/custom-blocks.md)**. Read it first. It covers the project shape, the Vite `root` pin that npm workspaces make mandatory, block-vs-view placement, what the sandbox forbids (it cannot open a Notion page), and the chart colours validated against Notion's surfaces. `workers/newsletter-dashboard` is the reference implementation.
 
+## SDK guidance
+
+Every worker — and the repo root — carries Notion's own guidance in `.agents/` (`INSTRUCTIONS.md`, plus `skills/sync-guide`, `auth-guide`, `sync-debug`, `sync-validate`), with `AGENTS.md` and `.claude/skills` symlinked to it. **That is the source of truth for SDK and CLI mechanics** — schema builders, sync modes, pagination patterns, OAuth. Keep it; don't replace it with a hand-written summary.
+
+It is **not version-matched to anything**, despite what the scaffold implies. `ntn workers new` downloads it at scaffold time from `makenotion/notion-cookbook` (`workers/templates/workers-default/.agents/`), which tracks that repo's `main` — not the `ntn` release. Nothing refreshes it once a worker exists, so it goes stale silently: before 2026-09-07 this repo held **eighteen different vintages across eighteen workers**, no two alike, and four workers had none at all.
+
+- **Refresh with `./scripts/sync-agent-skills.sh [ref]`** (defaults to `main`) from the repo root. It re-vendors into all workers plus the root, fixes the symlinks, and stamps the exact upstream SHA in `.agents/UPSTREAM_REF`. Idempotent.
+- Only `.agents/` is vendored. The upstream template's own `package.json`, `src/` and `.examples/` are left alone — its package.json would clobber each worker's name and dependencies.
+- The root copy exists so a session started at the repo root discovers the skills at all; discovery is per-directory. The root gets no `AGENTS.md`, which would otherwise shadow this file.
+- `.github/workflows/agent-skills-drift.yml` runs the script weekly and opens a refresh PR when upstream moves. Read the `.md` diffs; the `.ts` examples churn on style.
+
 ## Worker-specific docs
 
 Each worker keeps its own `CLAUDE.md` for worker-specific context (what it syncs, which databases/data sources it touches, quirks of the upstream API). Scaffold-generated boilerplate that duplicates this file can be deleted from worker CLAUDE.mds when touched.

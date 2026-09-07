@@ -11,6 +11,7 @@ allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent"]
 You are helping the user create a new sync capability for their Notion Worker. Walk through each step, asking questions and making recommendations. Generate working code at the end.
 
 Before you begin, read these reference files to understand sync patterns:
+
 - `.agents/skills/sync-guide/SKILL.md` — concepts, modes, patterns, common mistakes
 - `.agents/skills/sync-guide/api-pagination-patterns.md` — real-world API strategies
 - `.agents/skills/sync-guide/examples/` — working code templates
@@ -20,6 +21,7 @@ Also read the current `src/index.ts` to understand what already exists.
 ### Step 1: Understand the Data Source
 
 Ask the user:
+
 - What data are you syncing? (e.g., "Jira issues", "Stripe customers", "ServiceNow tickets")
 
 If they name a well-known API, look up its pagination mechanism and change-tracking capabilities (does it have `updated_at`? an events endpoint? cursor-based pagination?).
@@ -50,6 +52,7 @@ Two separate syncs writing to the **same database**:
   recently changed records. Runs on a timer for low-latency updates.
 
 Advantages over a single bi-modal sync:
+
 - No phase discrimination in state — each sync has simple, focused state
 - No backfill-to-delta transition logic
 - Backfill and delta run independently — re-backfill anytime without disrupting delta
@@ -71,6 +74,7 @@ API returns and map the most useful ones to Schema types. Don't ask the user
 to enumerate fields — propose a sensible default and let them adjust.
 
 For example, if syncing Jira issues, propose:
+
 ```ts
 const issuesDb = worker.database("issuesDb", {
   type: "managed",
@@ -78,23 +82,35 @@ const issuesDb = worker.database("issuesDb", {
   primaryKeyProperty: "Issue Key",
   schema: {
     properties: {
-      "Issue Key": Schema.richText(),    // primaryKeyProperty — the unique ID
-      "Summary": Schema.title(),         // the main display field
-      "Status": Schema.select([...]),    // mapped from Jira statuses
-      "Assignee": Schema.richText(),     // or Schema.people() if email available
-      "Updated": Schema.date(),
+      "Issue Key": Schema.richText(), // primaryKeyProperty — the unique ID
+      Summary: Schema.title(), // the main display field
+      Status: Schema.select([
+        { name: "To Do" },
+        { name: "In Progress", color: "yellow" },
+        { name: "Done", color: "green" },
+      ]), // mapped from Jira statuses
+      Assignee: Schema.richText(), // or Schema.people() if email available
+      Updated: Schema.date(),
     },
   },
-});
+})
 ```
 
 Guidelines:
+
 - Declare the database with `worker.database()` and reference the handle in `worker.sync()`
 - Every schema needs exactly one `Schema.title()` — pick the most descriptive field
 - Use `Schema.richText()` for the primary key property (the unique ID)
+- Treat property order as product design, not API order. Put the title first,
+  followed by the five properties that best help an end user recognize,
+  evaluate, or act on the record.
+- Keep opaque IDs, sync keys, timestamps used only for cursors, and other
+  implementation metadata out of the first six properties. Include a user-facing
+  identifier such as an order number or issue key early only when users genuinely
+  rely on it.
 - Use `Schema.url()`, `Schema.email()`, `Schema.date()`, `Schema.number()`,
   `Schema.checkbox()`, `Schema.select()` where the data type fits
-- Use `Schema.relation("otherSyncKey")` for cross-sync relations
+- Use `Schema.relation("otherDatabaseKey")` for relations to another managed database
 - Start with 10-20 properties — be generous, include most useful fields from the API
 - See the full type list in `.agents/skills/sync-guide/SKILL.md` under "Schema Reference"
 
@@ -109,6 +125,7 @@ your knowledge of the API, or by looking up the API. The user shouldn't need
 to know whether their API uses opaque cursors vs page numbers.
 
 You need to determine:
+
 1. **How the API paginates list results** (opaque cursor, page number, offset, keyset)
 2. **Whether the API has change tracking** (updated_at field, events endpoint, changelog)
 3. **Whether the API has deletion signals** (archived filter, audit log, delete events)
@@ -116,6 +133,7 @@ You need to determine:
 Then design the state accordingly:
 
 **For simple replace syncs:** State is just within-cycle pagination.
+
 - Opaque cursor: `{ cursor: string | null }`
 - Page number: `{ page: number }`
 
@@ -172,11 +190,19 @@ There are two patterns:
 For APIs where the user has a personal token or API key (e.g., Jira API token,
 GitHub PAT, simple API keys).
 
-Ask the user for their token and add it to `.env`:
+Prefer a brokered credential when the token is only used in outbound request
+headers to known domains. Follow `.agents/skills/auth-guide/SKILL.md` to declare
+it with `worker.credential()`.
+
+If the worker needs the plaintext token — for example, for signing or a request
+body — tell the user which variables are needed and have them add the values
+directly to `.env` themselves. Never ask them to send the values in chat:
+
 ```
 JIRA_API_TOKEN=...
 JIRA_EMAIL=user@example.com
 ```
+
 If `.env` doesn't exist, create it. The `.env` file is automatically loaded
 during local execution (`--local` flag).
 
@@ -185,15 +211,20 @@ For APIs that require OAuth (e.g., Google, Salesforce, HubSpot). This has
 two parts:
 
 1. **Client credentials** — the OAuth app's client ID and secret. These go in `.env`:
+
    ```
    MY_OAUTH_CLIENT_ID=...
    MY_OAUTH_CLIENT_SECRET=...
    ```
 
-2. **User token** — obtained through the OAuth flow *after* deploying. This is
+2. **User token** — obtained through the OAuth flow _after_ deploying. This is
    handled by the runtime automatically via `worker.oauth()` and `.accessToken()`.
 
-For OAuth syncs, you'll add a `worker.oauth()` call in the generated code:
+For OAuth syncs, you'll add a `worker.oauth()` call in the generated code.
+Always use `UserManagedOAuthConfiguration` (the shape with explicit endpoints and
+client credentials) rather than the `{ provider: "..." }` shorthand, as
+Notion-managed OAuth is in alpha and the user likely does not have access.
+
 ```ts
 const myAuth = worker.oauth("myAuth", {
   name: "my-provider",
@@ -202,19 +233,21 @@ const myAuth = worker.oauth("myAuth", {
   scope: "read write",
   clientId: process.env.MY_OAUTH_CLIENT_ID ?? "",
   clientSecret: process.env.MY_OAUTH_CLIENT_SECRET ?? "",
-});
+})
 ```
 
 Then use `await myAuth.accessToken()` in the execute function instead of
 reading a static token from `process.env`.
 
-Note: OAuth syncs can't be fully tested locally since the OAuth flow requires
-a deployed worker. Local testing will fail at the `.accessToken()` call. This
-is fine — proceed to deploy and test via preview (Step 8).
+Note: the OAuth flow itself requires a deployed worker, but local execution works
+after the first authorization completes and `ntn workers env pull` copies the
+access token into `.env`. Before that bootstrap, `.accessToken()` fails because
+the local token is missing. Proceed to Step 8 for the initial authorization.
 
 ### Step 6: Generate the Code
 
 Write the sync into `src/index.ts`. Use the closest example from `.agents/skills/sync-guide/examples/` as a starting point:
+
 - `replace-simple.ts` — static data, no API
 - `replace-paginated.ts` — paginated replace mode (also used for backfill syncs)
 - `incremental-basic.ts` — delta sync with opaque cursor
@@ -222,6 +255,7 @@ Write the sync into `src/index.ts`. Use the closest example from `.agents/skills
 - `incremental-events.ts` — delta sync with event feed
 
 Include in the generated code:
+
 - Proper imports (`Worker`, `Builder`, `Schema`)
 - Database declaration via `worker.database()` with schema and `primaryKeyProperty`
 - A pacer for the upstream API via `worker.pacer()` — and `await pacer.wait()` before every API request
@@ -229,10 +263,11 @@ Include in the generated code:
 - The `worker.sync()` call(s) referencing the database handle
 - For backfill+delta: two syncs targeting the same database, backfill with `schedule: "manual"`, delta with a timed schedule
 - A consistency buffer for delta syncs (if the API is eventually consistent)
-- Inline comments explaining *why* each design choice was made
-- API calls using `fetch` with auth from `process.env`
+- Inline comments explaining _why_ each design choice was made
+- API calls using `fetch` with auth from a brokered credential or `process.env`
 
 **Code generation checklist:**
+
 - [ ] Database declared with `worker.database()` and referenced by handle
 - [ ] Pacer declared with `worker.pacer()` for the upstream API
 - [ ] `await pacer.wait()` called before every `fetch` to the upstream API
@@ -247,6 +282,9 @@ Include in the generated code:
 Test the sync before deploying. This catches bugs early without a deploy cycle.
 
 **For syncs using static API tokens (Pattern A):**
+
+Brokered credentials must be tested after deploy in Step 8. For tokens read
+from `process.env`, test locally:
 
 1. Run `npm run check` to verify TypeScript types compile. Fix any errors.
 
@@ -275,33 +313,45 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
    credentials aren't available, stub the HTTP calls instead.
 
    **Integration test (preferred when credentials are available):**
+
    ```ts
-   import "dotenv/config"; // load .env
-   import worker from "./src/index.ts";
-   import assert from "node:assert";
+   import "dotenv/config" // load .env
+   import worker from "./src/index.ts"
+   import assert from "node:assert"
 
    async function test() {
      // First page (backfill start, no prior state)
-     const page1 = await worker.run("mySync", undefined, { concreteOutput: true });
-     console.log(`Page 1: ${page1.changes.length} records, hasMore: ${page1.hasMore}`);
-     assert(page1.changes.length > 0, "Should return records");
+     const page1 = await worker.run("mySync", undefined, {
+       concreteOutput: true,
+     })
+     console.log(
+       `Page 1: ${page1.changes.length} records, hasMore: ${page1.hasMore}`
+     )
+     assert(page1.changes.length > 0, "Should return records")
 
      // Verify fields are populated
-     const first = page1.changes[0];
-     assert(first.key, "Record should have a key");
-     console.log("Sample record:", JSON.stringify(first, null, 2));
+     const first = page1.changes[0]
+     assert(first.key, "Record should have a key")
+     console.log("Sample record:", JSON.stringify(first, null, 2))
 
      // Test pagination
      if (page1.hasMore) {
-       const page2 = await worker.run("mySync", page1.nextState, { concreteOutput: true });
-       console.log(`Page 2: ${page2.changes.length} records, hasMore: ${page2.hasMore}`);
-       assert(page2.changes.length > 0, "Second page should return records");
+       const page2 = await worker.run("mySync", page1.nextState, {
+         concreteOutput: true,
+       })
+       console.log(
+         `Page 2: ${page2.changes.length} records, hasMore: ${page2.hasMore}`
+       )
+       assert(page2.changes.length > 0, "Second page should return records")
      }
 
-     console.log("All tests passed!");
+     console.log("All tests passed!")
    }
 
-   test().catch((err) => { console.error(err); process.exit(1); });
+   test().catch((err) => {
+     console.error(err)
+     process.exit(1)
+   })
    ```
 
    Run with `npx tsx test.ts`. Adapt to the specific sync: use the actual
@@ -309,9 +359,10 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
    backfill and delta syncs for backfill+delta pairs, etc.
 
 **For syncs using OAuth (Pattern B):**
-Local execution won't work because `.accessToken()` requires a deployed worker
-with a completed OAuth flow. Skip to Step 8 (deploy + preview) instead.
-You can still run `npm run check` to verify types compile.
+Before the first authorization, local execution won't work because
+`.accessToken()` requires a token from a completed OAuth flow. After deploying,
+completing the flow, and running `ntn workers env pull`, local execution works.
+You can always run `npm run check` for type validation.
 
 ### Step 8: Deploy and Validate with Preview
 
@@ -320,25 +371,29 @@ Once local testing passes (or immediately for OAuth syncs), deploy and test remo
 If secrets need to be available at deploy time (e.g., OAuth `clientSecret` read
 from `process.env` during capability registration), create the worker and push
 secrets first:
+
 1. `ntn workers create --name <name>` — create the worker without deploying
 2. `ntn workers env push` — push `.env` secrets to remote
 3. `ntn workers deploy` — now deploy with secrets available
 
 Otherwise, the simpler flow:
+
 1. `ntn workers deploy` — build and publish
 2. `ntn workers env push` — push `.env` secrets to remote
 
-Then, if the sync uses OAuth, complete the OAuth flow before previewing.
-**Important:** `env push` must happen before `oauth start` — the deployed worker needs the client secret to exchange the authorization code for tokens.
+3. Then, if the sync uses OAuth, complete the OAuth flow before previewing.
+   **Important:** `env push` must happen before `oauth start` — the deployed worker needs the client secret to exchange the authorization code for tokens.
    - `ntn workers oauth show-redirect-url` — get the redirect URL
    - Tell the user to configure this URL in their OAuth provider's app settings
    - `ntn workers oauth start <oauthKey>` — opens browser to complete the OAuth flow
+
 4. `ntn workers sync trigger <syncKey> --preview` — execute remotely without writing to Notion
    - Inspect the output: record count, property values, hasMore status
    - If `hasMore: true`, continue: `ntn workers sync trigger <syncKey> --preview --context '<nextState>'`
 5. If the preview shows issues, fix the code and redeploy (go back to step 1)
 
 For backfill+delta pairs, preview both syncs:
+
 - `ntn workers sync trigger <backfillKey> --preview`
 - `ntn workers sync trigger <deltaKey> --preview`
 
@@ -351,14 +406,17 @@ When the preview looks good:
 3. `ntn workers runs list` then `ntn workers runs logs <runId>` — check for errors
 4. Run `ntn workers sync status` again to confirm progress (record count increasing, no errors)
 
-For backfill+delta pairs, trigger the backfill first to load all data, then
-let the delta sync's schedule handle ongoing changes:
-1. `ntn workers sync trigger <backfillKey>` — start the full dataset load
-2. Monitor with `ntn workers sync status` until the backfill completes
-3. The delta sync will run automatically on its configured schedule
+For backfill+delta pairs, initialize the delta cursor before loading all data,
+so changes made during the backfill are not skipped:
 
-Tell the user: the first sync run is the backfill, which may take a while
-depending on dataset size. They should periodically run `ntn workers sync status`
-to monitor progress until the initial backfill completes. After that, the delta
-sync runs automatically on its configured schedule. To re-backfill later:
+1. `ntn workers sync trigger <deltaKey>` — initialize the delta cursor
+2. `ntn workers sync trigger <backfillKey>` — start the full dataset load
+3. Monitor with `ntn workers sync status` until the backfill completes
+4. The delta sync will continue automatically on its configured schedule
+
+Tell the user: initialize the delta cursor before starting the backfill. The
+backfill may take a while depending on dataset size. They should periodically
+run `ntn workers sync status` to monitor progress until the initial backfill
+completes. After that, the delta sync runs automatically on its configured
+schedule. To re-backfill later:
 `ntn workers sync state reset <backfillKey> && ntn workers sync trigger <backfillKey>`
