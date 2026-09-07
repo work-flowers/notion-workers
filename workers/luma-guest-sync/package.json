@@ -12,7 +12,7 @@
 		"sync:trigger": "ntn workers sync trigger lumaGuestSync"
 	},
 	"dependencies": {
-		"@notionhq/workers": "latest",
+		"@notionhq/workers": "0.8.3",
 		"@zapier/zapier-sdk": "^0.40.1",
 		"csv-parse": "^5.5.6"
 	},
