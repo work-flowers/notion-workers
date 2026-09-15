@@ -7,7 +7,11 @@
 
 import { useId, useMemo, useState } from "react"
 
-import type { ContactChoices, Requirement, Stage } from "./rules.ts"
+import { dateDay, excerpt, type LinkedKind } from "./linked.ts"
+import { useLinkedRecords } from "./linked-loader.ts"
+import type { ContactChoices, Requirement } from "./rules.ts"
+import type { Store } from "./store.ts"
+import { userLabel, useUser } from "./users.ts"
 
 export function Field({
 	label,
@@ -279,18 +283,17 @@ function toOption(contact: {
  * this" is only useful next to "here is what would make it possible".
  */
 export function RequirementList({
-	stage,
+	title,
 	unmet,
 }: {
-	stage: Stage
-	unmet: Requirement[]
+	/** e.g. "To move this deal to Proposal" or "Before this contact can be saved". */
+	title: React.ReactNode
+	unmet: { key: Requirement["key"] | string; label: string }[]
 }) {
 	if (unmet.length === 0) return null
 	return (
 		<div className="dd-requirements" role="status">
-			<p className="dd-requirements-title">
-				To move this deal to <strong>{stage}</strong>:
-			</p>
+			<p className="dd-requirements-title">{title}:</p>
 			<ul>
 				{unmet.map((r) => (
 					<li key={r.key}>{r.label}</li>
@@ -300,18 +303,18 @@ export function RequirementList({
 	)
 }
 
-export function StageBar({
+export function StageBar<S extends string>({
 	stages,
 	current,
 	target,
 	isBlocked,
 	onPick,
 }: {
-	stages: readonly Stage[]
-	current: Stage
-	target: Stage
-	isBlocked: (stage: Stage) => boolean
-	onPick: (stage: Stage) => void
+	stages: readonly S[]
+	current: S
+	target: S
+	isBlocked: (stage: S) => boolean
+	onPick: (stage: S) => void
 }) {
 	return (
 		<div className="dd-stagebar" role="group" aria-label="Stage">
@@ -337,11 +340,258 @@ export function StageBar({
 	)
 }
 
-export function Money({ amount }: { amount: number | null }) {
+export function Money({ amount, code }: { amount: number | null; code?: string | null }) {
 	if (amount === null) return <span className="dd-muted">—</span>
 	return (
 		<span className="dd-num">
+			{code ? <span className="dd-currency">{code} </span> : null}
 			{amount.toLocaleString("en-SG", { maximumFractionDigits: 0 })}
 		</span>
+	)
+}
+
+/** A read-only select-like display for fields the block does not write. */
+export function ReadOnlyField({
+	label,
+	children,
+}: {
+	label: string
+	children: React.ReactNode
+}) {
+	return (
+		<div className="dd-field dd-field-readonly">
+			<span className="dd-field-label">{label}</span>
+			<div className="dd-readonly">{children}</div>
+		</div>
+	)
+}
+
+/** Owner, resolved from a user id. Read-only by design — see rows.ts. */
+export function OwnerChip({ id, store }: { id: string | null; store: Store }) {
+	const state = useUser(id, store.getUser)
+	if (id === null) return <span className="dd-muted">Unassigned</span>
+	if (state.status === "loading") return <span className="dd-muted">…</span>
+	const user = state.user
+	return (
+		<span className="dd-owner">
+			{user?.avatarUrl ? (
+				<img className="dd-owner-avatar" src={user.avatarUrl} alt="" />
+			) : (
+				<span className="dd-owner-avatar dd-owner-initial" aria-hidden="true">
+					{userLabel(user).slice(0, 1).toUpperCase()}
+				</span>
+			)}
+			{userLabel(user)}
+		</span>
+	)
+}
+
+/**
+ * The 999-row cap, said out loud. Only rendered when a window actually hit it —
+ * at ~945 contacts the live CRM is the one to watch.
+ */
+export function TruncationBanner({ store }: { store: Store }) {
+	const hit = (Object.entries(store.truncated) as [keyof Store["truncated"], boolean][])
+		.filter(([, truncated]) => truncated)
+		.map(([key]) => key)
+	if (hit.length === 0) return null
+	const names = hit.map((k) => ({ deals: "Deals", companies: "Companies", contacts: "Contacts" })[k])
+	return (
+		<p className="dd-notice dd-notice-warn" role="alert">
+			<strong>{names.join(" and ")}</strong> {hit.length === 1 ? "is" : "are"} showing the
+			999 most recent rows only. Older records are still in Notion but missing from
+			these lists and pickers; use the search box, which asks Notion directly.
+		</p>
+	)
+}
+
+/**
+ * The split list/detail layout the Contacts and Companies tabs share.
+ * `children` is the detail pane.
+ */
+export function RecordList<T extends { id: string; name: string }>({
+	items,
+	total,
+	noun,
+	selectedId,
+	onSelect,
+	query,
+	onQuery,
+	searching,
+	onNew,
+	renderSecondary,
+	children,
+}: {
+	items: readonly T[]
+	total: number
+	noun: [singular: string, plural: string]
+	selectedId: string | null
+	onSelect: (id: string) => void
+	query: string
+	onQuery: (query: string) => void
+	searching?: boolean
+	onNew: () => void
+	renderSecondary?: (item: T) => React.ReactNode
+	children: React.ReactNode
+}) {
+	return (
+		<div className="dd-split">
+			<aside className="dd-list-pane">
+				<div className="dd-list-tools">
+					<input
+						className="dd-input dd-search"
+						type="search"
+						placeholder={`Search ${noun[1]}…`}
+						value={query}
+						onChange={(e) => onQuery(e.target.value)}
+						aria-label={`Search ${noun[1]}`}
+					/>
+					<button type="button" className="dd-button dd-button-primary" onClick={onNew}>
+						New {noun[0]}
+					</button>
+				</div>
+				<p className="dd-list-count dd-muted">
+					{query.trim().length === 0
+						? `${total.toLocaleString("en-SG")} ${total === 1 ? noun[0] : noun[1]}`
+						: `${items.length} match${items.length === 1 ? "" : "es"}${searching ? " · asking Notion…" : ""}`}
+				</p>
+				{items.length === 0 ? (
+					<p className="dd-column-empty">Nothing matches.</p>
+				) : (
+					<ul className="dd-list">
+						{items.map((item) => (
+							<li key={item.id}>
+								<button
+									type="button"
+									className="dd-list-row"
+									data-active={item.id === selectedId ? "true" : undefined}
+									onClick={() => onSelect(item.id)}
+								>
+									<span className="dd-list-name">{item.name}</span>
+									{renderSecondary ? (
+										<span className="dd-list-secondary">{renderSecondary(item)}</span>
+									) : null}
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+			</aside>
+			<section className="dd-detail-pane">{children}</section>
+		</div>
+	)
+}
+
+/** A label/value pair in a detail view. Hidden when the value is empty. */
+export function Fact({
+	label,
+	children,
+}: {
+	label: string
+	children: React.ReactNode
+}) {
+	if (children === null || children === undefined || children === "") return null
+	return (
+		<div className="dd-fact">
+			<span className="dd-fact-label">{label}</span>
+			<span className="dd-fact-value">{children}</span>
+		</div>
+	)
+}
+
+/**
+ * Linked Meeting Notes and Emails for one record, newest first.
+ *
+ * The sandbox cannot open a Notion page, so there is nothing to click through
+ * to; the list carries enough (title, date, type or sender, summary) to be the
+ * reference on its own. See linked-loader.ts for how the rows get here.
+ */
+export function LinkedActivity({
+	store,
+	meetingNoteIds,
+	emailIds,
+}: {
+	store: Store
+	meetingNoteIds: readonly string[]
+	emailIds: readonly string[]
+}) {
+	return (
+		<div className="dd-activity">
+			<LinkedList
+				store={store}
+				kind="meetingNote"
+				ids={meetingNoteIds}
+				heading="Meeting notes"
+				empty="No meeting notes linked."
+			/>
+			<LinkedList
+				store={store}
+				kind="email"
+				ids={emailIds}
+				heading="Emails"
+				empty="No emails linked."
+			/>
+		</div>
+	)
+}
+
+function LinkedList({
+	store,
+	kind,
+	ids,
+	heading,
+	empty,
+}: {
+	store: Store
+	kind: LinkedKind
+	ids: readonly string[]
+	heading: string
+	empty: string
+}) {
+	const { records, loading, failed, remaining, loadMore } = useLinkedRecords(
+		ids,
+		kind,
+		store.getPage,
+		store.linkedCache[kind],
+	)
+
+	return (
+		<section className="dd-activity-section">
+			<h3 className="dd-activity-heading">
+				{heading}
+				<span className="dd-column-count">{ids.length}</span>
+			</h3>
+			{ids.length === 0 ? (
+				<p className="dd-column-empty">{empty}</p>
+			) : (
+				<ul className="dd-activity-list">
+					{records.map((r) => (
+						<li key={r.id} className="dd-activity-item">
+							<div className="dd-activity-line">
+								<span className="dd-activity-title">{r.title}</span>
+								<span className="dd-activity-meta dd-muted">
+									{dateDay(r.date) ?? "Undated"}
+									{r.subtitle ? ` · ${r.subtitle}` : ""}
+								</span>
+							</div>
+							{r.summary ? (
+								<p className="dd-activity-summary">{excerpt(r.summary)}</p>
+							) : null}
+						</li>
+					))}
+				</ul>
+			)}
+			{loading ? <p className="dd-muted dd-activity-status">Loading…</p> : null}
+			{!loading && remaining > 0 ? (
+				<button type="button" className="dd-button dd-button-small" onClick={loadMore}>
+					Load {Math.min(remaining, 30)} more ({remaining} older not yet loaded)
+				</button>
+			) : null}
+			{failed > 0 ? (
+				<p className="dd-muted dd-activity-status">
+					{failed} linked {failed === 1 ? "page" : "pages"} couldn’t be read.
+				</p>
+			) : null}
+		</section>
 	)
 }

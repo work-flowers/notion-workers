@@ -9,6 +9,16 @@ otherwise — the published alpha overview is out of date in at least one place
 **The alpha makes breaking changes.** A deployed block can stop working until it
 is rebuilt against a newer SDK. Notion says so in the block's own config panel.
 
+**Pin `@notionhq/custom-blocks` to an exact version** (currently `0.1.44`, since
+2026-09-15) in every block worker, for the same reason `@notionhq/workers` is
+pinned: the cloud build runs its own `npm install` in the worker directory, so a
+caret range means production builds against whatever is latest while the repo
+typechecks against the root lockfile. Until 2026-09-15 all three blocks carried
+`^0.1.x` against a lockfile resolving `0.1.8` — production had been building
+against 0.1.4x for weeks. Renames between 0.1.8 and 0.1.44: `pages.delete` →
+`pages.archive` / `unarchive`, `archived` → `is_archived`, `*Input` arg types →
+`*Args`; rows gain `archive()` / `unarchive()` / `is_archived` / `in_trash`.
+
 ## What a custom block is
 
 `worker.customBlock()` declares a front-end web app that Notion serves in a
@@ -145,9 +155,25 @@ real properties.
 `useDataSource(key, { limit })` is React-only; there is no framework-neutral
 equivalent for querying rows yet.
 
-- **`limit` defaults to 20 and caps at 999**, and there are **no server-side
-  filters or sorts**. Load the rows and filter client-side. Fine for hundreds of
-  rows; plan differently for tens of thousands.
+- **`limit` defaults to 20 and caps at 999 — per subscription.** Several
+  `useDataSource` calls on the same key each get their own window, so the cap is
+  per *view* (open deals vs closed deals), not per database. There is no cursor.
+- **Server-side `filter` and `sorts` exist since 0.1.35** (verified against
+  0.1.44, 2026-09-15). Filter: `title`, `rich_text`, `url`, `email`,
+  `phone_number`, `number`, `checkbox`, `date`, and `select` / `status` /
+  `multi_select` (by option name, one or an array). Sort: the text-ish types,
+  `number`, `checkbox`, `date`, plus `propertyId: "created_time" |
+  "last_edited_time"` — **not** select/status. One condition or a flat `and` of
+  ≤ 25; **no `or`, no nesting, no relative dates, and no relation, people,
+  formula or rollup filters** (those come back as text fallbacks). Address a
+  property by manifest `key` or raw `propertyId`. Keep the option object
+  referentially stable (module constant or `useMemo`) — a new object each render
+  replaces the subscription and blanks the rows while it reloads. **Old Notion
+  clients ignore filter and sort silently**, so keep a client-side guard and
+  detect it (a row the filter should have excluded). Sorting a near-cap window
+  by `created_time` descending is the cheap fix for "the newest rows fall off";
+  a filtered secondary subscription (e.g. `title contains q`) reaches past it.
+  `workers/crm-deal-desk/blocks/crm-desk/src/index.tsx` has one of each.
 - **Relations are readable**, contrary to the alpha overview page. The value union
   carries `{ id, table }` record pointers and the official habit-tracker cookbook
   declares `type: "relation"` and reads it. You get the related page's **id only**
@@ -286,10 +312,16 @@ requires secondary encoding (direct labels, legend, table view). Keep those.
 
 Don't cite these as fact:
 
-- **Whether formula and rollup *values* are readable.** Both are declarable
-  property types in the manifest, but no rows here exercise them, and the doc
-  summary that claimed relations were unreadable also claimed this — so treat it
-  as unknown until tested.
+- **Whether formula and rollup *values* are readable as anything useful.** The
+  0.1.44 property-support table says both come back as a *text fallback* that
+  does not preserve the structured value, and neither can be filtered or sorted.
+  Treat them as display-only strings at best; `crm-deal-desk` reads FX rates
+  from a real number property instead of the `Value (SGD)` formula.
+- **Whether `pages.get` settles for every page.** The bridge has no timeout and
+  drops a host result the SDK's strict parse rejects — and the `NotionPage`
+  property schema omits formula, rollup, created_time and unique_id. Whether the
+  host strips those before sending is untested; wrap every `pages.get` /
+  `users.get` in your own timeout (`linked-loader.ts` in `crm-deal-desk`).
 - **Whether the clipboard APIs work inside the sandbox.** Untested in the host;
   they work in a plain browser with user activation.
 
@@ -320,11 +352,15 @@ fate is a feature.
   and generic `TrendLines` / `Columns` / `RankedBars` primitives reused across
   all of them. Also the one that hit the `.mts` problem above.
 - **`workers/crm-deal-desk`** — the read/**write** one, and the only app rather
-  than a report: a CRM front end that creates and edits deals, pre-filters a
-  relation picker on another field's value, and gates stage transitions on
-  per-stage requirements. Also the one that leaves NDS behind for the brand
-  system. Its `?mock` mode runs the full create/edit flow with writes held in
-  memory, which is how to demo a writing block without touching real data.
+  than a report: a three-tab CRM (Contacts, Companies, Deals) over the live CRM
+  that creates and edits records, pre-filters a relation picker on another
+  field's value, gates stage transitions on per-stage requirements, and renders
+  each record's linked Meeting Notes and Emails via memoised, time-limited
+  `pages.get` calls because relations can't be filtered server-side. Also the
+  one that leaves NDS behind for the brand system, and the reference for
+  per-view filtered subscriptions. Its `?mock` mode runs every flow with writes
+  held in memory, which is how to demo a writing block without touching real
+  data; `?debug` is its binding-health panel.
 
 ### Making a writing block demo-able
 

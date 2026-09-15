@@ -5,8 +5,9 @@ import {
 	MOCK_COMPANIES,
 	MOCK_CONTACTS,
 	MOCK_DEALS,
-} from "../blocks/deal-desk/src/mock.ts"
-import { stageOptionNames } from "../blocks/deal-desk/src/rows.ts"
+} from "../blocks/crm-desk/src/mock.ts"
+import { stageOptionNames } from "../blocks/crm-desk/src/rows.ts"
+import { bareContact } from "../blocks/crm-desk/src/records.ts"
 import {
 	auditDeals,
 	byId,
@@ -16,14 +17,17 @@ import {
 	emptyDraft,
 	isClosed,
 	isReopen,
+	normalizeDraft,
 	orphanedContact,
+	sgdConverter,
 	unmetRequirements,
 	weightedPipeline,
 	type Company,
 	type Contact,
+	type Deal,
 	type DealDraft,
 	type RuleContext,
-} from "../blocks/deal-desk/src/rules.ts"
+} from "../blocks/crm-desk/src/rules.ts"
 
 const COMPANIES_BY_ID = byId(MOCK_COMPANIES)
 const CTX: RuleContext = { contactsById: byId(MOCK_CONTACTS) }
@@ -86,8 +90,8 @@ describe("contactChoicesFor — the pre-filtered relation picker", () => {
 
 describe("contactMismatch", () => {
 	const contacts: Contact[] = [
-		{ id: "c1", name: "At A", jobTitle: null, email: null, companyId: "a" },
-		{ id: "c2", name: "No company", jobTitle: null, email: null, companyId: null },
+		bareContact("c1", "At A", { companyId: "a" }),
+		bareContact("c2", "No company", { companyId: null }),
 	]
 	const ctx: RuleContext = { contactsById: byId(contacts) }
 
@@ -191,20 +195,34 @@ describe("stage gating", () => {
 		)
 	})
 
-	it("will not close a deal won without a value or a close date", () => {
+	it("will not close a deal won without a value", () => {
 		const base = draft({
 			companyId: MARINA,
 			contactId: marinaContact,
 			dealType: "Project",
 		})
 		assert.deepEqual(
-			unmetRequirements("Closed Won", base, CTX).map((r) => r.key).sort(),
-			["actualClose", "value"],
+			unmetRequirements("Closed Won", base, CTX).map((r) => r.key),
+			["value"],
 		)
 	})
 
+	it("never asks for the actual close date — the automation stamps it", () => {
+		const won = draft({
+			companyId: MARINA,
+			contactId: marinaContact,
+			dealType: "Project",
+			value: 1000,
+			actualClose: null,
+		})
+		assert.equal(canEnterStage("Closed Won", won, CTX), true)
+		const lost = draft({ companyId: MARINA, lostReason: "No budget", actualClose: null })
+		assert.equal(canEnterStage("Closed Lost", lost, CTX), true)
+		assert.equal(canEnterStage("Declined", lost, CTX), true)
+	})
+
 	it("will not close a deal lost without a reason", () => {
-		const base = draft({ companyId: MARINA, actualClose: "2026-08-01" })
+		const base = draft({ companyId: MARINA })
 		assert.deepEqual(
 			unmetRequirements("Closed Lost", base, CTX).map((r) => r.key),
 			["lostReason"],
@@ -215,12 +233,24 @@ describe("stage gating", () => {
 		)
 	})
 
+	it("requires the same reason to decline a deal", () => {
+		// The live CRM's Lost Reason is described as covering both outcomes.
+		const base = draft({ companyId: MARINA })
+		assert.deepEqual(
+			unmetRequirements("Declined", base, CTX).map((r) => r.key),
+			["lostReason"],
+		)
+		assert.equal(
+			canEnterStage("Declined", { ...base, lostReason: "Not a fit" }, CTX),
+			true,
+		)
+	})
+
 	it("does not demand a value from a lost deal", () => {
 		// A deal that died before it was priced is a normal outcome; forcing a
 		// number here would just get a fake one typed in.
 		const lost = draft({
 			companyId: MARINA,
-			actualClose: "2026-08-01",
 			lostReason: "Timing / Not now",
 		})
 		assert.equal(canEnterStage("Closed Lost", lost, CTX), true)
@@ -237,6 +267,26 @@ describe("stage gating", () => {
 		assert.equal(canEnterStage("Proposal", d, CTX), false)
 		assert(
 			unmetRequirements("Proposal", d, CTX).some((r) => r.key === "contactMatch"),
+		)
+	})
+})
+
+describe("normalizeDraft", () => {
+	it("clears the lost reason when a deal is not on a lost stage", () => {
+		const d = draft({ stage: "Proposal", lostReason: "No budget", name: "  Spaced  " })
+		const clean = normalizeDraft(d)
+		assert.equal(clean.lostReason, null)
+		assert.equal(clean.name, "Spaced")
+	})
+
+	it("keeps the lost reason on Closed Lost and Declined", () => {
+		assert.equal(
+			normalizeDraft(draft({ stage: "Closed Lost", lostReason: "No budget" })).lostReason,
+			"No budget",
+		)
+		assert.equal(
+			normalizeDraft(draft({ stage: "Declined", lostReason: "Not a fit" })).lostReason,
+			"Not a fit",
 		)
 	})
 })
@@ -288,7 +338,12 @@ describe("stageOptionNames", () => {
 })
 
 describe("weightedPipeline", () => {
-	const base = draft({ companyId: "a" })
+	const base: Omit<Deal, "id" | "stage"> = {
+		...draft({ companyId: "a" }),
+		ownerId: null,
+		meetingNoteIds: [],
+		emailIds: [],
+	}
 
 	it("ignores closed deals", () => {
 		const deals = [
@@ -317,6 +372,24 @@ describe("weightedPipeline", () => {
 		assert.equal(total, 40)
 		assert.equal(missingValue, 1)
 	})
+
+	it("converts to SGD through the FX rows, and counts an unknown rate as missing", () => {
+		const toSgd = sgdConverter([
+			{ id: "fx-sgd", code: "SGD", rateToSgd: 1, rateDate: null },
+			{ id: "fx-usd", code: "USD", rateToSgd: 1.35, rateDate: null },
+			{ id: "fx-gbp", code: "GBP", rateToSgd: null, rateDate: null },
+		])
+		const deals = [
+			{ ...base, id: "1", stage: "Lead" as const, value: 100, currencyId: "fx-usd" },
+			{ ...base, id: "2", stage: "Lead" as const, value: 100, currencyId: "fx-sgd" },
+			// No currency on the row: taken as SGD, the pre-relation convention.
+			{ ...base, id: "3", stage: "Lead" as const, value: 100, currencyId: null },
+			{ ...base, id: "4", stage: "Lead" as const, value: 100, currencyId: "fx-gbp" },
+		]
+		const { total, missingValue } = weightedPipeline(deals, toSgd)
+		assert.equal(total, 335)
+		assert.equal(missingValue, 1)
+	})
 })
 
 /**
@@ -331,10 +404,13 @@ describe("auditDeals against the template CRM fixture", () => {
 	const violations = auditDeals(MOCK_DEALS, MOCK_CONTACTS)
 	const offenders = new Set(violations.map((v) => v.dealId))
 
-	it("finds 24 violations across 17 of the 38 deals", () => {
+	it("finds 20 violations across 16 of the 38 deals", () => {
+		// Was 24 across 17 when the closed stages still required an actual
+		// close date; dropping that (the automation stamps it) freed four rows'
+		// worth of complaints and cleared "Aster Recruitment — Client Portal".
 		assert.equal(MOCK_DEALS.length, 38)
-		assert.equal(violations.length, 24)
-		assert.equal(offenders.size, 17)
+		assert.equal(violations.length, 20)
+		assert.equal(offenders.size, 16)
 	})
 
 	it("breaks down by requirement", () => {
@@ -343,7 +419,7 @@ describe("auditDeals against the template CRM fixture", () => {
 
 		assert.equal(byKey.get("dealType"), 6)
 		assert.equal(byKey.get("value"), 4)
-		assert.equal(byKey.get("actualClose"), 4)
+		assert.equal(byKey.get("actualClose"), undefined)
 		assert.equal(byKey.get("lostReason"), 3)
 		assert.equal(byKey.get("expectedClose"), 2)
 		assert.equal(byKey.get("contactId"), 2)
@@ -367,6 +443,7 @@ describe("auditDeals against the template CRM fixture", () => {
 		const open = MOCK_DEALS.filter((d) => !isClosed(d.stage))
 		assert.equal(open.length, 19)
 
+		// Same-currency figures, as the pipeline reported them before FX rates.
 		const { total, weighted, missingValue } = weightedPipeline(MOCK_DEALS)
 		assert.equal(total, 369_000)
 		assert.equal(weighted, 239_150)
@@ -411,7 +488,8 @@ describe("fixtures", () => {
 		// The fixture is screen-recorded and shown outside the company. A real
 		// client name creeping back in is the failure this guards against.
 		const haystack = [
-			...MOCK_COMPANIES.map((c) => c.name),
+			...MOCK_COMPANIES.map((c) => `${c.name} ${c.website ?? ""} ${c.description ?? ""}`),
+			...MOCK_CONTACTS.map((c) => `${c.name} ${c.email ?? ""}`),
 			...MOCK_DEALS.map((d) => d.name),
 		]
 			.join(" ")

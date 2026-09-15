@@ -16,7 +16,7 @@
 			"port": 5174
 		},
 		{
-			"name": "deal-desk",
+			"name": "crm-desk",
 			"runtimeExecutable": "npm",
 			"runtimeArgs": [
 				"run",
