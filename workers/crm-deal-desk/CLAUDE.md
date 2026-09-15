@@ -62,6 +62,13 @@ save and an optional field should degrade to "not editable here".
 - **Unknown ids are not violations.** `contactMismatch` returns false for a
   contact outside the loaded window.
 - **Stages come from the bound schema**, filtered to the seven the rules know.
+- **The board drag goes through the same gate as the editor.** `stageMoveOutcome`
+  returns `same` / `allowed` / `blocked` — a union, because "dropped where it
+  started" must not produce a write — and a blocked drop writes nothing and
+  names the unmet requirements. A drag that silently set the stage would
+  reintroduce exactly the Notion behaviour this block exists to replace, so
+  don't "simplify" the board into calling `updateDeal` directly. Only the four
+  open stages are columns, so closing and reopening stay editor actions.
 - **The list filters are client-side, and honest about it.** `filterContacts` /
   `filterCompanies` see only the loaded window, so the count line says
   "filtered within the loaded contacts" when that window is capped. They run

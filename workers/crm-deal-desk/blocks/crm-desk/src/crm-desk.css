@@ -251,6 +251,50 @@
 
 /* --- board -------------------------------------------------------------- */
 
+.dd-board-wrap {
+	display: flex;
+	flex-direction: column;
+	gap: var(--wf-sp-4);
+}
+
+/* Drop targets only take on a look while a card is actually in the air — a
+   resting board shows no affordance at all. The blocked column still accepts
+   the drop, so the refusal can name the missing requirements instead of the
+   column reading as a dead zone. */
+.dd-column {
+	border-radius: var(--wf-radius-md);
+	transition: background var(--wf-dur-fast) var(--wf-ease),
+		box-shadow var(--wf-dur-fast) var(--wf-ease);
+}
+
+.dd-column[data-drop] {
+	padding: var(--wf-sp-2);
+	margin: calc(var(--wf-sp-2) * -1);
+}
+
+.dd-column[data-drop="ok"] {
+	background: var(--wf-bg-tint);
+	box-shadow: inset 0 0 0 2px var(--wf-interactive);
+}
+
+.dd-column[data-drop="blocked"] {
+	background: var(--wf-alert-bg);
+	box-shadow: inset 0 0 0 2px var(--wf-alert-fg);
+}
+
+.dd-cards li[draggable="true"] {
+	cursor: grab;
+}
+
+.dd-card[data-dragging="true"] {
+	opacity: 0.4;
+}
+
+.dd-card[data-moving="true"] {
+	opacity: 0.6;
+	pointer-events: none;
+}
+
 .dd-board {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
