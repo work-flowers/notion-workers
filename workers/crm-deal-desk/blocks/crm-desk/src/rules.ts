@@ -60,19 +60,17 @@ export function isClosed(stage: Stage): boolean {
 	return (CLOSED_STAGES as readonly string[]).includes(stage)
 }
 
-export type Company = {
-	id: string
-	name: string
+/** The stages a Lost Reason belongs to — and is cleared from everywhere else. */
+export const LOST_STAGES: readonly Stage[] = ["Closed Lost", "Declined"]
+
+export function isLost(stage: Stage): boolean {
+	return (LOST_STAGES as readonly string[]).includes(stage)
 }
 
-export type Contact = {
-	id: string
-	name: string
-	jobTitle: string | null
-	email: string | null
-	/** The contact's company, or null when the CRM row has no company set. */
-	companyId: string | null
-}
+// Contact and Company live in records.ts with their own rules; re-exported so
+// the deal rules and their tests keep one import.
+export type { Company, Contact } from "./records.ts"
+import type { Company, Contact } from "./records.ts"
 
 /**
  * The editable shape of a deal. `Deal` is this plus an id; a deal being created
@@ -86,15 +84,30 @@ export type DealDraft = {
 	probability: number | null
 	/** `YYYY-MM-DD`. */
 	expectedClose: string | null
-	/** `YYYY-MM-DD`. */
+	/**
+	 * `YYYY-MM-DD`. Read-only: a database automation stamps it when a deal
+	 * closes, so no stage requires it and the editor never asks for it. It is
+	 * kept on the draft so a save writes the existing value back unchanged.
+	 */
 	actualClose: string | null
 	companyId: string | null
 	contactId: string | null
+	/** Optional referrer — any contact, not constrained to the company. */
+	referredById: string | null
+	/** An FX Rates row; null means the CRM has no currency on the deal. */
+	currencyId: string | null
 	lostReason: string | null
 	description: string | null
 }
 
-export type Deal = DealDraft & { id: string }
+export type Deal = DealDraft & {
+	id: string
+	/** Read-only. A Notion user id, resolved to a name by the UI. */
+	ownerId: string | null
+	/** Read-only relation ids, rendered as linked activity. */
+	meetingNoteIds: string[]
+	emailIds: string[]
+}
 
 export function emptyDraft(): DealDraft {
 	return {
@@ -107,8 +120,23 @@ export function emptyDraft(): DealDraft {
 		actualClose: null,
 		companyId: null,
 		contactId: null,
+		referredById: null,
+		currencyId: null,
 		lostReason: null,
 		description: null,
+	}
+}
+
+/**
+ * What actually gets written. A Lost Reason only means something on a lost
+ * stage; carrying one into Proposal would make the "why did we lose this?"
+ * report count a live deal. Called once, at save.
+ */
+export function normalizeDraft(draft: DealDraft): DealDraft {
+	return {
+		...draft,
+		name: draft.name.trim(),
+		lostReason: isLost(draft.stage) ? draft.lostReason : null,
 	}
 }
 
@@ -258,14 +286,9 @@ const hasExpectedClose: Check = {
 	label: "Set an expected close date",
 	test: (d) => d.expectedClose !== null,
 }
-const hasActualClose: Check = {
-	key: "actualClose",
-	label: "Set the actual close date",
-	test: (d) => d.actualClose !== null,
-}
 const hasLostReason: Check = {
 	key: "lostReason",
-	label: "Record why the deal was lost",
+	label: "Record why the deal was lost or declined",
 	test: (d) => d.lostReason !== null,
 }
 const contactBelongsToCompany: Check = {
@@ -279,6 +302,10 @@ const contactBelongsToCompany: Check = {
  * — spelled out per stage because the closed stages genuinely diverge (a lost
  * deal needs no value; a won one does) and a chain of `...previous` would hide
  * that.
+ *
+ * No stage asks for the actual close date: a database automation stamps
+ * `Actual Close` when a deal enters a closed stage, and asking a person to
+ * type a date the system is about to overwrite is how you get two dates.
  *
  * `contactBelongsToCompany` applies everywhere, so it is appended below rather
  * than repeated seven times.
@@ -302,16 +329,9 @@ const STAGE_CHECKS: Record<Stage, Check[]> = {
 		hasValue,
 		hasExpectedClose,
 	],
-	"Closed Won": [
-		hasName,
-		hasCompany,
-		hasContact,
-		hasType,
-		hasValue,
-		hasActualClose,
-	],
-	"Closed Lost": [hasName, hasCompany, hasActualClose, hasLostReason],
-	Declined: [hasName, hasCompany, hasActualClose, hasLostReason],
+	"Closed Won": [hasName, hasCompany, hasContact, hasType, hasValue],
+	"Closed Lost": [hasName, hasCompany, hasLostReason],
+	Declined: [hasName, hasCompany, hasLostReason],
 }
 
 export function requirementsFor(
@@ -405,14 +425,55 @@ export function byId<T extends { id: string }>(
 // Derived pipeline figures
 // ---------------------------------------------------------------------------
 
+export type FxRate = {
+	id: string
+	/** ISO code, e.g. "SGD". */
+	code: string
+	rateToSgd: number | null
+	rateDate: string | null
+}
+
+export const REPORTING_CURRENCY = "SGD"
+
+/** A deal's value in the reporting currency, or null when it can't be known. */
+export type SgdConverter = (deal: Pick<Deal, "value" | "currencyId">) => number | null
+
+/**
+ * Build the converter from the bound FX Rates rows.
+ *
+ * A deal with no currency is taken to be SGD — that is how the CRM was used
+ * before the Deal Currency relation existed, and refusing to total those deals
+ * would blank the headline figure. A deal whose currency row has no rate yet
+ * is genuinely unknown and returns null, so it is counted rather than guessed.
+ */
+export function sgdConverter(fxRates: readonly FxRate[]): SgdConverter {
+	const byId = new Map(fxRates.map((fx) => [fx.id, fx]))
+	return (deal) => {
+		if (deal.value === null) return null
+		if (deal.currencyId === null) return deal.value
+		const fx = byId.get(deal.currencyId)
+		if (fx === undefined) return null
+		if (fx.code === REPORTING_CURRENCY) return deal.value
+		if (fx.rateToSgd === null || fx.rateToSgd <= 0) return null
+		return deal.value * fx.rateToSgd
+	}
+}
+
+/** The identity converter: values are already in the reporting currency. */
+export const sameCurrency: SgdConverter = (deal) => deal.value
+
 /**
  * Open-pipeline value, weighted by probability where one is set.
  *
  * Deals with no probability contribute their full value rather than zero — an
- * unset probability is unknown, not "no chance". Deals with no value contribute
- * nothing and are counted separately so the figure can be shown as incomplete.
+ * unset probability is unknown, not "no chance". Deals with no value — or no
+ * known conversion to the reporting currency — contribute nothing and are
+ * counted separately so the figure can be shown as incomplete.
  */
-export function weightedPipeline(deals: readonly Deal[]): {
+export function weightedPipeline(
+	deals: readonly Deal[],
+	toSgd: SgdConverter = sameCurrency,
+): {
 	total: number
 	weighted: number
 	missingValue: number
@@ -423,12 +484,13 @@ export function weightedPipeline(deals: readonly Deal[]): {
 
 	for (const deal of deals) {
 		if (isClosed(deal.stage)) continue
-		if (deal.value === null) {
+		const value = toSgd(deal)
+		if (value === null) {
 			missingValue += 1
 			continue
 		}
-		total += deal.value
-		weighted += deal.value * (deal.probability ?? 1)
+		total += value
+		weighted += value * (deal.probability ?? 1)
 	}
 	return { total, weighted, missingValue }
 }

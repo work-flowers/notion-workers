@@ -26,7 +26,9 @@
  *   `test/rules.test.ts` asserts the exact counts.
  */
 
-import type { Company, Contact, Deal, Stage } from "./rules.ts"
+import { MOCK_LINKS } from "./mock-linked.ts"
+import { bareCompany, bareContact, type Company, type Contact } from "./records.ts"
+import type { Deal, FxRate, Stage } from "./rules.ts"
 
 // [slug, name]
 const COMPANY_ROWS: [string, string][] = [
@@ -295,20 +297,108 @@ const DEAL_ROWS: DealRow[] = [
 	["Nimbus Cloudworks — Onboarding Revamp", "Proposal", "Project", 16000, 0.35, "2026-09-28", null, "co-nimbus", "ct-mei-lin", null],
 ]
 
-export const MOCK_COMPANIES: Company[] = COMPANY_ROWS.map(([id, name]) => ({
-	id,
-	name,
-}))
+/**
+ * Company detail, keyed by slug. Anything not listed is a bare company — the
+ * detail pane showing "No industry, size or country" is a state worth seeing.
+ * Domains are `.example`, which cannot resolve, so nothing here can be mistaken
+ * for a real business.
+ */
+const COMPANY_DETAIL: Record<
+	string,
+	{ website?: string; industry?: string; size?: string; country?: string; description?: string }
+> = {
+	"co-marina": {
+		website: "https://marinafreight.example",
+		industry: "Transportation",
+		size: "250-999",
+		country: "SG",
+		description: "Regional freight forwarder; depots in Singapore, Johor and Batam.",
+	},
+	"co-verdant": { website: "https://verdantfacilities.example", industry: "Manufacturing", size: "50-249", country: "SG" },
+	"co-harbourline": { website: "https://harbourline.example", industry: "Finance", size: "50-249", country: "SG" },
+	"co-nimbus": { website: "https://nimbuscloudworks.example", industry: "Technology", size: "50-249", country: "AU" },
+	"co-kopi": { website: "https://kopiculture.example", industry: "Retail", size: "1-49", country: "SG" },
+	"co-cobalt": { website: "https://cobaltpathology.example", industry: "Healthcare", size: "50-249", country: "SG" },
+	"co-northwind": { website: "https://northwindlegal.example", industry: "Finance", size: "1-49", country: "GB" },
+	"co-sunda": { website: "https://sundastraits.example", industry: "Transportation", size: "250-999", country: "ID" },
+	"co-meridian": { website: "https://meridiandental.example", industry: "Healthcare", size: "50-249", country: "SG" },
+	"co-trellis": { website: "https://trellisproperty.example", industry: "Retail", size: "1-49", country: "SG" },
+	"co-copperleaf": { website: "https://copperleaf.example", industry: "Media & Entertainment", size: "1-49", country: "SG" },
+	"co-aster": { website: "https://asterrecruit.example", industry: "Technology", size: "1-49", country: "SG" },
+	"co-lantern": { industry: "Education", size: "1-49", country: "SG" },
+	"co-foxglove": { website: "https://foxgloveapparel.example", industry: "E-commerce", size: "1-49", country: "JP" },
+	"co-bluefin": { website: "https://bluefinanalytics.example", industry: "Technology", size: "1-49", country: "US" },
+	"co-pelican": { industry: "Retail", size: "250-999", country: "AU" },
+}
 
-export const MOCK_CONTACTS: Contact[] = CONTACT_ROWS.map(
-	([id, name, jobTitle, companyId]) => ({
-		id,
-		name,
+export const MOCK_COMPANIES: Company[] = COMPANY_ROWS.map(([id, name]) => {
+	const detail = COMPANY_DETAIL[id] ?? {}
+	const links = MOCK_LINKS[id]
+	return {
+		...bareCompany(id, name),
+		website: detail.website ?? null,
+		industry: detail.industry ?? null,
+		size: detail.size ?? null,
+		country: detail.country ?? null,
+		description: detail.description ?? null,
+		contactIds: CONTACT_ROWS.filter((row) => row[3] === id).map((row) => row[0]),
+		dealIds: DEAL_ROWS.flatMap((row, index) => (row[7] === id ? [dealId(index)] : [])),
+		meetingNoteIds: links?.meetingNoteIds ?? [],
+		emailIds: links?.emailIds ?? [],
+	}
+})
+
+/** `.example` addresses derived from the company slug, so they read plausibly and resolve nowhere. */
+function fictionalEmail(name: string, companyId: string | null): string | null {
+	if (companyId === null) return null
+	const local = name
+		.toLowerCase()
+		.replace(/^dr\.\s*/, "")
+		.replace(/[^a-z ]/g, "")
+		.trim()
+		.split(/\s+/)
+		.join(".")
+	return `${local}@${companyId.replace(/^co-/, "")}.example`
+}
+
+export const MOCK_CONTACTS: Contact[] = CONTACT_ROWS.map(([id, name, jobTitle, companyId]) => {
+	const parts = name.replace(/^Dr\.\s*/, "").split(" ")
+	const links = MOCK_LINKS[id]
+	return bareContact(id, name, {
+		firstName: parts[0] ?? null,
+		lastName: parts.length > 1 ? parts.slice(1).join(" ") : null,
 		jobTitle,
-		email: null,
+		email: fictionalEmail(name, companyId),
 		companyId,
-	}),
-)
+		// A handful of owners, so the chip has something to resolve.
+		ownerId: id.length % 3 === 0 ? "user-demo-2" : "user-demo-1",
+		dealIds: DEAL_ROWS.flatMap((row, index) => (row[8] === id ? [dealId(index)] : [])),
+		meetingNoteIds: links?.meetingNoteIds ?? [],
+		emailIds: links?.emailIds ?? [],
+	})
+})
+
+export const MOCK_FX_RATES: FxRate[] = [
+	{ id: "fx-sgd", code: "SGD", rateToSgd: 1, rateDate: "2026-09-15" },
+	{ id: "fx-usd", code: "USD", rateToSgd: 1.35, rateDate: "2026-09-15" },
+	{ id: "fx-aud", code: "AUD", rateToSgd: 0.88, rateDate: "2026-09-15" },
+	{ id: "fx-jpy", code: "JPY", rateToSgd: 0.0091, rateDate: "2026-09-15" },
+	// A currency row whose rate hasn't synced yet — the "unknown" branch.
+	{ id: "fx-gbp", code: "GBP", rateToSgd: null, rateDate: null },
+]
+
+/** Companies whose deals are priced in something other than SGD. */
+const COMPANY_CURRENCY: Record<string, string> = {
+	"co-nimbus": "fx-aud",
+	"co-pelican": "fx-aud",
+	"co-bluefin": "fx-usd",
+	"co-foxglove": "fx-jpy",
+	"co-northwind": "fx-gbp",
+}
+
+function dealId(index: number): string {
+	return `deal-${String(index + 1).padStart(2, "0")}`
+}
 
 export const MOCK_DEALS: Deal[] = DEAL_ROWS.map(
 	(
@@ -325,28 +415,36 @@ export const MOCK_DEALS: Deal[] = DEAL_ROWS.map(
 			lostReason,
 		],
 		index,
-	) => ({
-		id: `deal-${String(index + 1).padStart(2, "0")}`,
-		name,
-		stage,
-		dealType,
-		value,
-		probability,
-		expectedClose,
-		actualClose,
-		companyId,
-		contactId,
-		lostReason,
-		description: null,
-	}),
+	) => {
+		const id = dealId(index)
+		const links = MOCK_LINKS[id]
+		return {
+			id,
+			name,
+			stage,
+			dealType,
+			value,
+			probability,
+			expectedClose,
+			actualClose,
+			companyId,
+			contactId,
+			referredById: null,
+			currencyId: companyId === null ? null : (COMPANY_CURRENCY[companyId] ?? "fx-sgd"),
+			lostReason,
+			description: null,
+			ownerId: index % 4 === 0 ? "user-demo-2" : "user-demo-1",
+			meetingNoteIds: links?.meetingNoteIds ?? [],
+			emailIds: links?.emailIds ?? [],
+		}
+	},
 )
 
 /**
- * The stages the template's `Deal Stage` property actually offers.
- *
- * It has no **Declined** option, unlike the live CRM. The block reads this list
- * from the bound property's schema rather than assuming all seven, so mock mode
- * has to supply the same shape or the demo would offer a stage that fails on save.
+ * The stages the live CRM's `Status` property offers — all seven. (The
+ * template this fixture mirrors has no **Declined**; the block reads the list
+ * from the bound schema, so against the template the button simply isn't
+ * there.)
  */
 export const MOCK_STAGE_OPTIONS: Stage[] = [
 	"Lead",
@@ -355,4 +453,10 @@ export const MOCK_STAGE_OPTIONS: Stage[] = [
 	"In signing",
 	"Closed Won",
 	"Closed Lost",
+	"Declined",
 ]
+
+export const MOCK_USERS: Record<string, { name: string; email: string }> = {
+	"user-demo-1": { name: "Demo Owner", email: "owner@crm-desk.example" },
+	"user-demo-2": { name: "Second Seller", email: "seller@crm-desk.example" },
+}
