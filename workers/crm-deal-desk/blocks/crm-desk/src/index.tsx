@@ -4,9 +4,16 @@ import "@fontsource-variable/inter"
 import "@fontsource/jetbrains-mono/400.css"
 import "@fontsource/jetbrains-mono/500.css"
 
-import { pages, users, type NotionPageId, type NotionUserId } from "@notionhq/custom-blocks"
+import {
+	pages,
+	users,
+	type NotionDataSourceFilter,
+	type NotionPageId,
+	type NotionUserId,
+	type UseDataSourceOptions,
+} from "@notionhq/custom-blocks"
 import { NotionCustomBlock, useDataSource } from "@notionhq/custom-blocks/react"
-import { StrictMode, useCallback, useMemo, useState } from "react"
+import { StrictMode, useCallback, useEffect, useMemo, useState } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
@@ -75,18 +82,59 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 // Query options are module constants so their identity is stable — a fresh
 // object each render would tear the subscription down and up every time.
-const OPEN_DEALS_QUERY = {
-	limit: ROW_LIMIT,
-	filter: { key: "stage", status: { equals: [...OPEN_STAGES] } },
-	sorts: [{ propertyId: "created_time", direction: "descending" as const }],
+const OPEN_DEALS_FILTER: NotionDataSourceFilter = {
+	key: "stage",
+	status: { equals: [...OPEN_STAGES] },
 }
 const COMPANIES_QUERY = {
 	limit: ROW_LIMIT,
 	sorts: [{ key: "name", direction: "ascending" as const }],
 }
-const CONTACTS_QUERY = {
-	limit: ROW_LIMIT,
-	sorts: [{ propertyId: "created_time", direction: "descending" as const }],
+const PROBE_QUERY = { limit: 1 }
+
+type Query = UseDataSourceOptions
+
+/**
+ * A 999-row window sorted newest-created first — when the host lets us.
+ *
+ * The SDK docs say `propertyId: "created_time"` sorts by the built-in; the
+ * live host answers "Unknown sort property ID: created_time" (2026-09-15).
+ * So the built-in's real id is looked up from the bound schema via a 1-row
+ * probe subscription, and if the host still refuses, the window falls back
+ * to the host's default order rather than failing the whole block. Newest
+ * first is what makes the cap drop the *oldest* rows, so it's worth the probe.
+ */
+function useNewestFirst(key: string, filter?: NotionDataSourceFilter) {
+	const probe = useDataSource(key, PROBE_QUERY)
+	const [sortRejected, setSortRejected] = useState(false)
+
+	const createdTimeId = useMemo(() => {
+		for (const [id, schema] of Object.entries(probe.propertySchemasById)) {
+			if (schema.type === "created_time") return id
+		}
+		return null
+	}, [probe.propertySchemasById])
+
+	const query = useMemo<Query>(() => {
+		const base: Query = { limit: ROW_LIMIT, ...(filter ? { filter } : {}) }
+		if (createdTimeId === null || sortRejected) return base
+		return { ...base, sorts: [{ propertyId: createdTimeId, direction: "descending" }] }
+	}, [createdTimeId, sortRejected, filter])
+
+	const result = useDataSource(key, query)
+
+	useEffect(() => {
+		if (result.error && /sort/i.test(result.error.message) && !sortRejected) {
+			setSortRejected(true)
+		}
+	}, [result.error, sortRejected])
+
+	return {
+		...result,
+		// An error the fallback is about to clear is not an error to show.
+		error: result.error && /sort/i.test(result.error.message) ? undefined : result.error,
+		sortedNewestFirst: createdTimeId !== null && !sortRejected,
+	}
 }
 const FX_QUERY = { limit: 50 }
 const CACHE_QUERY = {
@@ -98,7 +146,7 @@ function CrmDesk() {
 	const [closedLimit, setClosedLimit] = useState(CLOSED_PAGE)
 	const [contactQuery, setContactQuery] = useState("")
 
-	const openDeals = useDataSource("deals", OPEN_DEALS_QUERY)
+	const openDeals = useNewestFirst("deals", OPEN_DEALS_FILTER)
 	const closedQuery = useMemo(
 		() => ({
 			limit: Math.min(closedLimit, ROW_LIMIT),
@@ -109,7 +157,7 @@ function CrmDesk() {
 	)
 	const closedDeals = useDataSource("deals", closedQuery)
 	const companies = useDataSource("companies", COMPANIES_QUERY)
-	const contacts = useDataSource("contacts", CONTACTS_QUERY)
+	const contacts = useNewestFirst("contacts")
 	const searchQuery = useMemo(
 		() =>
 			contactQuery.length === 0

@@ -101,9 +101,22 @@ no real client name or domain appears. Marina Freight has ~60 emails (to reach
 If you change the fixture, **re-measure** the audit figures in
 `test/rules.test.ts` rather than loosening the assertions.
 
-## Spike results (live CRM, Diagnostics footer)
+## Spike results (live CRM, Diagnostics footer, 2026-09-15)
 
-_To be filled in after the first deploy against the CRM page:_ people value
-shape, `pages.get` probe on a Meeting Note and an Email (properties keyed by
-name? parse drop?), largest email relation length (25 would suggest a cap),
-and whether `filtersApplied` came back true.
+- **All 45 keys bound** on the CRM page instance: no unbound keys on any of
+  the six data sources, so the declared types match the live schema.
+- **Relation arrays are not capped at 25.** The largest company email
+  relation returned **920** ids.
+- **The status filter is honoured**: the closed-deals window returned 61
+  rows with the open window failing, so the two are genuinely separate.
+- **Both optional caches fill to 999 with `hasMore: true`** — Meeting Notes
+  and Emails are indeed past the cap, as assumed.
+- **`sorts: [{ propertyId: "created_time" }]` is rejected by the host** with
+  `Unknown sort property ID: created_time`, contrary to the SDK docs. The
+  block now looks the built-in's id up from `propertySchemasById` (type
+  `created_time`) via a 1-row probe subscription and falls back to the host's
+  default order if that is refused too (`useNewestFirst` in `index.tsx`).
+  Record here which of the two happened once seen.
+- Still to record: the `pages.get` probe on a Meeting Note and an Email
+  (properties keyed by name? does it settle?), and the raw people value
+  shape (the sample was empty because the deals window had errored).
