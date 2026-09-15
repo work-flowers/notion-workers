@@ -31,11 +31,13 @@ import {
 	isReopen,
 	normalizeDraft,
 	OPEN_STAGES,
+	stageMoveOutcome,
 	orphanedContact,
 	REPORTING_CURRENCY,
 	unmetRequirements,
 	type Deal,
 	type DealDraft,
+	type Requirement,
 	type RuleContext,
 	type Stage,
 } from "./rules.ts"
@@ -74,6 +76,7 @@ export function DealsTab({
 			{view.name === "pipeline" ? (
 				<PipelineBoard
 					store={store}
+					ctx={ctx}
 					flagged={flagged}
 					onOpen={(id) => onNavigate({ tab: "deals", name: "deal", id })}
 				/>
@@ -178,27 +181,110 @@ export function currencyCode(deal: Pick<Deal, "currencyId">, store: Store): stri
 	return store.fxRates.find((fx) => fx.id === deal.currencyId)?.code ?? "?"
 }
 
+/**
+ * A refused drop, kept on the board so the reason survives the gesture. The
+ * deal id is here so the notice can offer the editor, which is where the
+ * missing fields actually get filled in.
+ */
+type RefusedMove = { dealId: string; dealName: string; to: Stage; unmet: Requirement[] }
+
 function PipelineBoard({
 	store,
+	ctx,
 	flagged,
 	onOpen,
 }: {
 	store: Store
+	ctx: RuleContext
 	flagged: ReadonlySet<string>
 	onOpen: (id: string) => void
 }) {
 	const companies = byId(store.companies)
 	const contacts = byId(store.contacts)
 
+	const [dragging, setDragging] = useState<string | null>(null)
+	const [moving, setMoving] = useState<string | null>(null)
+	const [refused, setRefused] = useState<RefusedMove | null>(null)
+	const [error, setError] = useState<string | null>(null)
+
+	const dragged = dragging === null ? null : (store.deals.find((d) => d.id === dragging) ?? null)
+
+	async function drop(deal: Deal, to: Stage) {
+		setDragging(null)
+		const outcome = stageMoveOutcome(deal, to, ctx)
+		if (outcome.kind === "same") return
+		if (outcome.kind === "blocked") {
+			// Deliberately no write. The card stays put and the notice names what
+			// the stage needs — the same gate the editor applies, just reached by
+			// a faster route.
+			setRefused({ dealId: deal.id, dealName: deal.name, to, unmet: outcome.unmet })
+			setError(null)
+			return
+		}
+		setRefused(null)
+		setError(null)
+		setMoving(deal.id)
+		const result = await store.updateDeal(deal.id, outcome.draft)
+		setMoving(null)
+		if (!result.ok) setError(result.message)
+	}
+
 	return (
-		<div className="dd-board">
+		<div className="dd-board-wrap">
+			{refused === null ? null : (
+				<div className="dd-notice dd-notice-warn" role="status">
+					<strong>{refused.dealName}</strong> can’t move to {refused.to} yet:{" "}
+					{refused.unmet.map((r) => r.label).join(" · ")}.{" "}
+					<button
+						type="button"
+						className="dd-link"
+						onClick={() => {
+							setRefused(null)
+							onOpen(refused.dealId)
+						}}
+					>
+						Open the deal
+					</button>
+				</div>
+			)}
+			{error === null ? null : (
+				<p className="dd-notice dd-notice-error" role="alert">
+					{error}
+				</p>
+			)}
+			<div className="dd-board">
 			{OPEN_STAGES.map((stage) => {
 				// Client-side filter kept on purpose: an old Notion client ignores
 				// the server-side status filter, and a closed deal on the board
 				// would be worse than a redundant `filter`.
 				const deals = store.deals.filter((d) => d.stage === stage)
+				// Only decided while something is in flight, so a resting board
+				// carries no drop styling at all.
+				const outcome = dragged === null ? null : stageMoveOutcome(dragged, stage, ctx)
+				const dropState =
+					outcome === null || outcome.kind === "same"
+						? undefined
+						: outcome.kind === "allowed"
+							? "ok"
+							: "blocked"
 				return (
-					<section className="dd-column" key={stage}>
+					<section
+						className="dd-column"
+						key={stage}
+						data-drop={dropState}
+						onDragOver={(e) => {
+							if (dragged === null) return
+							// Preventing default is what marks this a drop target at all;
+							// a blocked column still accepts the drop so the refusal can
+							// explain itself rather than reading as a dead zone.
+							e.preventDefault()
+							e.dataTransfer.dropEffect = outcome?.kind === "allowed" ? "move" : "none"
+						}}
+						onDrop={(e) => {
+							e.preventDefault()
+							if (dragged !== null) void drop(dragged, stage)
+						}}
+					>
 						<h2 className="dd-column-title">
 							{stage}
 							<span className="dd-column-count">{deals.length}</span>
@@ -208,11 +294,23 @@ function PipelineBoard({
 						) : (
 							<ul className="dd-cards">
 								{deals.map((deal) => (
-									<li key={deal.id}>
+									<li
+										key={deal.id}
+										draggable
+										onDragStart={(e) => {
+											setDragging(deal.id)
+											e.dataTransfer.effectAllowed = "move"
+											// Firefox ignores a drag with no payload.
+											e.dataTransfer.setData("text/plain", deal.id)
+										}}
+										onDragEnd={() => setDragging(null)}
+									>
 										<button
 											type="button"
 											className="dd-card"
 											data-flagged={flagged.has(deal.id) ? "true" : undefined}
+											data-dragging={dragging === deal.id ? "true" : undefined}
+											data-moving={moving === deal.id ? "true" : undefined}
 											onClick={() => onOpen(deal.id)}
 										>
 											<span className="dd-card-name">{deal.name}</span>
@@ -240,6 +338,7 @@ function PipelineBoard({
 					</section>
 				)
 			})}
+			</div>
 		</div>
 	)
 }

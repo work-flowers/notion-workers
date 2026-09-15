@@ -16,6 +16,7 @@ linked **Meeting Notes** and **Emails**, the way the native Notion page does.
 |---|---|---|
 | **Pre-filtered relation picker** | The Contact cell offers every row in Contacts | Picking a Company narrows Contact to that company's people |
 | **Conditional gating** | Any field can be left blank in any stage | A deal cannot enter a stage until that stage's requirements are met, and the UI lists which ones are missing |
+| **Drag to change stage** | A board drag writes the new status, requirements or not | The same gate applies to the drag: eligible columns light up, ineligible ones refuse the drop and name what's missing |
 | **Cross-field integrity** | A contact from the wrong company saves silently | Blocked before the write, and named: *"Mei Lin works at Juniper Health, not this company"* |
 | **Duplicate awareness** | A second "Marina Freight Pte Ltd" saves silently | Suffix- and domain-insensitive hint next to the save button; the person decides |
 | **List filters** | Filtering a view edits it for everyone who opens the page | Contacts and Companies filter per person, per session — company, lead source, country and deal activity — with no view to put back |
@@ -104,6 +105,33 @@ through `pages.get`.
 | Companies | sorted by name |
 | Contacts | newest created first, so the cap drops the oldest people |
 | Contact search (only while the contact window is capped) | `Name contains …`, 50 rows — reaches past the window; email/title search stays client-side (`or` is unsupported) |
+
+### Dragging a card between columns
+
+Cards on the pipeline board can be dragged between the four open stages. The
+interesting part is what happens when they shouldn't move:
+
+- While a card is in the air, every column is evaluated against that deal.
+  Columns it can enter outline in blue; columns it cannot go amber. A resting
+  board shows no drop styling at all.
+- Dropping on an ineligible column **writes nothing**. A notice names the
+  deal, the stage and every unmet requirement — *"Crispy coco - AI Ops Retainer
+  can't move to Proposal yet: Link a company · Link a primary contact · Set the
+  engagement type · Set a deal value above zero"* — and offers the editor,
+  which is where those fields get filled in.
+- An ineligible column still *accepts* the drop rather than rejecting it at the
+  pointer, so the refusal can explain itself instead of the column reading as a
+  dead zone.
+- `stageMoveOutcome` in `rules.ts` is the whole decision, as a pure function
+  returning `same` / `allowed` / `blocked`. A test asserts it agrees with
+  `canEnterStage` for every deal in the fixture against every open stage.
+
+Two limits worth knowing. The board only shows the four **open** stages, so
+closing or reopening a deal is still an editor action — deliberate, since
+Closed Won is the number the business reports on. And HTML5 drag-and-drop is
+pointer-only: on a phone the board stacks to one column and dragging is
+impractical, so the stage bar in the editor remains the path that works
+everywhere, keyboard included.
 
 ### The Contacts and Companies list filters
 

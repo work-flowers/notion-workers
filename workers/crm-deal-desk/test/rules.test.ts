@@ -17,8 +17,11 @@ import {
 	emptyDraft,
 	isClosed,
 	isReopen,
+	dealDraft,
 	normalizeDraft,
+	OPEN_STAGES,
 	orphanedContact,
+	stageMoveOutcome,
 	sgdConverter,
 	unmetRequirements,
 	weightedPipeline,
@@ -37,6 +40,9 @@ const MARINA = "co-marina"
 const TRELLIS = "co-trellis"
 /** A company with nobody on record — the "none-at-company" case. */
 const BLUEFIN = "co-bluefin"
+
+/** Somebody who actually works at Marina Freight. */
+const MARINA_CONTACT = "ct-priya-raman"
 
 function draft(overrides: Partial<DealDraft> = {}): DealDraft {
 	return { ...emptyDraft(), name: "Test deal", ...overrides }
@@ -497,6 +503,75 @@ describe("fixtures", () => {
 
 		for (const banned of ["knoxx", "terrascope", "sakana", "notion labs", "zapier"]) {
 			assert(!haystack.includes(banned), `fixture mentions ${banned}`)
+		}
+	})
+})
+
+describe("stageMoveOutcome — dragging a card between columns", () => {
+	// A deal complete enough for any open stage: company, contact at that
+	// company, type, value and an expected close date.
+	const complete: Deal = {
+		id: "deal-drag",
+		...draft({
+			stage: "Proposal",
+			companyId: MARINA,
+			contactId: MARINA_CONTACT,
+			dealType: "Project",
+			value: 12000,
+			expectedClose: "2026-11-30",
+		}),
+	}
+
+	it("writes nothing when the card lands where it started", () => {
+		assert.equal(stageMoveOutcome(complete, "Proposal", CTX).kind, "same")
+	})
+
+	it("allows a move whose target stage is satisfied, and carries the new draft", () => {
+		const move = stageMoveOutcome(complete, "Negotiation", CTX)
+		assert.equal(move.kind, "allowed")
+		assert.equal(move.kind === "allowed" && move.draft.stage, "Negotiation")
+		// The draft is what the writer gets, so it must not carry the id.
+		assert.equal(move.kind === "allowed" && "id" in move.draft, false)
+	})
+
+	it("blocks a move into a stage the deal doesn't satisfy, and says which", () => {
+		// Negotiation is the first open stage to require an expected close date.
+		const undated: Deal = { ...complete, expectedClose: null }
+		const move = stageMoveOutcome(undated, "Negotiation", CTX)
+		assert.equal(move.kind, "blocked")
+		assert.deepEqual(
+			move.kind === "blocked" ? move.unmet.map((r) => r.key) : [],
+			["expectedClose"],
+		)
+	})
+
+	it("blocks a drag back to Lead only when something is wrong, since Lead asks for a name alone", () => {
+		assert.equal(stageMoveOutcome(complete, "Lead", CTX).kind, "allowed")
+		const nameless: Deal = { ...complete, name: "  " }
+		assert.equal(stageMoveOutcome(nameless, "Lead", CTX).kind, "blocked")
+	})
+
+	it("still catches a contact who works somewhere else", () => {
+		const mismatched: Deal = { ...complete, companyId: BLUEFIN }
+		const move = stageMoveOutcome(mismatched, "Negotiation", CTX)
+		assert.equal(move.kind, "blocked")
+		assert.equal(
+			move.kind === "blocked" && move.unmet.some((r) => r.key === "contactMatch"),
+			true,
+		)
+	})
+
+	it("agrees with canEnterStage on every open stage, for every deal in the fixture", () => {
+		for (const deal of MOCK_DEALS) {
+			for (const stage of OPEN_STAGES) {
+				const move = stageMoveOutcome(deal, stage, CTX)
+				if (deal.stage === stage) {
+					assert.equal(move.kind, "same")
+					continue
+				}
+				const allowed = canEnterStage(stage, { ...dealDraft(deal), stage }, CTX)
+				assert.equal(move.kind, allowed ? "allowed" : "blocked")
+			}
 		}
 	})
 })

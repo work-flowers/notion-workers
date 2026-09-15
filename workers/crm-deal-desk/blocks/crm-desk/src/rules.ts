@@ -375,6 +375,41 @@ export function isReopen(from: Stage, to: Stage): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Dragging a card between columns
+// ---------------------------------------------------------------------------
+
+/**
+ * What dropping `deal` on `to` should do.
+ *
+ * The board is the one place where a stage change costs a single gesture, so
+ * it is also the one place where the gate matters most: a drag that silently
+ * wrote the stage would reintroduce exactly the Notion behaviour this block
+ * exists to replace. `blocked` carries the unmet requirements so the board can
+ * say which ones, rather than just refusing.
+ *
+ * Returned as a union, not a boolean, because "dropped where it already was"
+ * is a third outcome that must not produce a write.
+ */
+export type StageMove =
+	| { kind: "same" }
+	| { kind: "allowed"; draft: DealDraft }
+	| { kind: "blocked"; unmet: Requirement[] }
+
+export function stageMoveOutcome(deal: Deal, to: Stage, ctx: RuleContext): StageMove {
+	if (deal.stage === to) return { kind: "same" }
+	const draft = normalizeDraft({ ...dealDraft(deal), stage: to })
+	const unmet = unmetRequirements(to, draft, ctx)
+	if (unmet.length > 0) return { kind: "blocked", unmet }
+	return { kind: "allowed", draft }
+}
+
+/** A deal as the editable draft the writers take — everything but the id. */
+export function dealDraft(deal: Deal): DealDraft {
+	const { id: _id, ...draft } = deal
+	return draft
+}
+
+// ---------------------------------------------------------------------------
 // Audit: the same rules pointed at rows that already exist
 // ---------------------------------------------------------------------------
 
