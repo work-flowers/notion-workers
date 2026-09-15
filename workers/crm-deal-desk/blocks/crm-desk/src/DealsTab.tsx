@@ -600,10 +600,10 @@ function DealEditor({
 					hint="Optional. Any contact — referrers needn’t work at the company."
 				/>
 
-				<Field label="Description">
+				<Field label="Description" wide>
 					<textarea
 						className="dd-input dd-textarea"
-						rows={3}
+						rows={5}
 						value={draft.description ?? ""}
 						onChange={(e) => set("description", e.target.value || null)}
 					/>

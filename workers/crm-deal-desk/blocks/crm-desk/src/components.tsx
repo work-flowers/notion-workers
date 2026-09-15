@@ -17,15 +17,21 @@ export function Field({
 	label,
 	hint,
 	invalid,
+	wide,
 	children,
 }: {
 	label: string
 	hint?: string
 	invalid?: boolean
+	/** Span the full form width — for textareas. */
+	wide?: boolean
 	children: React.ReactNode
 }) {
 	return (
-		<label className="dd-field" data-invalid={invalid ? "true" : undefined}>
+		<label
+			className={wide ? "dd-field dd-field-wide" : "dd-field"}
+			data-invalid={invalid ? "true" : undefined}
+		>
 			<span className="dd-field-label">{label}</span>
 			{children}
 			{hint ? <span className="dd-field-hint">{hint}</span> : null}

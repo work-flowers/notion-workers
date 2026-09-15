@@ -346,10 +346,10 @@ function CompanyEditor({
 					</Field>
 				</div>
 
-				<Field label="Description">
+				<Field label="Description" wide>
 					<textarea
 						className="dd-input dd-textarea"
-						rows={3}
+						rows={5}
 						value={draft.description ?? ""}
 						onChange={(e) => set("description", e.target.value || null)}
 					/>

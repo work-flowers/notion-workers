@@ -401,10 +401,10 @@ function ContactEditor({
 					</Field>
 				</div>
 
-				<Field label="Note">
+				<Field label="Note" wide>
 					<textarea
 						className="dd-input dd-textarea"
-						rows={3}
+						rows={4}
 						value={draft.note ?? ""}
 						onChange={(e) => set("note", e.target.value || null)}
 					/>
