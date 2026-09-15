@@ -3,15 +3,21 @@ import { describe, it } from "node:test"
 
 import { MOCK_COMPANIES, MOCK_CONTACTS } from "../blocks/crm-desk/src/mock.ts"
 import {
+	activeFilterCount,
 	bareCompany,
 	bareContact,
 	companyRequirements,
 	contactRequirements,
+	dealActivityIndex,
 	deriveContactName,
 	duplicateCompanies,
 	duplicateContacts,
 	emptyCompanyDraft,
+	emptyCompanyFilters,
 	emptyContactDraft,
+	emptyContactFilters,
+	filterCompanies,
+	filterContacts,
 	mergeById,
 	normalizeCompanyDraft,
 	normalizeCompanyName,
@@ -22,7 +28,7 @@ import {
 	unmetRecordRequirements,
 	websiteDomain,
 } from "../blocks/crm-desk/src/records.ts"
-import { byId } from "../blocks/crm-desk/src/rules.ts"
+import { byId, isClosed, type Stage } from "../blocks/crm-desk/src/rules.ts"
 
 const unmet = (reqs: ReturnType<typeof contactRequirements>) =>
 	unmetRecordRequirements(reqs).map((r) => r.key)
@@ -188,5 +194,85 @@ describe("bare builders", () => {
 		const contact = bareContact("y", "Y", { companyId: "x" })
 		assert.equal(contact.companyId, "x")
 		assert.deepEqual(contact.emailIds, [])
+	})
+})
+
+describe("list filters", () => {
+	const index = dealActivityIndex(
+		[
+			{ companyId: "co-live", contactId: "c-live", stage: "Proposal" },
+			{ companyId: "co-done", contactId: "c-done", stage: "Closed Won" },
+		],
+		(stage) => !isClosed(stage as Stage),
+	)
+
+	const live = bareContact("c-live", "Live Lead", {
+		companyId: "co-live",
+		country: "Singapore",
+		leadSource: "Referral",
+		dealIds: ["d1"],
+	})
+	// A closed deal the window never loaded: the relation id is the only proof
+	// this contact has ever been worked.
+	const worked = bareContact("c-done", "Past Client", {
+		companyId: "co-done",
+		country: "Malaysia",
+		leadSource: "Event",
+		dealIds: ["d2"],
+	})
+	const cold = bareContact("c-cold", "Never Worked", { companyId: "co-live", country: "Singapore" })
+	const contacts = [live, worked, cold]
+
+	const ids = (list: readonly { id: string }[]) => list.map((r) => r.id)
+
+	it("passes everything through when nothing is set", () => {
+		assert.equal(activeFilterCount(emptyContactFilters()), 0)
+		assert.deepEqual(ids(filterContacts(contacts, emptyContactFilters(), index)), [
+			"c-live",
+			"c-done",
+			"c-cold",
+		])
+	})
+
+	it("ANDs the option filters and counts them", () => {
+		const f = { ...emptyContactFilters(), companyId: "co-live", country: "Singapore" }
+		assert.equal(activeFilterCount(f), 2)
+		assert.deepEqual(ids(filterContacts(contacts, f, index)), ["c-live", "c-cold"])
+		assert.deepEqual(
+			ids(filterContacts(contacts, { ...f, leadSource: "Referral" }, index)),
+			["c-live"],
+		)
+	})
+
+	it("reads open from the loaded deals and 'no deals' from the relation ids", () => {
+		// `worked` has only a closed deal, and that deal may sit outside the
+		// loaded window — so it is neither open nor deal-less.
+		assert.deepEqual(
+			ids(filterContacts(contacts, { ...emptyContactFilters(), deals: "open" }, index)),
+			["c-live"],
+		)
+		assert.deepEqual(
+			ids(filterContacts(contacts, { ...emptyContactFilters(), deals: "none" }, index)),
+			["c-cold"],
+		)
+	})
+
+	it("filters companies on their own fields and deal activity", () => {
+		const companies = [
+			{ ...bareCompany("co-live", "Live Co"), industry: "Logistics", size: "11-50", dealIds: ["d1"] },
+			{ ...bareCompany("co-done", "Done Co"), industry: "Logistics", size: "51-200", dealIds: ["d2"] },
+			{ ...bareCompany("co-cold", "Cold Co"), industry: "Retail", size: "11-50" },
+		]
+		const f = { ...emptyCompanyFilters(), industry: "Logistics" }
+		assert.equal(activeFilterCount(f), 1)
+		assert.deepEqual(ids(filterCompanies(companies, f, index)), ["co-live", "co-done"])
+		assert.deepEqual(
+			ids(filterCompanies(companies, { ...f, size: "11-50" }, index)),
+			["co-live"],
+		)
+		assert.deepEqual(
+			ids(filterCompanies(companies, { ...emptyCompanyFilters(), deals: "none" }, index)),
+			["co-cold"],
+		)
 	})
 })

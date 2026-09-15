@@ -6,8 +6,11 @@
 import { useEffect, useMemo, useState } from "react"
 
 import {
+	DEAL_ACTIVITY_OPTIONS,
 	Fact,
 	Field,
+	FilterCombo,
+	FilterSelect,
 	LinkedActivity,
 	Money,
 	OwnerChip,
@@ -18,17 +21,23 @@ import {
 import { currencyCode } from "./DealsTab.tsx"
 import type { Navigate, View } from "./nav.ts"
 import {
+	activeFilterCount,
 	contactRequirements,
+	dealActivityIndex,
 	duplicateContacts,
 	emptyContactDraft,
+	emptyContactFilters,
+	filterContacts,
 	mergeById,
 	normalizeContactDraft,
 	searchContacts,
 	unmetRecordRequirements,
 	type Contact,
 	type ContactDraft,
+	type ContactFilters,
+	type DealActivity,
 } from "./records.ts"
-import { byId } from "./rules.ts"
+import { byId, isClosed, type Stage } from "./rules.ts"
 import type { Store } from "./store.ts"
 
 type ContactsView = Extract<View, { tab: "contacts" }>
@@ -43,7 +52,9 @@ export function ContactsTab({
 	onNavigate: Navigate
 }) {
 	const [query, setQuery] = useState("")
+	const [filters, setFilters] = useState<ContactFilters>(emptyContactFilters)
 	const companiesById = useMemo(() => byId(store.companies), [store.companies])
+	const activeFilters = activeFilterCount(filters)
 
 	// The server-side search only matters once the window is truncated; before
 	// that every contact is already in memory and asking Notion is noise.
@@ -53,11 +64,28 @@ export function ContactsTab({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [askNotion, query])
 
-	const local = useMemo(
-		() => searchContacts(query, store.contacts, companiesById),
-		[query, store.contacts, companiesById],
+	const activity = useMemo(
+		() => dealActivityIndex(store.deals, (stage) => !isClosed(stage as Stage)),
+		[store.deals],
 	)
-	const items = askNotion ? mergeById(local, store.contactSearch.results) : local
+	// Filter before searching, not after: `searchContacts` caps its result at
+	// 200, and narrowing a truncated list would drop matches the filter kept.
+	const pool = useMemo(
+		() => filterContacts(store.contacts, filters, activity),
+		[store.contacts, filters, activity],
+	)
+	const local = useMemo(
+		() => searchContacts(query, pool, companiesById),
+		[query, pool, companiesById],
+	)
+	const remote = useMemo(
+		() => filterContacts(store.contactSearch.results, filters, activity),
+		[store.contactSearch.results, filters, activity],
+	)
+	const items = askNotion ? mergeById(local, remote) : local
+
+	const setFilter = <K extends keyof ContactFilters>(key: K, value: ContactFilters[K]) =>
+		setFilters((f) => ({ ...f, [key]: value }))
 
 	const selectedId = "id" in view ? view.id : null
 	const selected =
@@ -78,6 +106,46 @@ export function ContactsTab({
 			onQuery={setQuery}
 			searching={askNotion && store.contactSearch.loading}
 			onNew={() => onNavigate({ tab: "contacts", new: true })}
+			activeFilters={activeFilters}
+			filteredTotal={pool.length}
+			onClearFilters={() => setFilters(emptyContactFilters())}
+			countNote={
+				activeFilters > 0 && store.truncated.contacts
+					? "filtered within the loaded contacts"
+					: null
+			}
+			filters={
+				<>
+					<FilterCombo
+						label="Filter by company"
+						anyLabel="Any company"
+						options={store.companies}
+						value={filters.companyId}
+						onChange={(id) => setFilter("companyId", id)}
+					/>
+					<FilterSelect
+						label="Filter by lead source"
+						anyLabel="Any lead source"
+						options={store.leadSourceOptions.map((name) => ({ value: name, label: name }))}
+						value={filters.leadSource}
+						onChange={(value) => setFilter("leadSource", value)}
+					/>
+					<FilterSelect
+						label="Filter by country"
+						anyLabel="Any country"
+						options={store.contactCountryOptions.map((name) => ({ value: name, label: name }))}
+						value={filters.country}
+						onChange={(value) => setFilter("country", value)}
+					/>
+					<FilterSelect
+						label="Filter by deal activity"
+						anyLabel="Any deal activity"
+						options={DEAL_ACTIVITY_OPTIONS}
+						value={filters.deals === "any" ? null : filters.deals}
+						onChange={(value) => setFilter("deals", (value ?? "any") as DealActivity)}
+					/>
+				</>
+			}
 			renderSecondary={(c) =>
 				[c.jobTitle, c.companyId === null ? null : companiesById.get(c.companyId)?.name]
 					.filter(Boolean)

@@ -6,8 +6,10 @@
 import { useMemo, useState } from "react"
 
 import {
+	DEAL_ACTIVITY_OPTIONS,
 	Fact,
 	Field,
+	FilterSelect,
 	LinkedActivity,
 	Money,
 	RecordList,
@@ -16,16 +18,23 @@ import {
 import { currencyCode } from "./DealsTab.tsx"
 import type { Navigate, View } from "./nav.ts"
 import {
+	activeFilterCount,
 	companyRequirements,
+	dealActivityIndex,
 	duplicateCompanies,
 	emptyCompanyDraft,
+	emptyCompanyFilters,
+	filterCompanies,
 	normalizeCompanyDraft,
 	searchCompanies,
 	unmetRecordRequirements,
 	websiteDomain,
 	type Company,
 	type CompanyDraft,
+	type CompanyFilters,
+	type DealActivity,
 } from "./records.ts"
+import { isClosed, type Stage } from "./rules.ts"
 import type { Store } from "./store.ts"
 
 type CompaniesView = Extract<View, { tab: "companies" }>
@@ -40,7 +49,23 @@ export function CompaniesTab({
 	onNavigate: Navigate
 }) {
 	const [query, setQuery] = useState("")
-	const items = useMemo(() => searchCompanies(query, store.companies), [query, store.companies])
+	const [filters, setFilters] = useState<CompanyFilters>(emptyCompanyFilters)
+	const activeFilters = activeFilterCount(filters)
+
+	const activity = useMemo(
+		() => dealActivityIndex(store.deals, (stage) => !isClosed(stage as Stage)),
+		[store.deals],
+	)
+	// Filter first, then search: `searchCompanies` caps its result, so narrowing
+	// afterwards would drop matches the filter kept.
+	const pool = useMemo(
+		() => filterCompanies(store.companies, filters, activity),
+		[store.companies, filters, activity],
+	)
+	const items = useMemo(() => searchCompanies(query, pool), [query, pool])
+
+	const setFilter = <K extends keyof CompanyFilters>(key: K, value: CompanyFilters[K]) =>
+		setFilters((f) => ({ ...f, [key]: value }))
 
 	const selectedId = "id" in view ? view.id : null
 	const selected =
@@ -56,6 +81,46 @@ export function CompaniesTab({
 			query={query}
 			onQuery={setQuery}
 			onNew={() => onNavigate({ tab: "companies", new: true })}
+			activeFilters={activeFilters}
+			filteredTotal={pool.length}
+			onClearFilters={() => setFilters(emptyCompanyFilters())}
+			countNote={
+				activeFilters > 0 && store.truncated.companies
+					? "filtered within the loaded companies"
+					: null
+			}
+			filters={
+				<>
+					<FilterSelect
+						label="Filter by industry"
+						anyLabel="Any industry"
+						options={store.industryOptions.map((name) => ({ value: name, label: name }))}
+						value={filters.industry}
+						onChange={(value) => setFilter("industry", value)}
+					/>
+					<FilterSelect
+						label="Filter by size"
+						anyLabel="Any size"
+						options={store.sizeOptions.map((name) => ({ value: name, label: name }))}
+						value={filters.size}
+						onChange={(value) => setFilter("size", value)}
+					/>
+					<FilterSelect
+						label="Filter by country"
+						anyLabel="Any country"
+						options={store.companyCountryOptions.map((name) => ({ value: name, label: name }))}
+						value={filters.country}
+						onChange={(value) => setFilter("country", value)}
+					/>
+					<FilterSelect
+						label="Filter by deal activity"
+						anyLabel="Any deal activity"
+						options={DEAL_ACTIVITY_OPTIONS}
+						value={filters.deals === "any" ? null : filters.deals}
+						onChange={(value) => setFilter("deals", (value ?? "any") as DealActivity)}
+					/>
+				</>
+			}
 			renderSecondary={(c) => [c.industry, websiteDomain(c.website)].filter(Boolean).join(" · ")}
 		>
 			{"new" in view ? (

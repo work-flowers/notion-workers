@@ -361,7 +361,45 @@ function fictionalEmail(name: string, companyId: string | null): string | null {
 	return `${local}@${companyId.replace(/^co-/, "")}.example`
 }
 
-export const MOCK_CONTACTS: Contact[] = CONTACT_ROWS.map(([id, name, jobTitle, companyId]) => {
+/**
+ * The country and lead source the fixture gives a contact.
+ *
+ * Both are option properties on the live Contacts data source, and the list
+ * filters read them — a fixture that left them null would demo the filters as
+ * permanently empty. Country follows the employer (people are usually where
+ * their company is) with a couple of deliberate exceptions so "Singapore"
+ * doesn't select an entire company; lead source cycles, so every option has
+ * somebody behind it.
+ */
+const CONTACT_COUNTRY_BY_CODE: Record<string, string> = {
+	AU: "Australia",
+	GB: "United Kingdom",
+	ID: "Indonesia",
+	JP: "Japan",
+	SG: "Singapore",
+	US: "United States",
+}
+
+const MOCK_LEAD_SOURCES = [
+	"Client Referral",
+	"Contact Us",
+	"Event",
+	"Existing Network",
+	"LinkedIn",
+	"Newsletter Sign-up",
+	"Notion Partner Directory",
+	"Notion Setup Session",
+	"Vendor",
+	"Zapier Partner Directory",
+]
+
+/** Contacts who are not where their company is — the case a naive filter gets wrong. */
+const CONTACT_COUNTRY_OVERRIDE: Record<string, string> = {
+	"ct-aaron-blake": "United States",
+	"ct-amira-shah": "United Kingdom",
+}
+
+export const MOCK_CONTACTS: Contact[] = CONTACT_ROWS.map(([id, name, jobTitle, companyId], index) => {
 	const parts = name.replace(/^Dr\.\s*/, "").split(" ")
 	const links = MOCK_LINKS[id]
 	return bareContact(id, name, {
@@ -372,6 +410,14 @@ export const MOCK_CONTACTS: Contact[] = CONTACT_ROWS.map(([id, name, jobTitle, c
 		companyId,
 		// A handful of owners, so the chip has something to resolve.
 		ownerId: id.length % 3 === 0 ? "user-demo-2" : "user-demo-1",
+		country:
+			CONTACT_COUNTRY_OVERRIDE[id] ??
+			(companyId === null
+				? null
+				: (CONTACT_COUNTRY_BY_CODE[COMPANY_DETAIL[companyId]?.country ?? ""] ?? null)),
+		// A few contacts keep a null lead source: "not recorded" is a real state
+		// and the filter has to leave them out rather than guess.
+		leadSource: index % 7 === 3 ? null : MOCK_LEAD_SOURCES[index % MOCK_LEAD_SOURCES.length] ?? null,
 		dealIds: DEAL_ROWS.flatMap((row, index) => (row[8] === id ? [dealId(index)] : [])),
 		meetingNoteIds: links?.meetingNoteIds ?? [],
 		emailIds: links?.emailIds ?? [],

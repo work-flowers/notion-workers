@@ -18,6 +18,7 @@ linked **Meeting Notes** and **Emails**, the way the native Notion page does.
 | **Conditional gating** | Any field can be left blank in any stage | A deal cannot enter a stage until that stage's requirements are met, and the UI lists which ones are missing |
 | **Cross-field integrity** | A contact from the wrong company saves silently | Blocked before the write, and named: *"Mei Lin works at Juniper Health, not this company"* |
 | **Duplicate awareness** | A second "Marina Freight Pte Ltd" saves silently | Suffix- and domain-insensitive hint next to the save button; the person decides |
+| **List filters** | Filtering a view edits it for everyone who opens the page | Contacts and Companies filter per person, per session — company, lead source, country and deal activity — with no view to put back |
 
 ### The empirical case
 
@@ -103,6 +104,24 @@ through `pages.get`.
 | Companies | sorted by name |
 | Contacts | newest created first, so the cap drops the oldest people |
 | Contact search (only while the contact window is capped) | `Name contains …`, 50 rows — reaches past the window; email/title search stays client-side (`or` is unsupported) |
+
+### The Contacts and Companies list filters
+
+Both list panes carry four filters under the search box: **company, lead
+source, country, deal activity** on Contacts, and **industry, size, country,
+deal activity** on Companies. They are client-side and per session — nobody
+else's view changes, and there is nothing to undo afterwards.
+
+- They run over the **loaded window**, not the whole database. When Contacts is
+  capped, the count line says *"filtered within the loaded contacts"* rather
+  than implying the filter saw everything.
+- Filters apply **before** the search, because `searchContacts` caps its result
+  at 200 and filtering afterwards would drop matches the filter had kept.
+- **"Has an open deal"** is read from the loaded deals — sound, because the
+  store holds every open deal. **"No deals"** is read from the record's own
+  relation ids instead, which cover the closed deals that were never loaded.
+  A record whose only deal is an unloaded closed one is therefore neither, and
+  that is correct.
 
 Client-side filters are kept as a guard: an old Notion client ignores filter
 and sort silently, and the block detects that (a closed deal in the open

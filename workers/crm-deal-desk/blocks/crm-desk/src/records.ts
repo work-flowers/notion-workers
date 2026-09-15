@@ -394,3 +394,109 @@ export function mergeById<T extends { id: string }>(
 	}
 	return merged
 }
+
+// ---------------------------------------------------------------------------
+// List filters
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrowing the list by deal activity. "Open" and "none" are the two questions
+ * worth asking of a CRM list — who is live, and who has never been worked.
+ */
+export type DealActivity = "any" | "open" | "none"
+
+export type ContactFilters = {
+	companyId: string | null
+	leadSource: string | null
+	country: string | null
+	deals: DealActivity
+}
+
+export type CompanyFilters = {
+	industry: string | null
+	size: string | null
+	country: string | null
+	deals: DealActivity
+}
+
+export function emptyContactFilters(): ContactFilters {
+	return { companyId: null, leadSource: null, country: null, deals: "any" }
+}
+
+export function emptyCompanyFilters(): CompanyFilters {
+	return { industry: null, size: null, country: null, deals: "any" }
+}
+
+/** How many filters are set — drives the "Clear" affordance and the count line. */
+export function activeFilterCount(filters: ContactFilters | CompanyFilters): number {
+	return Object.values(filters).filter((v) => v !== null && v !== "any").length
+}
+
+/**
+ * Which records have an *open* deal, by contact id and by company id.
+ *
+ * Built from the loaded deals, which is sound for "open": the store holds every
+ * open deal, and only older closed ones fall outside the window. "Has any deal"
+ * is answered by the record's own relation ids instead, since those cover the
+ * closed deals that were never loaded.
+ */
+export type DealActivityIndex = {
+	openContactIds: ReadonlySet<string>
+	openCompanyIds: ReadonlySet<string>
+}
+
+export function dealActivityIndex(
+	deals: readonly { companyId: string | null; contactId: string | null; stage: string }[],
+	isOpenStage: (stage: string) => boolean,
+): DealActivityIndex {
+	const openContactIds = new Set<string>()
+	const openCompanyIds = new Set<string>()
+	for (const deal of deals) {
+		if (!isOpenStage(deal.stage)) continue
+		if (deal.contactId !== null) openContactIds.add(deal.contactId)
+		if (deal.companyId !== null) openCompanyIds.add(deal.companyId)
+	}
+	return { openContactIds, openCompanyIds }
+}
+
+function matchesDealActivity(mode: DealActivity, hasOpen: boolean, hasAny: boolean): boolean {
+	if (mode === "any") return true
+	if (mode === "open") return hasOpen
+	return !hasAny && !hasOpen
+}
+
+export function filterContacts(
+	contacts: readonly Contact[],
+	filters: ContactFilters,
+	index: DealActivityIndex,
+): Contact[] {
+	return contacts.filter(
+		(c) =>
+			(filters.companyId === null || c.companyId === filters.companyId) &&
+			(filters.leadSource === null || c.leadSource === filters.leadSource) &&
+			(filters.country === null || c.country === filters.country) &&
+			matchesDealActivity(
+				filters.deals,
+				index.openContactIds.has(c.id),
+				c.dealIds.length > 0,
+			),
+	)
+}
+
+export function filterCompanies(
+	companies: readonly Company[],
+	filters: CompanyFilters,
+	index: DealActivityIndex,
+): Company[] {
+	return companies.filter(
+		(c) =>
+			(filters.industry === null || c.industry === filters.industry) &&
+			(filters.size === null || c.size === filters.size) &&
+			(filters.country === null || c.country === filters.country) &&
+			matchesDealActivity(
+				filters.deals,
+				index.openCompanyIds.has(c.id),
+				c.dealIds.length > 0,
+			),
+	)
+}

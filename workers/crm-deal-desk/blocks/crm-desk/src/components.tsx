@@ -427,6 +427,154 @@ export function TruncationBanner({ store }: { store: Store }) {
  * The split list/detail layout the Contacts and Companies tabs share.
  * `children` is the detail pane.
  */
+/**
+ * One compact dropdown in a list pane's filter row.
+ *
+ * The empty option carries the field name ("Any industry") so the row reads
+ * without labels above it — in a 300px pane, labels cost more than they earn.
+ */
+export function FilterSelect({
+	label,
+	anyLabel,
+	value,
+	onChange,
+	options,
+}: {
+	label: string
+	anyLabel: string
+	value: string | null
+	onChange: (value: string | null) => void
+	options: readonly { value: string; label: string }[]
+}) {
+	return (
+		<select
+			className="dd-input dd-filter-input"
+			aria-label={label}
+			data-set={value === null ? undefined : "true"}
+			disabled={options.length === 0}
+			value={value ?? ""}
+			onChange={(e) => onChange(e.target.value || null)}
+		>
+			<option value="">{anyLabel}</option>
+			{options.map((option) => (
+				<option key={option.value} value={option.value}>
+					{option.label}
+				</option>
+			))}
+		</select>
+	)
+}
+
+/**
+ * The searchable variant, for the one filter whose option list is too long for
+ * a `<select>` — company, of which there are hundreds.
+ */
+export function FilterCombo({
+	label,
+	anyLabel,
+	value,
+	onChange,
+	options,
+}: {
+	label: string
+	anyLabel: string
+	value: string | null
+	onChange: (id: string | null) => void
+	options: readonly { id: string; name: string }[]
+}) {
+	const [query, setQuery] = useState("")
+	const [open, setOpen] = useState(false)
+	const listId = useId()
+
+	const selected = options.find((o) => o.id === value) ?? null
+	const matches = useMemo(() => {
+		const q = query.trim().toLowerCase()
+		const pool = q.length === 0 ? options : options.filter((o) => o.name.toLowerCase().includes(q))
+		return pool.slice(0, 50)
+	}, [options, query])
+
+	if (selected !== null && !open) {
+		return (
+			<div className="dd-filter-chip" data-set="true">
+				<button
+					type="button"
+					className="dd-filter-chip-name"
+					aria-label={`Change ${label}`}
+					onClick={() => {
+						setOpen(true)
+						setQuery("")
+					}}
+				>
+					{selected.name}
+				</button>
+				<button
+					type="button"
+					className="dd-filter-chip-clear"
+					aria-label={`Clear ${label}`}
+					onClick={() => onChange(null)}
+				>
+					×
+				</button>
+			</div>
+		)
+	}
+
+	const listOpen = open || query.length > 0
+	return (
+		<div className="dd-filter-combo">
+			<input
+				className="dd-input dd-filter-input"
+				type="text"
+				role="combobox"
+				aria-label={label}
+				aria-expanded={listOpen}
+				aria-controls={listId}
+				placeholder={anyLabel}
+				value={query}
+				autoFocus={open}
+				onFocus={() => setOpen(true)}
+				onBlur={() => {
+					setOpen(false)
+					setQuery("")
+				}}
+				onChange={(e) => setQuery(e.target.value)}
+			/>
+			{!listOpen ? null : (
+				<ul className="dd-picker-list" id={listId} role="listbox">
+					{matches.length === 0 ? (
+						<li className="dd-picker-empty">No match for “{query}”</li>
+					) : (
+						matches.map((option) => (
+							<li key={option.id}>
+								<button
+									type="button"
+									role="option"
+									aria-selected={option.id === value}
+									className="dd-picker-option"
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => {
+										onChange(option.id)
+										setOpen(false)
+										setQuery("")
+									}}
+								>
+									<span className="dd-picker-option-name">{option.name}</span>
+								</button>
+							</li>
+						))
+					)}
+				</ul>
+			)}
+		</div>
+	)
+}
+
+/** The three deal-activity choices, shared by both record tabs. */
+export const DEAL_ACTIVITY_OPTIONS: readonly { value: string; label: string }[] = [
+	{ value: "open", label: "Has an open deal" },
+	{ value: "none", label: "No deals" },
+]
+
 export function RecordList<T extends { id: string; name: string }>({
 	items,
 	total,
@@ -437,6 +585,11 @@ export function RecordList<T extends { id: string; name: string }>({
 	onQuery,
 	searching,
 	onNew,
+	filters,
+	activeFilters = 0,
+	filteredTotal,
+	onClearFilters,
+	countNote,
 	renderSecondary,
 	children,
 }: {
@@ -449,6 +602,14 @@ export function RecordList<T extends { id: string; name: string }>({
 	onQuery: (query: string) => void
 	searching?: boolean
 	onNew: () => void
+	/** The tab's filter controls, laid out in a row under the search box. */
+	filters?: React.ReactNode
+	activeFilters?: number
+	/** How many records survive the filters, before the query narrows further. */
+	filteredTotal?: number
+	onClearFilters?: () => void
+	/** A caveat appended to the count line — e.g. that filters see loaded rows only. */
+	countNote?: React.ReactNode
 	renderSecondary?: (item: T) => React.ReactNode
 	children: React.ReactNode
 }) {
@@ -468,10 +629,20 @@ export function RecordList<T extends { id: string; name: string }>({
 						New {noun[0]}
 					</button>
 				</div>
+				{filters === undefined ? null : (
+					<div className="dd-filters">
+						{filters}
+						{activeFilters > 0 && onClearFilters !== undefined ? (
+							<button type="button" className="dd-filter-clear" onClick={onClearFilters}>
+								Clear {activeFilters === 1 ? "filter" : `${activeFilters} filters`}
+							</button>
+						) : null}
+					</div>
+				)}
 				<p className="dd-list-count dd-muted">
-					{query.trim().length === 0
-						? `${total.toLocaleString("en-SG")} ${total === 1 ? noun[0] : noun[1]}`
-						: `${items.length} match${items.length === 1 ? "" : "es"}${searching ? " · asking Notion…" : ""}`}
+					{countLine({ items: items.length, total, filteredTotal, activeFilters, query, noun })}
+					{searching ? " · asking Notion…" : ""}
+					{countNote ? <> · {countNote}</> : null}
 				</p>
 				{items.length === 0 ? (
 					<p className="dd-column-empty">Nothing matches.</p>
@@ -498,6 +669,38 @@ export function RecordList<T extends { id: string; name: string }>({
 			<section className="dd-detail-pane">{children}</section>
 		</div>
 	)
+}
+
+
+/**
+ * The one line under the search box. It has to answer "am I looking at
+ * everything?" in every combination of query and filters, so each case gets its
+ * own sentence rather than a single template with holes in it.
+ */
+function countLine({
+	items,
+	total,
+	filteredTotal,
+	activeFilters,
+	query,
+	noun,
+}: {
+	items: number
+	total: number
+	filteredTotal?: number
+	activeFilters: number
+	query: string
+	noun: [singular: string, plural: string]
+}): string {
+	const n = (value: number) => value.toLocaleString("en-SG")
+	const searching = query.trim().length > 0
+	const filtered = activeFilters > 0
+	if (!searching && !filtered) return `${n(total)} ${total === 1 ? noun[0] : noun[1]}`
+	if (!searching) {
+		const shown = filteredTotal ?? items
+		return `${n(shown)} of ${n(total)} ${noun[1]}`
+	}
+	return `${n(items)} match${items === 1 ? "" : "es"}${filtered ? " in the filtered set" : ""}`
 }
 
 /** A label/value pair in a detail view. Hidden when the value is empty. */
