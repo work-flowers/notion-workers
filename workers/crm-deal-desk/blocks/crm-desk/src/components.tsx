@@ -122,19 +122,29 @@ export function RelationPicker({
 		)
 	}
 
+	// The list only drops down while the field has focus (or a query), so an
+	// optional, empty picker doesn't sit there open. Options swallow mousedown
+	// so choosing one doesn't blur the input first and dismiss the list.
+	const listOpen = open || query.length > 0
 	return (
 		<Field label={label} hint={hint} invalid={invalid}>
 			<input
 				className="dd-input"
 				type="text"
 				role="combobox"
-				aria-expanded="true"
+				aria-expanded={listOpen}
 				aria-controls={listId}
 				placeholder={placeholder}
 				value={query}
 				autoFocus={open}
+				onFocus={() => setOpen(true)}
+				onBlur={() => {
+					setOpen(false)
+					setQuery("")
+				}}
 				onChange={(e) => setQuery(e.target.value)}
 			/>
+			{!listOpen ? null : (
 			<ul className="dd-picker-list" id={listId} role="listbox">
 				{matches.length === 0 ? (
 					<li className="dd-picker-empty">No match for “{query}”</li>
@@ -146,6 +156,7 @@ export function RelationPicker({
 								role="option"
 								aria-selected={option.id === value}
 								className="dd-picker-option"
+								onMouseDown={(e) => e.preventDefault()}
 								onClick={() => {
 									onChange(option.id)
 									setOpen(false)
@@ -163,6 +174,7 @@ export function RelationPicker({
 					))
 				)}
 			</ul>
+			)}
 		</Field>
 	)
 }

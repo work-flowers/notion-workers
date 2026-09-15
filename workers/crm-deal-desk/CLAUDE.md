@@ -116,7 +116,12 @@ If you change the fixture, **re-measure** the audit figures in
   block now looks the built-in's id up from `propertySchemasById` (type
   `created_time`) via a 1-row probe subscription and falls back to the host's
   default order if that is refused too (`useNewestFirst` in `index.tsx`).
-  Record here which of the two happened once seen.
-- Still to record: the `pages.get` probe on a Meeting Note and an Email
-  (properties keyed by name? does it settle?), and the raw people value
-  shape (the sample was empty because the deals window had errored).
+  After the fix both windows load without error (8 open deals, 946
+  contacts); whether the schema id was accepted or the fallback engaged is
+  not distinguishable from the panel yet.
+- **People values are `[{ id, table: "notion_user" }]`** record pointers;
+  `asRelationIds` in `rows.ts` handles that shape (and bare strings).
+- **Linked emails render on live deals** — a deal with one linked email
+  showed it with subject, date and sender, so `pages.get` on an Email page
+  settles and its properties are keyed by name. Not yet confirmed for a
+  Meeting Note page (the probe button covers it).
