@@ -835,6 +835,85 @@
 	padding-inline: 12px;
 }
 
+/* The filter row sits between the search box and the count. Two columns at
+   pane width, so four filters read as a block rather than a long stack. */
+.dd-filters {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--wf-sp-2);
+	align-items: start;
+}
+
+.dd-filter-input {
+	width: 100%;
+	min-width: 0;
+	padding: 6px 8px;
+	font-size: 12px;
+}
+
+select.dd-filter-input[data-set="true"] {
+	border-color: var(--wf-anchor);
+	font-weight: 600;
+}
+
+.dd-filter-combo {
+	position: relative;
+	min-width: 0;
+}
+
+.dd-filter-chip {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	min-width: 0;
+	padding: 5px 6px 5px 8px;
+	font-size: 12px;
+	font-weight: 600;
+	border: 1px solid var(--wf-anchor);
+	border-radius: var(--wf-radius-sm);
+}
+
+.dd-filter-chip-name {
+	overflow: hidden;
+	flex: 1;
+	min-width: 0;
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+
+.dd-filter-chip-clear {
+	padding: 0 2px;
+	font-size: 14px;
+	line-height: 1;
+	color: var(--wf-fg-subtle);
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+
+.dd-filter-clear {
+	grid-column: 1 / -1;
+	justify-self: start;
+	padding: 0;
+	font-size: 12px;
+	color: var(--wf-fg-subtle);
+	text-decoration: underline;
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+
+.dd-filter-clear:hover {
+	color: var(--wf-fg);
+}
+
 .dd-list-count {
 	margin: 0;
 	font-size: 12px;

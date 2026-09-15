@@ -16,7 +16,7 @@ Read that first; this file records only what is specific to *this* block.
 - `blocks/crm-desk/src/rules.ts` — **every deal rule, as pure functions.** No
   React, no SDK imports. `test/rules.test.ts` exercises it directly.
 - `records.ts` — Contact and Company types, their save requirements, the
-  duplicate hints and search. Pure; `test/records.test.ts`.
+  duplicate hints, search and the **list filters**. Pure; `test/records.test.ts`.
 - `linked.ts` — Meeting Note / Email pages → `LinkedRecord`, from either the
   public-API page shape (`pages.get`) or the data-source row shape (cache
   bindings). Pure; `test/linked.test.ts`.
@@ -62,6 +62,14 @@ save and an optional field should degrade to "not editable here".
 - **Unknown ids are not violations.** `contactMismatch` returns false for a
   contact outside the loaded window.
 - **Stages come from the bound schema**, filtered to the seven the rules know.
+- **The list filters are client-side, and honest about it.** `filterContacts` /
+  `filterCompanies` see only the loaded window, so the count line says
+  "filtered within the loaded contacts" when that window is capped. They run
+  *before* `searchContacts`, whose 200-row cap would otherwise eat matches the
+  filter kept. `dealActivityIndex` answers "has an open deal" from the loaded
+  deals (sound — every open deal is loaded) and "no deals" from the record's
+  relation ids (sound — they cover unloaded closed deals); a record with only
+  an unloaded closed deal is deliberately neither.
 - **Client-side filters stay even though the queries filter server-side.** An
   old Notion client ignores `filter`/`sorts` silently; `filtersApplied` detects
   a closed deal in the open window and the shell says so.
@@ -92,6 +100,11 @@ via `@fontsource-*` because the sandbox blocks the Google Fonts CDN silently.
 Tokens are copied into `crm-desk.css`, not imported; keep them in sync by hand.
 
 ## The fixture is fake on purpose
+
+Contacts carry a `country` and a `leadSource` (derived from the employer, with
+two deliberate out-of-country people and a null every seventh row) because the
+list filters read those properties and a fixture full of nulls would demo them
+as permanently empty.
 
 `mock.ts` / `mock-linked.ts` mirror the CRM *template*, not the live CRM,
 because this gets screen-recorded. Every address is on `.example`; tests assert
