@@ -91,22 +91,19 @@ npm test
 
 ## Deploy
 
-The changelog page is public (no upstream auth). The only secret is
-`NOTION_API_TOKEN` — a personal access token (`ntn_…`) the platform uses to
-write rows for this sync. It is **not** read by application code.
+The changelog page is public (no upstream auth), and the worker needs **no
+secrets**. The platform writes managed-database sync rows itself; a
+`NOTION_API_TOKEN` is only needed when worker code reads it (REST calls or
+`context.notion`), and this worker's code does neither.
 
 ```shell
-# 1. Store the token (never hardcode it). Via 1Password, optionally:
-#    ntn workers env set NOTION_API_TOKEN=$(op read "op://Work/Notion PAT/credential")
-ntn workers env set NOTION_API_TOKEN=ntn_xxx
-
-# 2. Deploy — creates the managed database and registers the sync
+# 1. Deploy — creates the managed database and registers the sync
 ntn workers deploy
 
-# 3. Preview end to end — runs the sync, writes NOTHING to the database
+# 2. Preview end to end — runs the sync, writes NOTHING to the database
 ntn workers sync trigger changelogSync --preview
 
-# 4. First real populate (or just wait for the 12-hour schedule)
+# 3. First real populate (or just wait for the 12-hour schedule)
 ntn workers sync trigger changelogSync
 
 # Observe

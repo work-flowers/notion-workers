@@ -234,23 +234,28 @@ write to People is required.
 | Route | Verified | Extra credential |
 |---|---|---|
 | Zapier SDK `fetch` + Notion connection `02b73654-…` | 200 on `2025-09-03` and `2026-03-11` | none |
-| Internal integration token over REST | 200 once shared | none — `NOTION_API_TOKEN` is already required |
+| Internal integration token over REST | 200 once shared | `NOTION_API_TOKEN` |
 
-**Correction:** an earlier draft of these notes argued the Zapier route "adds no
-credential" while the REST route does. That is wrong. **`NOTION_API_TOKEN` is
-required either way** — the platform uses it to write rows for *any* sync, not
-just to back `context.notion`. Confirmed: the deployed `api-changelog-sync`
-worker has it set, and its README states the platform uses it to write rows even
-though no application code reads it. So both routes are credential-neutral and
-the choice is on other grounds:
+**Correction (2026-09-28):** a later revision of these notes claimed
+`NOTION_API_TOKEN` "is required either way — the platform uses it to write rows
+for *any* sync", citing `api-changelog-sync`. That is wrong. **The platform
+writes managed-database sync rows without it**; the token is only needed when
+worker code reads it — to back REST calls or `context.notion`. Evidence:
+`fx-rates` is a managed-database sync with no env vars at all and `ntn workers
+sync status` reports it healthy, and `lovable-changelog-sync` was deployed with
+no env vars and ran its first sync at 528 upserts, 0 failures.
+`api-changelog-sync` simply held a token nothing reads. So the original framing
+stands — the Zapier route adds no Notion credential, the REST route does — and
+the trade-off is:
 
-- **Zapier route** — no need to share People with the worker's own integration;
+- **Zapier route** — no Notion token on the worker, and no need to share People
+  with an integration;
   one more layer of indirection; the connection id is workspace-specific, so a
   client redeploy needs a Notion connection in *their* Zapier account.
 - **REST route** — simplest and most direct, and exactly what
-  `workers/harvest-sync/src/notion-lookup.ts` already does; requires People to be
-  shared with the integration behind `NOTION_API_TOKEN` (already done for
-  `notion-worker-automations`).
+  `workers/harvest-sync/src/notion-lookup.ts` already does; requires setting
+  `NOTION_API_TOKEN` on the worker and sharing People with the integration behind
+  it (already done for `notion-worker-automations`).
 
 Going with the Zapier route, kept behind a single `resolveNotionUserId()` so
 switching is a one-function change.
