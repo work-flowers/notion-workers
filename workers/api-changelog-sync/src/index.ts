@@ -38,8 +38,8 @@ type SyncState = { hashes: Record<string, string> };
 // Incremental, every 12 hours. Never emits deletes: historical changelog entries
 // don't disappear. The whole changelog (~49 sections) is fetched and parsed in a
 // single batch — well within the per-execution timeout — so hasMore is always
-// false. The changelog page itself is public, so no upstream auth is needed;
-// the only secret is NOTION_API_TOKEN, which the platform uses to write rows.
+// false. The changelog page itself is public, so no upstream auth is needed,
+// and the platform writes the rows itself — the worker needs no secrets.
 worker.sync("changelogSync", {
 	database: changelog,
 	mode: "incremental",

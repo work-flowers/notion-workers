@@ -12,9 +12,10 @@ import { type Pacer, requireEnv, sdk } from "./zapier.js";
  * matches nothing, so joining on it would silently return zero rows.
  *
  * Routed through the Zapier Notion connection so the worker holds no Notion
- * credential of its own. `NOTION_API_TOKEN` is present regardless (the platform
- * uses it to write sync rows), so switching this to a direct REST call is a
- * one-function change if the connection ever becomes inconvenient — see
+ * credential of its own (the platform writes sync rows without one). Switching
+ * this to a direct REST call is a one-function change if the connection ever
+ * becomes inconvenient, but would need `NOTION_API_TOKEN` set on the worker and
+ * People shared with its integration — see
  * `workers/harvest-sync/src/notion-lookup.ts` for that shape.
  *
  * Note `context.notion` cannot be used here: the platform pins it to an older
