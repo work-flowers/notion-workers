@@ -7,7 +7,7 @@ README has the full design.
 ## What it does
 
 Syncs https://docs.lovable.dev/changelog into a worker-managed database,
-**Lovable Changelog**, one page per `###` section, once a day. Modelled on
+**Lovable Changelog**, one page per `###` section, every 12 hours. Modelled on
 `api-changelog-sync` (Notion's changelog, also a Mintlify site); keep the two
 parsers' shape in step when changing either.
 
