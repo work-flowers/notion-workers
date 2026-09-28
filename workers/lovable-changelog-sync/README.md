@@ -4,7 +4,7 @@ A [Notion Worker](https://developers.notion.com/workers) that fetches the
 **[Lovable changelog](https://docs.lovable.dev/changelog)**, parses out each
 entry, and syncs them as rows into a managed Notion database — **one row per
 sub-entry** (each `###` section within a date becomes its own page), refreshed
-every 12 hours.
+once a day.
 
 It is a sibling of [`api-changelog-sync`](../api-changelog-sync) (the Notion
 developer changelog) and follows the same design. Lovable has no changelog API
@@ -63,7 +63,7 @@ blockquote (`> **Note:** …`), `<br />` → `<br>`.
 
 ### Sync behavior
 
-- **Sync key:** `changelogSync`. **Mode:** `incremental`. **Schedule:** `12h`.
+- **Sync key:** `changelogSync`. **Mode:** `incremental`. **Schedule:** `1d`.
 - **Change detection:** a content hash per entry is kept in sync state; only
   new or changed entries are upserted, and only the hashes of entries actually
   emitted are recorded, so a failed or partial cycle resumes cleanly.

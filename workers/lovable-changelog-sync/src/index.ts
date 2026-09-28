@@ -45,7 +45,7 @@ const BATCH_SIZE = 100;
 type SyncState = { hashes: Record<string, string> };
 
 // -- Sync -------------------------------------------------------------------
-// Incremental, every 12 hours. Never emits deletes: historical changelog entries
+// Incremental, once a day. Never emits deletes: historical changelog entries
 // don't disappear. Each execute() re-fetches the whole page (one request, ~300 KB)
 // and emits the first BATCH_SIZE entries that are new or changed, recording only
 // *their* hashes; hasMore stays true until nothing is pending, so a cycle drains
@@ -54,7 +54,7 @@ type SyncState = { hashes: Record<string, string> };
 worker.sync("changelogSync", {
 	database: changelog,
 	mode: "incremental",
-	schedule: "12h",
+	schedule: "1d",
 	execute: async (state: SyncState | undefined) => {
 		const previousHashes = state?.hashes ?? {};
 
