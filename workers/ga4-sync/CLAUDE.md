@@ -309,6 +309,19 @@ Daily grows one row a day, Page Performance one per URL.
 - The prior-window comparison is **withheld** when the data doesn't span it. The
   property was created 2026-04-12, so "the previous 90 days" reaches back before
   any data exists and would report a +296% jump that is purely the data starting.
+- **Clicking a bar on *Traffic over time* opens a drill-down** for that period
+  (`breakdownBucket` in `aggregate.ts`, `DrillDown` in `App.tsx`): its own
+  tiles, a day-by-day split, and the channels and source/medium pairs behind
+  it. Counts are compared *per day* against the window's per-day average, so
+  a partial week or month doesn't read as a collapse, and the header says when
+  a period is partial. The channel split comes from 🚥 Traffic, a separate GA4
+  report, so its session total can differ from Site Daily's — on the snapshot
+  the last week reads 128 vs 115 — and the panel says so rather than passing
+  the split off as the whole bar. That report has no page views, so in
+  page-view mode channels are split by sessions, with a note. On the snapshot
+  the tallest week (29 Jun, 274 sessions) comes apart into the 30 Jun
+  newsletter (54 `workflowers / email` sessions) plus a LinkedIn/direct spike
+  on 2 Jul; the tests assert both.
 - Page triage splits unmatched URLs into `missingSource` (19 rows, 165 views — a
   real worklist of renamed slugs, missing inventory and broken links) and
   `generated` (28 rows — Bullet's tag and author pages, which correctly have no

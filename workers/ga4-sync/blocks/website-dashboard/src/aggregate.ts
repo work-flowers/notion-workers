@@ -562,6 +562,78 @@ export function channelTrend(
 }
 
 // ---------------------------------------------------------------------------
+// Drill-down — one period of the traffic chart, taken apart
+// ---------------------------------------------------------------------------
+
+/** The rows whose day falls in the bucket `key` at this granularity. */
+export function inBucket<T extends { day: string | null }>(
+	rows: T[],
+	granularity: Granularity,
+	key: string,
+): T[] {
+	return rows.filter((row) => row.day && bucketFor(row.day, granularity).key === key)
+}
+
+/** Calendar days a full period of this granularity spans. */
+function periodLength(start: string, granularity: Granularity): number {
+	if (granularity === "day") return 1
+	if (granularity === "week") return 7
+	const [y, m] = start.split("-").map(Number)
+	return new Date(Date.UTC(y ?? 1970, m ?? 1, 0)).getUTCDate()
+}
+
+export type BucketBreakdown = {
+	bucket: DailyBucket
+	/** First and last day inside the bucket that actually has data. */
+	firstDay: string
+	lastDay: string
+	/** Days a full period would hold — 7 for a week — so a partial one shows. */
+	periodDays: number
+	/** The bucket's own days as one-day buckets. Empty when it already is a day. */
+	days: DailyBucket[]
+	channels: ChannelSummary[]
+	sources: SourceSummary[]
+	/**
+	 * Σ sessions across the acquisition rows in the bucket. The two reports are
+	 * separate GA4 queries, so this need not equal `bucket.sessions`; the caller
+	 * says so rather than presenting the channel split as the whole period.
+	 */
+	attributedSessions: number
+}
+
+/**
+ * Everything the drill-down shows for one bucket of the traffic chart.
+ *
+ * `days` and `channelRows` must already be deduplicated and filtered to the
+ * same range the chart plots, so the breakdown can never disagree with the
+ * bar that was clicked. Null when the bucket holds no days.
+ */
+export function breakdownBucket(
+	days: DailyRow[],
+	channelRows: ChannelRow[],
+	granularity: Granularity,
+	key: string,
+): BucketBreakdown | null {
+	const own = inBucket(days, granularity, key)
+	const [bucket] = bucketizeDays(own, granularity)
+	if (!bucket) return null
+
+	const dated = own.map((d) => d.day).filter((d): d is string => d !== null)
+	const rows = inBucket(channelRows, granularity, key)
+
+	return {
+		bucket,
+		firstDay: dated[0],
+		lastDay: dated[dated.length - 1],
+		periodDays: periodLength(bucket.start, granularity),
+		days: granularity === "day" ? [] : bucketizeDays(own, "day"),
+		channels: summarizeChannels(rows),
+		sources: summarizeSources(rows),
+		attributedSessions: rows.reduce((sum, r) => sum + r.sessions, 0),
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Content
 // ---------------------------------------------------------------------------
 
@@ -704,6 +776,15 @@ export function formatDelta(value: number | null): string {
 	if (value === null) return ""
 	const sign = value > 0 ? "+" : value < 0 ? "−" : ""
 	return `${sign}${Math.abs(value * 100).toFixed(1)}%`
+}
+
+/** `13–19 Jul`, `28 Jul – 3 Aug`, or a single day. Parsed by hand, like `shortDate`. */
+export function formatSpan(first: string, last: string): string {
+	if (first === last) return shortDate(first)
+	const [, fm, fd] = first.split("-")
+	const [, lm, ld] = last.split("-")
+	if (fm === lm) return `${Number(fd)}–${Number(ld)} ${MONTHS[Number(lm) - 1] ?? ""}`
+	return `${shortDate(first)} – ${shortDate(last)}`
 }
 
 /** `2026-07-31` → `31 Jul`. Parsed by hand to avoid a timezone shift. */

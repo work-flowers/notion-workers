@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 
 import {
+	breakdownBucket,
 	bucketizeDays,
 	channelTrend,
 	dedupeByDay,
@@ -12,6 +13,7 @@ import {
 	formatDelta,
 	formatDuration,
 	formatPercent,
+	formatSpan,
 	GRANULARITY_LABELS,
 	groupPages,
 	PAGE_GROUP_LABELS,
@@ -22,9 +24,11 @@ import {
 	summarizeChannels,
 	summarizeDays,
 	summarizePages,
+	shortDate,
 	summarizeSources,
 	TRAFFIC_METRIC_LABELS,
 	untaggedShare,
+	type BucketBreakdown,
 	type ChannelRow,
 	type ChannelSummary,
 	type ChannelTrendBucket,
@@ -207,6 +211,9 @@ export function App({ days, channels, pages, today, status, message, stale, boun
 				{tab === "traffic" ? (
 					<TrafficTab
 						bound={bound.daily}
+						days={model.inRange}
+						channelRows={model.channelRows}
+						acquisitionBound={bound.acquisition}
 						totals={model.totals}
 						prior={model.prior}
 						buckets={model.buckets}
@@ -258,6 +265,9 @@ export function App({ days, channels, pages, today, status, message, stale, boun
 
 function TrafficTab({
 	bound,
+	days,
+	channelRows,
+	acquisitionBound,
 	totals,
 	prior,
 	buckets,
@@ -268,6 +278,11 @@ function TrafficTab({
 	view,
 }: {
 	bound: boolean
+	/** Deduplicated and range-filtered — the same days the chart plots. */
+	days: DailyRow[]
+	/** Range-filtered acquisition rows, for splitting a period by channel. */
+	channelRows: ChannelRow[]
+	acquisitionBound: boolean
 	totals: TrafficMetrics
 	prior: TrafficMetrics | null
 	buckets: DailyBucket[]
@@ -277,6 +292,12 @@ function TrafficTab({
 	onMetric: (next: TrafficMetricKey) => void
 	view: "chart" | "table"
 }) {
+	// Remembered with its granularity: a week key is also a valid day key (its
+	// Monday), so switching Weekly → Daily must close the panel, not reinterpret it.
+	const [selection, setSelection] = useState<{ key: string; granularity: Granularity } | null>(
+		null,
+	)
+
 	if (!bound) {
 		return (
 			<Unbound
@@ -296,19 +317,19 @@ function TrafficTab({
 	}
 
 	const since = range === "all" ? null : `vs previous ${RANGE_LABELS[range].toLowerCase()}`
-	const trend: TrendBucket[] = buckets.map((b) => ({
-		key: b.key,
-		label: b.label,
-		values: {
-			sessions: b.sessions,
-			views: b.views,
-			newUsers: b.newUsers,
-			engagementRate: b.engagementRate,
-		},
-		footer: `${formatCount(b.sessions)} sessions · ${formatCount(b.days)} ${
-			b.days === 1 ? "day" : "days"
-		}`,
-	}))
+	const trend = buckets.map(toTrend)
+
+	// A selection outlives neither a granularity change nor a range that no
+	// longer contains its period.
+	const index =
+		selection?.granularity === granularity
+			? buckets.findIndex((b) => b.key === selection.key)
+			: -1
+	const selectedKey = index >= 0 ? buckets[index].key : null
+	const breakdown = selectedKey
+		? breakdownBucket(days, channelRows, granularity, selectedKey)
+		: null
+	const select = (key: string | null) => setSelection(key ? { key, granularity } : null)
 
 	return (
 		<>
@@ -371,7 +392,7 @@ function TrafficTab({
 				<>
 					<Card
 						title="Traffic over time"
-						subtitle={`${TRAFFIC_METRIC_LABELS[metric]} per ${granularity}. Periods with no data are gaps, not zeroes.`}
+						subtitle={`${TRAFFIC_METRIC_LABELS[metric]} per ${granularity}. Periods with no data are gaps, not zeroes. Click a bar to break it down.`}
 						control={
 							<Segmented
 								label="Measure"
@@ -389,7 +410,23 @@ function TrafficTab({
 							seriesKey={metric}
 							valueLabel={TRAFFIC_METRIC_LABELS[metric]}
 							ariaLabel={`${TRAFFIC_METRIC_LABELS[metric]} by ${granularity}, ${buckets.length} periods`}
+							selectedKey={selectedKey}
+							onSelect={(key) => select(key === selectedKey ? null : key)}
 						/>
+						{breakdown ? (
+							<DrillDown
+								breakdown={breakdown}
+								window={totals}
+								granularity={granularity}
+								metric={metric}
+								acquisitionBound={acquisitionBound}
+								onClose={() => select(null)}
+								onPrevious={index > 0 ? () => select(buckets[index - 1].key) : null}
+								onNext={
+									index < buckets.length - 1 ? () => select(buckets[index + 1].key) : null
+								}
+							/>
+						) : null}
 					</Card>
 
 					<Card
@@ -417,6 +454,256 @@ function TrafficTab({
 				</Card>
 			)}
 		</>
+	)
+}
+
+function toTrend(b: DailyBucket): TrendBucket {
+	return {
+		key: b.key,
+		label: b.label,
+		values: {
+			sessions: b.sessions,
+			views: b.views,
+			newUsers: b.newUsers,
+			engagementRate: b.engagementRate,
+		},
+		footer: `${formatCount(b.sessions)} sessions · ${formatCount(b.days)} ${
+			b.days === 1 ? "day" : "days"
+		}`,
+	}
+}
+
+/** How many source/medium pairs a drill-down ranks before it's a long tail. */
+const DRILL_SOURCES = 8
+
+/**
+ * One period of the traffic chart, taken apart: its own figures against the
+ * window, the days inside it, and the channels and sources behind it.
+ *
+ * Counts are compared **per day** against the window's per-day average, never
+ * as a raw total against an average period: a partial week — the current one,
+ * or the week the data starts — would otherwise read as a collapse.
+ */
+function DrillDown({
+	breakdown,
+	window,
+	granularity,
+	metric,
+	acquisitionBound,
+	onClose,
+	onPrevious,
+	onNext,
+}: {
+	breakdown: BucketBreakdown
+	window: TrafficMetrics
+	granularity: Granularity
+	metric: TrafficMetricKey
+	acquisitionBound: boolean
+	onClose: () => void
+	onPrevious: (() => void) | null
+	onNext: (() => void) | null
+}) {
+	const { bucket, days, channels, sources, attributedSessions } = breakdown
+	const title =
+		granularity === "week"
+			? `Week of ${bucket.label}`
+			: granularity === "month"
+				? bucket.label
+				: shortDate(bucket.start)
+	const partial = bucket.days < breakdown.periodDays
+	const perDay = (value: number, of: TrafficMetrics) => (of.days > 0 ? value / of.days : null)
+	const vsWindow = (key: "sessions" | "views" | "newUsers") =>
+		delta(perDay(bucket[key], bucket), perDay(window[key], window))
+	const since = granularity === "day" ? "vs daily average" : "per day, vs average"
+
+	// The source/medium report carries sessions and new users but not page
+	// views, so a page-view drill-down splits channels by sessions — and says so.
+	const channelMetric: "sessions" | "newUsers" = metric === "newUsers" ? "newUsers" : "sessions"
+	const channelLabel = TRAFFIC_METRIC_LABELS[channelMetric]
+	const channelTotal = channels.reduce((sum, c) => sum + c[channelMetric], 0)
+	const byChannel: RankedRow[] = [...channels]
+		.sort((a, b) => b[channelMetric] - a[channelMetric])
+		.map((c) => ({
+			id: c.channel,
+			label: c.channel,
+			value: c[channelMetric],
+			tooltipTitle: c.channel,
+			tooltipFooter: `${formatPercent(
+				channelTotal > 0 ? c[channelMetric] / channelTotal : null,
+			)} of the ${granularity} · ${formatPercent(c.engagementRate)} engaged`,
+		}))
+	const bySource: RankedRow[] = sources.slice(0, DRILL_SOURCES).map((s) => ({
+		id: s.id,
+		label: `${s.source} / ${s.medium}`,
+		value: s.sessions,
+		tooltipTitle: `${s.source} / ${s.medium}`,
+		tooltipFooter: `${s.channel} · ${formatPercent(s.share)} of sessions · ${formatPercent(
+			s.engagementRate,
+		)} engaged`,
+	}))
+
+	return (
+		<section
+			className="wd-drill"
+			aria-labelledby="wd-drill-title"
+			onKeyDown={(e) => {
+				if (e.key === "Escape") onClose()
+			}}
+		>
+			<div className="wd-drill-head">
+				<div>
+					<h3 id="wd-drill-title">{title}</h3>
+					<p>
+						{formatSpan(breakdown.firstDay, breakdown.lastDay)} ·{" "}
+						{partial
+							? `${formatCount(bucket.days)} of ${formatCount(breakdown.periodDays)} days — a partial ${granularity}`
+							: `${formatCount(bucket.days)} ${bucket.days === 1 ? "day" : "days"}`}
+					</p>
+				</div>
+				<div className="wd-drill-nav" role="group" aria-label="Breakdown navigation">
+					<button
+						type="button"
+						className="wd-drill-button"
+						onClick={onPrevious ?? undefined}
+						disabled={!onPrevious}
+						aria-label={`Previous ${granularity}`}
+					>
+						‹
+					</button>
+					<button
+						type="button"
+						className="wd-drill-button"
+						onClick={onNext ?? undefined}
+						disabled={!onNext}
+						aria-label={`Next ${granularity}`}
+					>
+						›
+					</button>
+					<button type="button" className="wd-drill-button is-text" onClick={onClose}>
+						Close
+					</button>
+				</div>
+			</div>
+
+			<div className="wd-tiles">
+				<Tile
+					label="Sessions"
+					value={formatCount(bucket.sessions)}
+					sub={`${formatPercent(window.sessions > 0 ? bucket.sessions / window.sessions : null)} of the window`}
+					change={vsWindow("sessions")}
+					since={since}
+					upIsGood
+				/>
+				<Tile
+					label="Engagement rate"
+					value={formatPercent(bucket.engagementRate)}
+					sub={`${formatCount(bucket.engagedSessions)} engaged`}
+					change={delta(bucket.engagementRate, window.engagementRate)}
+					since="vs the window"
+					upIsGood
+				/>
+				<Tile
+					label="Avg session"
+					value={formatDuration(bucket.avgSessionDuration)}
+					sub="weighted by sessions"
+					change={delta(bucket.avgSessionDuration, window.avgSessionDuration)}
+					since="vs the window"
+					upIsGood
+				/>
+				<Tile
+					label="Page views"
+					value={formatCount(bucket.views)}
+					sub={`${formatDecimal(bucket.viewsPerSession)} per session`}
+					change={vsWindow("views")}
+					since={since}
+					upIsGood
+				/>
+				<Tile
+					label="New users"
+					value={formatCount(bucket.newUsers)}
+					sub="first-ever visits"
+					change={vsWindow("newUsers")}
+					since={since}
+					upIsGood
+				/>
+			</div>
+
+			<div className="wd-drill-grid">
+				{days.length > 0 ? (
+					<div className="wd-drill-part">
+						<h4>Day by day</h4>
+						<p>
+							{TRAFFIC_METRIC_LABELS[metric]} each day of the {granularity}.
+						</p>
+						<Columns
+							buckets={days.map(toTrend)}
+							seriesKey={metric}
+							valueLabel={TRAFFIC_METRIC_LABELS[metric]}
+							ariaLabel={`${TRAFFIC_METRIC_LABELS[metric]} for each of ${days.length} days`}
+						/>
+					</div>
+				) : null}
+
+				<div className="wd-drill-part">
+					<h4>By channel</h4>
+					{!acquisitionBound ? (
+						<p>
+							Map <code>acquisition</code> to 🚥 Traffic Session Source Medium Report to split this{" "}
+							{granularity} by channel.
+						</p>
+					) : channels.length === 0 ? (
+						<p>No acquisition rows fall in this {granularity}.</p>
+					) : (
+						<>
+							<p>
+								{channelLabel} per channel group
+								{metric === "views"
+									? " — page views aren't in the source/medium report, so channels are split by sessions."
+									: "."}
+							</p>
+							<RankedBars
+								rows={byChannel}
+								isRate={false}
+								limit={BAR_LIMIT}
+								ariaLabel={`${channelLabel} for each of ${channels.length} channels in ${title}`}
+								valueLabel={channelLabel}
+								format={(v) => formatCount(v)}
+							/>
+						</>
+					)}
+				</div>
+			</div>
+
+			{acquisitionBound && sources.length > 0 ? (
+				<div className="wd-drill-part">
+					<h4>Top sources</h4>
+					<p>
+						Sessions per source and medium
+						{sources.length > DRILL_SOURCES
+							? ` — the top ${DRILL_SOURCES} of ${formatCount(sources.length)}.`
+							: "."}
+					</p>
+					<RankedBars
+						rows={bySource}
+						isRate={false}
+						limit={DRILL_SOURCES}
+						ariaLabel={`Sessions for the top ${bySource.length} sources in ${title}`}
+						valueLabel="Sessions"
+						format={(v) => formatCount(v)}
+					/>
+				</div>
+			) : null}
+
+			{/* Two separate GA4 reports. Say when they disagree rather than pass the
+			    channel split off as the whole bar. */}
+			{acquisitionBound && channels.length > 0 && attributedSessions !== bucket.sessions ? (
+				<p className="wd-table-note">
+					The source/medium report counts {formatCount(attributedSessions)} sessions here against{" "}
+					{formatCount(bucket.sessions)} in Site Daily Summary. They're separate GA4 reports, and
+					recent days usually differ until GA4 finishes processing them.
+				</p>
+			) : null}
+		</section>
 	)
 }
 

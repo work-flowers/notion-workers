@@ -2,12 +2,14 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+	breakdownBucket,
 	bucketizeDays,
 	dedupeByDay,
 	delta,
 	filterDays,
 	formatDuration,
 	formatPercent,
+	formatSpan,
 	groupPages,
 	pageGroup,
 	previousDays,
@@ -366,5 +368,90 @@ describe("formatDuration", () => {
 		assert.equal(formatDuration(125.4946), "2m 05s")
 		assert.equal(formatDuration(3600), "60m 00s")
 		assert.equal(formatDuration(null), "—")
+	})
+})
+
+describe("breakdownBucket", () => {
+	const days = dedupeByDay(MOCK_DAYS).days
+
+	it("explains the spike week: the newsletter, not a general lift", () => {
+		// The tallest bar in the weekly chart. Its breakdown is the point of the
+		// drill-down: 54 of the 274 sessions came in on one email campaign.
+		const spike = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-06-29")!
+		assert.equal(spike.bucket.sessions, 274)
+		assert.equal(spike.attributedSessions, 274)
+		assert.deepEqual(
+			spike.channels.slice(0, 2).map((c) => [c.channel, c.sessions]),
+			[
+				["Direct", 129],
+				["Email", 54],
+			],
+		)
+		const email = spike.sources.find((s) => s.medium === "email")
+		assert.equal(email?.source, "workflowers")
+		assert.equal(email?.sessions, 54)
+		// And the day-by-day split shows where inside the week it landed.
+		assert.equal(spike.days.find((d) => d.key === "2026-07-02")?.sessions, 77)
+	})
+
+	it("splits a period into its own days, which add back up to the bar", () => {
+		for (const bucket of bucketizeDays(days, "week")) {
+			const drill = breakdownBucket(days, MOCK_CHANNELS, "week", bucket.key)!
+			const sum = drill.days.reduce((total, d) => total + d.sessions, 0)
+			assert.equal(sum, bucket.sessions, bucket.key)
+			assert.equal(drill.bucket.sessions, bucket.sessions, bucket.key)
+		}
+	})
+
+	it("recomputes the period's rates from its own counts", () => {
+		const drill = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-06-29")!
+		const [bucket] = bucketizeDays(
+			days.filter((d) => d.day! >= "2026-06-29" && d.day! <= "2026-07-05"),
+			"week",
+		)
+		assert.equal(drill.bucket.engagementRate, bucket.engagementRate)
+		assert.equal(drill.bucket.avgSessionDuration, bucket.avgSessionDuration)
+	})
+
+	it("reports a partial period against its full length", () => {
+		// Data starts 2026-04-12 and the snapshot ends 2026-08-02, so both ends
+		// of the monthly chart are partial and must not read as whole months.
+		const april = breakdownBucket(days, MOCK_CHANNELS, "month", "2026-04")!
+		assert.equal(april.firstDay, "2026-04-12")
+		assert.equal(april.days.length, 19)
+		assert.equal(april.periodDays, 30)
+		const august = breakdownBucket(days, MOCK_CHANNELS, "month", "2026-08")!
+		assert.equal(august.days.length, 2)
+		assert.equal(august.periodDays, 31)
+	})
+
+	it("keeps the acquisition total separate when the two reports disagree", () => {
+		// Recent days carry GA4 sessions still marked (not set) in the
+		// source/medium report, so its total runs ahead of Site Daily's. The
+		// drill-down has to say so rather than pass the channel split off as
+		// the whole bar.
+		const last = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-07-27")!
+		assert.equal(last.bucket.sessions, 115)
+		assert.equal(last.attributedSessions, 128)
+	})
+
+	it("has no day split for a bar that is already one day", () => {
+		const one = breakdownBucket(days, MOCK_CHANNELS, "day", "2026-07-02")!
+		assert.equal(one.bucket.sessions, 77)
+		assert.deepEqual(one.days, [])
+		assert.equal(one.periodDays, 1)
+	})
+
+	it("is null for a period with no days", () => {
+		assert.equal(breakdownBucket(days, MOCK_CHANNELS, "week", "2025-01-06"), null)
+		assert.equal(breakdownBucket(days, [], "week", "2026-06-29")?.attributedSessions, 0)
+	})
+})
+
+describe("formatSpan", () => {
+	it("names a range compactly, without a timezone shift", () => {
+		assert.equal(formatSpan("2026-07-13", "2026-07-19"), "13–19 Jul")
+		assert.equal(formatSpan("2026-07-27", "2026-08-02"), "27 Jul – 2 Aug")
+		assert.equal(formatSpan("2026-07-02", "2026-07-02"), "2 Jul")
 	})
 })
