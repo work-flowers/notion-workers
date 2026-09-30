@@ -75,9 +75,10 @@ function isBound(propertyIdsByKey: Record<string, string | undefined>): boolean 
  * re-checking dates. A host that *rejects* either gets the query again
  * without it — the sort as in crm-deal-desk, and the filter too, since the
  * date re-check turns an unfiltered result into a visible "incomplete" note
- * rather than a broken tab. Date filters were first used live here, so that
- * fallback is insurance, not a known need. Options are memoised: a fresh
- * object per render would replace the subscription and blank the rows.
+ * rather than a broken tab. The date filter itself was verified live on
+ * 2026-09-30, so that fallback is insurance for other hosts and clients, not
+ * a known need. Options are memoised: a fresh object per render would
+ * replace the subscription and blank the rows.
  */
 function useDateWindow(key: string, from: string, to: string, sortKey: string) {
 	const [sortRejected, setSortRejected] = useState(false)

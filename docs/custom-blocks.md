@@ -195,6 +195,12 @@ equivalent for querying rows yet.
   that ignored the filter — and keep a row only in the window that contains it
   so an ignored filter can't multiply rows. `ga4-sync`'s `useAcquisition` and
   `useNotionPeriodPages` (`blocks/website-dashboard/src/index.tsx`) do both.
+  **Date-range filters work in the live host** (verified 2026-09-30):
+  `{ and: [{ key, date: { on_or_after } }, { key, date: { on_or_before } }] }`
+  returned exactly the requested period for `pageDays`, and 🚥 Traffic loaded
+  month by month gave the same Acquisition totals as loading it whole. Whether
+  a `number` sort is honoured is still unconfirmed — both blocks re-sort
+  client-side, so it can't be seen from the UI.
 - **Relations are readable**, contrary to the alpha overview page. The value union
   carries `{ id, table }` record pointers and the official habit-tracker cookbook
   declares `type: "relation"` and reads it. You get the related page's **id only**
