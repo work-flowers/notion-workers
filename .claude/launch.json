@@ -28,6 +28,20 @@
 				"--strictPort"
 			],
 			"port": 5175
+		},
+		{
+			"name": "newsletter-dashboard",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-newsletter-dashboard",
+				"--",
+				"--port",
+				"5176",
+				"--strictPort"
+			],
+			"port": 5176
 		}
 	]
 }
