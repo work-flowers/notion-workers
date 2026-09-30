@@ -19,6 +19,19 @@ against 0.1.4x for weeks. Renames between 0.1.8 and 0.1.44: `pages.delete` →
 `pages.archive` / `unarchive`, `archived` → `is_archived`, `*Input` arg types →
 `*Args`; rows gain `archive()` / `unarchive()` / `is_archived` / `in_trash`.
 
+**Pin `vite` and `@vitejs/plugin-react` exactly too** (currently `8.3.1` /
+`6.1.1`, since 2026-09-30). They're devDependencies, but the deploy sandbox runs
+the Vite build itself, so a caret range there drifts the same way: on
+2026-09-30 the cloud built `ga4-sync` with Vite 8.3.1 while the lockfile held
+8.2.0. The pinned versions are the ones that cloud build used, and that bundle
+is confirmed rendering.
+
+**A block that stops rendering usually just needs a redeploy.** `ga4-sync`'s
+dashboard stopped rendering after sitting on its 2026-08-03 build while the host
+moved on; the code typechecked and built cleanly against 0.1.44, and `./scripts/deploy.sh
+ga4-sync` alone fixed it. Check `ntn workers list` for the last deploy date
+before debugging the block's code.
+
 ## What a custom block is
 
 `worker.customBlock()` declares a front-end web app that Notion serves in a
