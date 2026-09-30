@@ -1,5 +1,5 @@
 import type { SelectColor } from "@notionhq/workers/types";
-import { experimentalSdk, type Pacer } from "./zapier.js";
+import { experimentalSdk, zapierApi, type Pacer } from "./zapier.js";
 
 /**
  * Run history for a deployed durable.
@@ -20,6 +20,15 @@ import { experimentalSdk, type Pacer } from "./zapier.js";
  * simply take rows strictly newer than last time — it must re-scan a short
  * overlap window and re-upsert, or it will freeze runs at whatever status they
  * happened to hold mid-flight.
+ *
+ * Since late September 2026 the listing also returns **draft test runs**
+ * (`kind: "draft"`, fired from the workflow editor). They carry
+ * `workflow_draft_id` / `draft_revision` and omit `trigger_id` and
+ * `workflow_version_id` entirely — which the SDK's response schema (0.91 through
+ * 0.113) rejects, failing the whole call. So the page is fetched through the
+ * SDK's raw API client instead of `listWorkflowRuns`, and draft runs are dropped:
+ * they are editor testing, not production traffic, and would otherwise open
+ * triage tickets for every failed test.
  */
 
 export type RunError = {
@@ -45,22 +54,27 @@ export type WorkflowRun = {
 
 export type RunPage = { runs: WorkflowRun[]; nextCursor?: string };
 
-/** Newest-first page of runs for one workflow. */
+/** Newest-first page of *live* runs for one workflow. */
 export async function listRunsPage(
 	workflowId: string,
 	options: { cursor?: string; pageSize?: number },
 	pacer?: Pacer,
 ): Promise<RunPage> {
-	const sdk = experimentalSdk() as any;
 	if (pacer) await pacer.wait();
-	const response = await sdk.listWorkflowRuns({
-		workflow: workflowId,
-		...(options.cursor ? { cursor: options.cursor } : {}),
-		...(options.pageSize ? { pageSize: options.pageSize } : {}),
-	});
+	// Same request `listWorkflowRuns` makes, minus its strict parse — see above.
+	const searchParams: Record<string, string> = {};
+	if (options.pageSize) searchParams.limit = String(options.pageSize);
+	if (options.cursor) searchParams.cursor = options.cursor;
+	const response = await zapierApi().get<{
+		results?: (WorkflowRun & { kind?: string })[];
+		meta?: { next_cursor?: string | null };
+	}>(
+		`/code-substrate-workflows/api/v0/workflows/${encodeURIComponent(workflowId)}/runs`,
+		{ searchParams, authRequired: true },
+	);
 	return {
-		runs: (response?.data ?? []) as WorkflowRun[],
-		nextCursor: response?.nextCursor ?? undefined,
+		runs: (response?.results ?? []).filter((run) => run.kind !== "draft"),
+		nextCursor: response?.meta?.next_cursor ?? undefined,
 	};
 }
 
