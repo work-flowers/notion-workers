@@ -286,11 +286,16 @@ its size:
 
 - `daily`, `pages` — loaded whole. Site Daily grows one row a day, Page
   Performance one per URL; years of headroom.
-- `acquisition` — loaded whole, **and about to outgrow it**: 865 rows on
-  2026-09-30, growing ~6 a day, so it reaches the cap around late October 2026.
-  After that the host returns an arbitrary 999 and the Acquisition tab and the
-  drill-down's channel split silently lose rows. Needs a range-filtered,
-  date-sorted query (or per-period queries like `pageDays`) before then.
+- `acquisition` — **loaded one calendar month per subscription** and merged
+  (`useAcquisition` in `index.tsx`, `monthWindows` / `mergeWindows` in
+  `aggregate.ts`). Loaded whole it would have hit the cap around late October
+  2026 (865 rows on 09-30, ~6 a day), after which the host returns an arbitrary
+  999 and every channel figure silently under-counts. A month is ~170 rows, so
+  each window has years of headroom, and the rest of the block still receives
+  the full row set. Each month is a `<AcquisitionMonth>` component because the
+  number of months grows and hooks can't be called a variable number of times.
+  If a client ignores the filter or a month ever overflows, the notes footer
+  says the Traffic figures are incomplete.
 - `pageDays` — already far past it (1,917 rows on 2026-09-30), so it is **never
   loaded whole**. The drill-down queries one period at a time with a
   server-side date filter (custom-blocks ≥ 0.1.35) sorted by views; a month is a

@@ -180,6 +180,71 @@ function bucketFor(
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Loading past the 999-row cap
+// ---------------------------------------------------------------------------
+
+export type DateWindow = { key: string; from: string; to: string }
+
+/**
+ * Calendar months from `start`'s month through `today`'s, oldest first — the
+ * windows a data source too big for one query is loaded in. Each is a
+ * separate date-filtered subscription, so the cap applies per month.
+ */
+export function monthWindows(start: string, today: string): DateWindow[] {
+	const windows: DateWindow[] = []
+	let [year, month] = start.split("-").map(Number) as [number, number]
+	const [endYear, endMonth] = today.split("-").map(Number) as [number, number]
+
+	while (year < endYear || (year === endYear && month <= endMonth)) {
+		const mm = String(month).padStart(2, "0")
+		const last = new Date(Date.UTC(year, month, 0)).getUTCDate()
+		windows.push({ key: `${year}-${mm}`, from: `${year}-${mm}-01`, to: `${year}-${mm}-${last}` })
+		month += 1
+		if (month > 12) {
+			month = 1
+			year += 1
+		}
+	}
+	return windows
+}
+
+export type MergedWindows<T> = {
+	rows: T[]
+	/**
+	 * Rows a window returned from outside its own dates. Non-zero means the
+	 * Notion client ignored the filter (old clients do, silently): every window
+	 * then got the same arbitrary 999 rows, and the merge is incomplete.
+	 */
+	outOfRange: number
+}
+
+/**
+ * Stitch per-window results back into one row set. Each row is kept only by
+ * the window whose dates contain it, so a client that ignored the filter can't
+ * multiply rows, and the dropped rows are counted so it can be reported.
+ */
+export function mergeWindows<T extends { id: string; day: string | null }>(
+	windows: { window: DateWindow; rows: T[] }[],
+): MergedWindows<T> {
+	const rows: T[] = []
+	const seen = new Set<string>()
+	let outOfRange = 0
+
+	for (const { window, rows: got } of windows) {
+		for (const row of got) {
+			if (!row.day || row.day < window.from || row.day > window.to) {
+				outOfRange += 1
+				continue
+			}
+			if (seen.has(row.id)) continue
+			seen.add(row.id)
+			rows.push(row)
+		}
+	}
+	return { rows, outOfRange }
+}
+
 function safeRatio(numerator: number, denominator: number): number | null {
 	return denominator > 0 ? numerator / denominator : null
 }

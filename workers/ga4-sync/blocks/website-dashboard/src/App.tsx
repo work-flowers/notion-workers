@@ -88,9 +88,24 @@ export type AppState = {
 	stale?: boolean
 	/** Which data-source keys the config panel actually bound. */
 	bound: Record<"daily" | "acquisition" | "pages", boolean>
+	/**
+	 * Set when 🚥 Traffic, loaded month by month, came back short: the client
+	 * ignored the date filter, or a single month overflowed the row cap.
+	 */
+	acquisitionIncomplete?: "filterIgnored" | "overflow" | null
 }
 
-export function App({ days, channels, pages, today, status, message, stale, bound }: AppState) {
+export function App({
+	days,
+	channels,
+	pages,
+	today,
+	status,
+	message,
+	stale,
+	bound,
+	acquisitionIncomplete,
+}: AppState) {
 	const [tab, setTab] = useState<Tab>("traffic")
 	const [range, setRange] = useState<RangeKey>("90d")
 	const [granularity, setGranularity] = useState<Granularity>("week")
@@ -259,6 +274,7 @@ export function App({ days, channels, pages, today, status, message, stale, boun
 				undated={model.daily.undated}
 				keyEvents={model.totals.keyEvents}
 				hasDaily={bound.daily}
+				acquisitionIncomplete={acquisitionIncomplete ?? null}
 			/>
 		</div>
 	)
@@ -1631,17 +1647,32 @@ function Notes({
 	undated,
 	keyEvents,
 	hasDaily,
+	acquisitionIncomplete,
 }: {
 	duplicates: number
 	undated: number
 	keyEvents: number
 	hasDaily: boolean
+	acquisitionIncomplete: "filterIgnored" | "overflow" | null
 }) {
-	if (!hasDaily) return null
-	if (duplicates === 0 && undated === 0 && keyEvents > 0) return null
+	const dailyNotes = hasDaily && (duplicates > 0 || undated > 0 || keyEvents === 0)
+	if (!dailyNotes && !acquisitionIncomplete) return null
 
 	return (
 		<footer className="wd-notes">
+			{acquisitionIncomplete === "filterIgnored" ? (
+				<p>
+					<strong>Traffic by source is incomplete.</strong> This Notion client ignored the date
+					filter the block loads it with, one month at a time, so the channel and source figures
+					come from an arbitrary 999 rows. Updating Notion fixes it.
+				</p>
+			) : acquisitionIncomplete === "overflow" ? (
+				<p>
+					<strong>Traffic by source is incomplete.</strong> At least one month has more than 999
+					rows, the most one query returns, so its smallest source/medium rows are missing and
+					channel totals run slightly low.
+				</p>
+			) : null}
 			{duplicates > 0 ? (
 				<p>
 					<strong>
@@ -1660,7 +1691,7 @@ function Notes({
 					have no date and can't be placed on the time axis, so they're excluded.
 				</p>
 			) : null}
-			{keyEvents === 0 ? (
+			{hasDaily && keyEvents === 0 ? (
 				<p>
 					<strong>No key events are configured in GA4</strong>, so there is no conversion data
 					to show — the zero above is measured, not missing.

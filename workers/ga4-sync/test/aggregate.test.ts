@@ -10,6 +10,8 @@ import {
 	formatDuration,
 	formatPercent,
 	formatSpan,
+	mergeWindows,
+	monthWindows,
 	groupPages,
 	pageGroup,
 	previousDays,
@@ -517,5 +519,52 @@ describe("summarizePeriodPages", () => {
 		assert.equal(ignored.outOfRange, MOCK_PAGE_DAYS.length - slice("2026-07-02", "2026-07-02").length)
 		const honoured = summarizePeriodPages(slice("2026-07-02", "2026-07-02"), "2026-07-02", "2026-07-02", titles)
 		assert.equal(honoured.outOfRange, 0)
+	})
+})
+
+describe("monthWindows and mergeWindows", () => {
+	// 🚥 Traffic outgrew one 999-row query, so the block loads it one calendar
+	// month per subscription and stitches the months back together.
+	const windows = monthWindows("2026-04-01", "2026-08-03")
+	const byHost = (rows: ChannelRow[], w: { from: string; to: string }) =>
+		rows.filter((r) => r.day! >= w.from && r.day! <= w.to)
+
+	it("covers every month from the start through today's, with real month ends", () => {
+		assert.deepEqual(
+			windows.map((w) => [w.from, w.to]),
+			[
+				["2026-04-01", "2026-04-30"],
+				["2026-05-01", "2026-05-31"],
+				["2026-06-01", "2026-06-30"],
+				["2026-07-01", "2026-07-31"],
+				["2026-08-01", "2026-08-31"],
+			],
+		)
+		const across = monthWindows("2026-11-15", "2027-02-01")
+		assert.deepEqual(
+			across.map((w) => w.to),
+			["2026-11-30", "2026-12-31", "2027-01-31", "2027-02-28"],
+		)
+	})
+
+	it("reassembles exactly the rows one unfiltered query would have", () => {
+		const merged = mergeWindows(windows.map((w) => ({ window: w, rows: byHost(MOCK_CHANNELS, w) })))
+		assert.equal(merged.rows.length, MOCK_CHANNELS.length)
+		assert.equal(merged.outOfRange, 0)
+		// So every figure downstream is unchanged by the switch.
+		assert.deepEqual(summarizeChannels(merged.rows), summarizeChannels(MOCK_CHANNELS))
+	})
+
+	it("keeps each month far under the cap", () => {
+		const biggest = Math.max(...windows.map((w) => byHost(MOCK_CHANNELS, w).length))
+		assert.ok(biggest < 250, `largest month has ${biggest} rows`)
+	})
+
+	it("neither multiplies rows nor hides it when the client ignores the filter", () => {
+		// An old client hands every window the same unfiltered rows. Each row is
+		// kept once — by the window it belongs to — and the rest are counted.
+		const merged = mergeWindows(windows.map((w) => ({ window: w, rows: MOCK_CHANNELS })))
+		assert.equal(merged.rows.length, MOCK_CHANNELS.length)
+		assert.equal(merged.outOfRange, MOCK_CHANNELS.length * (windows.length - 1))
 	})
 })

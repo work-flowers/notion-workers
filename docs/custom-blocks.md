@@ -187,6 +187,14 @@ equivalent for querying rows yet.
   by `created_time` descending is the cheap fix for "the newest rows fall off";
   a filtered secondary subscription (e.g. `title contains q`) reaches past it.
   `workers/crm-deal-desk/blocks/crm-desk/src/index.tsx` has one of each.
+- **A data source past the cap can still be read in date windows.** Filter on
+  its date property per window (one calendar month, or one drill-down period)
+  and merge; each window has its own 999. A variable number of windows needs a
+  component per window, since hooks can't be called a variable number of
+  times. Re-check each row's date after merging — that's what catches a client
+  that ignored the filter — and keep a row only in the window that contains it
+  so an ignored filter can't multiply rows. `ga4-sync`'s `useAcquisition` and
+  `useNotionPeriodPages` (`blocks/website-dashboard/src/index.tsx`) do both.
 - **Relations are readable**, contrary to the alpha overview page. The value union
   carries `{ id, table }` record pointers and the official habit-tracker cookbook
   declares `type: "relation"` and reads it. You get the related page's **id only**

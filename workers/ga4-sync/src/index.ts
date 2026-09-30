@@ -771,8 +771,9 @@ worker.sync("pagePerformanceRelink", {
  *
  * `useDataSource` caps a query at 999 rows. Site Daily grows one row a day and
  * Page Performance one row per URL, so those two load whole with years of
- * headroom. Traffic does not: 865 rows on 2026-09-30, growing ~6 a day, so it
- * reaches the cap around late October 2026 and then silently drops rows. Pages
+ * headroom. Traffic would have hit it around late October 2026 (865 rows on
+ * 09-30, ~6 a day), so the block loads `acquisition` one calendar month per
+ * date-filtered subscription and merges them. Pages
  * Path Report (1,917 rows on 2026-09-30) is past the cap, so `pageDays` is only
  * ever read one drill-down period at a time through a server-side date filter
  * (available since custom-blocks 0.1.35). Landing Page Report isn't bound.
