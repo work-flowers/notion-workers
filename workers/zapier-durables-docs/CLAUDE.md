@@ -63,6 +63,13 @@ shape.
 each returns the full unfiltered set. Do not add one expecting it to work. The
 delta relies on rows being newest-first and stops client-side.
 
+**Runs are listed through `zapierApi().get`, not `sdk.listWorkflowRuns`.** Since
+late September 2026 the endpoint also returns draft test runs (`kind: "draft"`)
+that omit `trigger_id` and `workflow_version_id`. The SDK's response schema
+requires both (checked up to 0.113), so a single editor test run failed every
+`runsDelta` and `errorsDelta` cycle from 2026-09-28. `listRunsPage` makes the
+same request without the strict parse and drops draft runs. Don't switch it back.
+
 **Runs mutate after creation.** `updated_at != created_at` on every row
 observed (~20s, as the run reaches `finished`), so the delta re-scans a one-hour
 overlap and re-upserts. Narrowing that window will freeze runs at whatever
