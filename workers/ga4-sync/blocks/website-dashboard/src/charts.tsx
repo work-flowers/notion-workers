@@ -76,7 +76,8 @@ function niceCountStep(max: number): number {
 	for (const scale of [magnitude / 10, magnitude, magnitude * 10]) {
 		for (const multiple of [1, 2, 2.5, 5]) {
 			const step = scale * multiple
-			if (step > 0 && max / step <= 4.2) return step
+			// Counts are whole: a 2.5-view gridline on a 9-view day is noise.
+			if (step >= 1 && Number.isInteger(step) && max / step <= 4.2) return step
 		}
 	}
 	return magnitude * 10
@@ -371,11 +372,17 @@ export function Columns({
 	seriesKey,
 	valueLabel,
 	ariaLabel,
+	selectedKey,
+	onSelect,
 }: {
 	buckets: TrendBucket[]
 	seriesKey: string
 	valueLabel: string
 	ariaLabel: string
+	/** The bar a drill-down is open for; every other bar dims. */
+	selectedKey?: string | null
+	/** Makes each bar a button. Called again on the open bar, to close it. */
+	onSelect?: (key: string) => void
 }) {
 	const [ref, width] = useMeasuredWidth()
 	const [hover, setHover] = useState<number | null>(null)
@@ -400,7 +407,9 @@ export function Columns({
 
 	return (
 		<div className="wd-chart" ref={ref}>
-			<svg width={width} height={height} role="img" aria-label={ariaLabel}>
+			{/* A group, not an img, once the bars are buttons: `img` would hide
+			    them from assistive tech. */}
+			<svg width={width} height={height} role={onSelect ? "group" : "img"} aria-label={ariaLabel}>
 				{ticks.map((tick) => (
 					<g key={tick}>
 						<line
@@ -419,10 +428,16 @@ export function Columns({
 				{buckets.map((bucket, i) => {
 					const value = valueOf(i)
 					const barHeight = Math.max(0, PAD.top + plot - yAt(value))
+					const selected = selectedKey === bucket.key
+					// On the group, not each rect: the bar is two overlapping rects, and
+					// per-rect opacity would darken the strip where they overlap.
+					const state = `${hover === i ? " is-hover" : ""}${
+						selectedKey && !selected ? " is-dimmed" : ""
+					}`
 					return (
-						<g key={bucket.key} style={{ color: "var(--series-1)" }}>
+						<g key={bucket.key} className={`wd-col${state}`} style={{ color: "var(--series-1)" }}>
 							<rect
-								className={`wd-bar${hover === i ? " is-hover" : ""}`}
+								className="wd-bar"
 								x={xAt(i)}
 								y={yAt(value)}
 								width={barWidth}
@@ -432,7 +447,7 @@ export function Columns({
 							{/* Square off the baseline end: only the data end is rounded. */}
 							{barHeight > 4 ? (
 								<rect
-									className={`wd-bar${hover === i ? " is-hover" : ""}`}
+									className="wd-bar"
 									x={xAt(i)}
 									y={PAD.top + plot - 4}
 									width={barWidth}
@@ -441,13 +456,31 @@ export function Columns({
 							) : null}
 							{/* Hit target spans the whole band, not just the painted bar. */}
 							<rect
-								className="wd-hit"
+								className={`wd-hit${onSelect ? " is-clickable" : ""}`}
 								x={PAD.left + band * i}
 								y={PAD.top}
 								width={band}
 								height={plot}
 								onPointerEnter={() => setHover(i)}
 								onPointerLeave={() => setHover((prev) => (prev === i ? null : prev))}
+								{...(onSelect
+									? {
+											role: "button",
+											tabIndex: 0,
+											"aria-pressed": selected,
+											"aria-label": `${bucket.label}: ${formatCount(value)} ${valueLabel.toLowerCase()}. ${
+												selected ? "Close" : "Open"
+											} the breakdown.`,
+											onClick: () => onSelect(bucket.key),
+											onKeyDown: (e: React.KeyboardEvent) => {
+												if (e.key !== "Enter" && e.key !== " ") return
+												e.preventDefault()
+												onSelect(bucket.key)
+											},
+											onFocus: () => setHover(i),
+											onBlur: () => setHover((prev) => (prev === i ? null : prev)),
+										}
+									: {})}
 							/>
 							{i === peak ? (
 								<text
@@ -494,7 +527,11 @@ export function Columns({
 					rows={[
 						{ cssVar: "--series-1", label: valueLabel, value: formatCount(valueOf(hover)) },
 					]}
-					footer={buckets[hover].footer}
+					footer={
+						onSelect && selectedKey !== buckets[hover].key
+							? [buckets[hover].footer, "Click for the breakdown"].filter(Boolean).join(" · ")
+							: buckets[hover].footer
+					}
 				/>
 			) : null}
 		</div>

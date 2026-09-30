@@ -294,6 +294,115 @@ body {
 	font-size: 12px;
 }
 
+/* ---- Drill-down: one period of the traffic chart, taken apart ---- */
+
+/* Inside the chart's own card, under a rule, so it reads as a property of the
+   bar that opened it rather than another card in the stack. */
+.wd-drill {
+	margin-top: var(--spacing-16);
+	padding-top: var(--spacing-16);
+	border-top: 1px solid var(--border-primary);
+}
+
+.wd-drill-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-12);
+	align-items: flex-start;
+	justify-content: space-between;
+	margin-bottom: var(--spacing-12);
+}
+
+.wd-drill-head h3 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.wd-drill-head p {
+	margin: 2px 0 0;
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.wd-drill-nav {
+	display: flex;
+	gap: 4px;
+}
+
+.wd-drill-button {
+	min-width: 28px;
+	height: 28px;
+	padding: 0 8px;
+	border: 1px solid var(--border-primary);
+	border-radius: var(--radius-6, 6px);
+	background: transparent;
+	color: var(--content-primary);
+	font: inherit;
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.wd-drill-button.is-text {
+	font-size: 12px;
+}
+
+.wd-drill-button:hover:not(:disabled) {
+	background: color-mix(in oklab, var(--content-primary) 6%, transparent);
+}
+
+.wd-drill-button:disabled {
+	color: var(--content-tertiary, var(--content-secondary));
+	cursor: default;
+	opacity: 0.5;
+}
+
+.wd-drill-button:focus-visible {
+	outline: 2px solid var(--series-1);
+	outline-offset: 1px;
+}
+
+/* Day split and channel split side by side where there's room for both. */
+.wd-drill-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: var(--spacing-16);
+}
+
+.wd-drill-part {
+	min-width: 0;
+	margin-bottom: var(--spacing-12);
+}
+
+/* A part's heading with an action beside it, e.g. "Show the whole week". */
+.wd-drill-part-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-8);
+	align-items: center;
+	justify-content: space-between;
+}
+
+.wd-drill-part h4 {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.wd-drill-part p {
+	margin: 2px 0 var(--spacing-8);
+	color: var(--content-secondary);
+	font-size: 12px;
+}
+
+.wd-drill-part code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: color-mix(in oklab, var(--content-primary) 8%, transparent);
+	font-size: 11px;
+}
+
 /* ---- Chart primitives ---- */
 
 .wd-chart {
@@ -364,6 +473,36 @@ body {
 
 .wd-hit {
 	fill: transparent;
+}
+
+/* Only bars that open a drill-down look clickable. */
+.wd-hit.is-clickable {
+	cursor: pointer;
+	outline: none;
+}
+
+/* SVG outlines render unreliably across hosts, so focus paints the band. */
+.wd-hit.is-clickable:focus-visible {
+	fill: color-mix(in oklab, var(--series-1) 12%, transparent);
+}
+
+/* A column's state lives on its group: its bar is two overlapping rects. */
+.wd-col {
+	transition: opacity 90ms ease;
+}
+
+.wd-col.is-hover {
+	opacity: 0.78;
+}
+
+/* While a drill-down is open, the other bars step back so the chosen one
+   reads as the subject of the panel below. */
+.wd-col.is-dimmed {
+	opacity: 0.32;
+}
+
+.wd-col.is-dimmed.is-hover {
+	opacity: 0.55;
 }
 
 .wd-axis-text {
@@ -670,7 +809,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
 	.wd-dash,
-	.wd-bar {
+	.wd-bar,
+	.wd-col {
 		transition: none;
 	}
 }

@@ -279,11 +279,30 @@ after a redeploy.
 | `daily` | 📈 Site Daily Summary | `Date`, `Sessions`, `Engaged Sessions`, `Avg Session Duration`, `Screen Page Views`, `Total Users`, `New Users`, `Key Events` |
 | `acquisition` | 🚥 Traffic Session Source Medium Report | `Date`, `Channel Group`, `Session Source`, `Session Medium`, `Sessions`, `Engaged Sessions`, `New Users`, `User Engagement Duration` |
 | `pages` | 🗂️ Page Performance | `Page`, `Page Type`, `Views`, `Users`, `Engagement (s)`, `Views (28d)`, `Users (28d)`, `Engagement (28d)`, `Matched`, `Source Title` |
+| `pageDays` | 📄 Pages Path Report | `Date`, `Page Path`, `Page Type`, `Screen Page Views`, `Total Users`, `User Engagement Duration` |
 
-**Pages Path Report and Landing Page Report are deliberately absent.**
-`useDataSource` caps at 999 rows with no server-side filter or sort, and both are
-already past it (~1,150 and ~1,160 rows on 2026-08-02, growing ~10/day). Site
-Daily grows one row a day, Page Performance one per URL.
+**`useDataSource` caps a query at 999 rows**, so how each key loads depends on
+its size:
+
+- `daily`, `pages` — loaded whole. Site Daily grows one row a day, Page
+  Performance one per URL; years of headroom.
+- `acquisition` — **loaded one calendar month per subscription** and merged
+  (`useAcquisition` in `index.tsx`, `monthWindows` / `mergeWindows` in
+  `aggregate.ts`). Loaded whole it would have hit the cap around late October
+  2026 (865 rows on 09-30, ~6 a day), after which the host returns an arbitrary
+  999 and every channel figure silently under-counts. A month is ~170 rows, so
+  each window has years of headroom, and the rest of the block still receives
+  the full row set. Each month is a `<AcquisitionMonth>` component because the
+  number of months grows and hooks can't be called a variable number of times.
+  If a client ignores the filter or a month ever overflows, the notes footer
+  says the Traffic figures are incomplete.
+- `pageDays` — already far past it (1,917 rows on 2026-09-30), so it is **never
+  loaded whole**. The drill-down queries one period at a time with a
+  server-side date filter (custom-blocks ≥ 0.1.35) sorted by views; a month is a
+  few hundred rows. See `useNotionPeriodPages` in `index.tsx`. **Optional**, and
+  added after the block was first inserted: an existing instance shows a "map
+  `pageDays`" hint in the drill-down until someone binds it in the config panel.
+- Landing Page Report is not bound.
 
 ### The analytics, which are the whole point
 
@@ -309,6 +328,33 @@ Daily grows one row a day, Page Performance one per URL.
 - The prior-window comparison is **withheld** when the data doesn't span it. The
   property was created 2026-04-12, so "the previous 90 days" reaches back before
   any data exists and would report a +296% jump that is purely the data starting.
+- **Clicking a bar on *Traffic over time* opens a drill-down** for that period
+  (`breakdownBucket` in `aggregate.ts`, `DrillDown` in `App.tsx`): its own
+  tiles, a day-by-day split, and the channels and source/medium pairs behind
+  it. Counts are compared *per day* against the window's per-day average, so
+  a partial week or month doesn't read as a collapse, and the header says when
+  a period is partial. The channel split comes from 🚥 Traffic, a separate GA4
+  report, so its session total can differ from Site Daily's — on the snapshot
+  the last week reads 128 vs 115 — and the panel says so rather than passing
+  the split off as the whole bar. That report has no page views, so in
+  page-view mode channels are split by sessions, with a note. On the snapshot
+  the tallest week (29 Jun, 274 sessions) comes apart into the 30 Jun
+  newsletter (54 `workflowers / email` sessions) plus a LinkedIn/direct spike
+  on 2 Jul; the tests assert both.
+- **The drill-down also ranks the pages behind a period**, from `pageDays`,
+  titled via Page Performance's `Source Title` (falling back to the URL).
+  Clicking a day in its *Day by day* chart narrows the pages, channels and
+  sources to that day (tiles stay on the period; Escape backs out one level).
+  It subscribes once per period and narrows client-side, so clicking between
+  days doesn't reload. Page views reconcile with Site Daily on 111 of the
+  snapshot's 113 days — only the last two, unsettled when Site Daily was
+  snapshotted, differ, and the panel notes when they do. Unique users are shown
+  only for a single day; summed across days they are user-days. On the
+  snapshot, 2 Jul's spike is the AI-coding-agents post (31 views).
+- **`summarizePeriodPages` re-checks every row's date** even though the query
+  filtered on it. Old Notion clients ignore filters silently and return an
+  arbitrary 999 rows; a non-zero `outOfRange` is the only way to tell, and the
+  panel says so instead of ranking a random slice.
 - Page triage splits unmatched URLs into `missingSource` (19 rows, 165 views — a
   real worklist of renamed slugs, missing inventory and broken links) and
   `generated` (28 rows — Bullet's tag and author pages, which correctly have no
@@ -321,8 +367,10 @@ npm run dev:block --workspace=notion-worker-ga4-sync
 ```
 
 Then open `?mock` — `blocks/website-dashboard/src/mock.ts` holds a verbatim
-snapshot of all three data sources taken 2026-08-03, so layout and chart work
-needs no binding, no deploy and no Notion. `?mock&theme=dark` for dark mode.
+snapshot of all four data sources taken 2026-08-03 (Pages Path Report on
+2026-09-30, cut at 2026-08-02 to match), so layout and chart work needs no
+binding, no deploy and no Notion. `?mock&theme=dark` for dark mode;
+`?mock&nopages` for the drill-down with `pageDays` unmapped.
 `.claude/launch.json` at the repo root wires the same server up for the preview
 pane. Refresh the snapshot with the SQL in the fixture's own header comment.
 

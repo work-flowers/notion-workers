@@ -769,11 +769,14 @@ worker.sync("pagePerformanceRelink", {
  * inserts it maps these keys to real properties. Declared-but-unmapped is a
  * supported state — each tab renders a setup hint and the others keep working.
  *
- * Only three of the five reports are here. `useDataSource` caps a query at 999
- * rows with no server-side filter or sort, and Pages Path Report (~1,150 rows)
- * and Landing Page Report (~1,160) are already past it, growing ~10 rows a day.
- * Site Daily grows one row a day and Page Performance one row per URL, so both
- * have years of headroom.
+ * `useDataSource` caps a query at 999 rows. Site Daily grows one row a day and
+ * Page Performance one row per URL, so those two load whole with years of
+ * headroom. Traffic would have hit it around late October 2026 (865 rows on
+ * 09-30, ~6 a day), so the block loads `acquisition` one calendar month per
+ * date-filtered subscription and merges them. Pages
+ * Path Report (1,917 rows on 2026-09-30) is past the cap, so `pageDays` is only
+ * ever read one drill-down period at a time through a server-side date filter
+ * (available since custom-blocks 0.1.35). Landing Page Report isn't bound.
  *
  * Every count the block asks for is a raw count, never a stored rate. That is
  * the point of it: `Engagement Rate` and `Avg Session Duration` are per-day
@@ -938,6 +941,50 @@ worker.customBlock("websiteDashboard", {
 				// carries both, but a custom block cannot open a Notion page (see
 				// docs/custom-blocks.md), so reading them here would only produce a
 				// link that goes nowhere. Notion's own relation cell does that job.
+			},
+		},
+		// Pages Path Report is far past the 999-row cap, so it is never loaded
+		// whole. The traffic drill-down queries one period of it at a time with a
+		// server-side date filter — a month is a few hundred rows. Optional: the
+		// drill-down says what to map when it isn't bound.
+		pageDays: {
+			name: "Pages by day",
+			description:
+				"One row per page per day. Read one drill-down period at a time, to show which pages drove it.",
+			icon: { type: "emoji", emoji: "📄" },
+			properties: {
+				day: {
+					name: "Date",
+					description: "The calendar day. The drill-down filters on it server-side.",
+					type: "date",
+				},
+				path: {
+					name: "Page Path",
+					description:
+						"The normalised URL path, matched against Page Performance for the page's title.",
+					type: "rich_text",
+				},
+				pageType: {
+					name: "Page Type",
+					description: "Blog Post, Static Page, Blog Tag and so on.",
+					type: "select",
+				},
+				views: {
+					name: "Screen Page Views",
+					description: "Views of this page that day. Pages are ranked, and sorted server-side, by it.",
+					type: "number",
+				},
+				users: {
+					name: "Total Users",
+					description:
+						"Unique users of this page that day. Only shown for a single day — summed across days it counts user-days.",
+					type: "number",
+				},
+				engagementSeconds: {
+					name: "User Engagement Duration",
+					description: "Total engaged seconds, so seconds-per-view can be recomputed.",
+					type: "number",
+				},
 			},
 		},
 	},

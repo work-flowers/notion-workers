@@ -2,12 +2,16 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+	breakdownBucket,
 	bucketizeDays,
 	dedupeByDay,
 	delta,
 	filterDays,
 	formatDuration,
 	formatPercent,
+	formatSpan,
+	mergeWindows,
+	monthWindows,
 	groupPages,
 	pageGroup,
 	previousDays,
@@ -15,6 +19,7 @@ import {
 	summarizeChannels,
 	summarizeDays,
 	summarizePages,
+	summarizePeriodPages,
 	summarizeSources,
 	untaggedShare,
 	type ChannelRow,
@@ -24,6 +29,7 @@ import {
 import {
 	MOCK_CHANNELS,
 	MOCK_DAYS,
+	MOCK_PAGE_DAYS,
 	MOCK_PAGES,
 } from "../blocks/website-dashboard/src/mock.ts"
 
@@ -366,5 +372,199 @@ describe("formatDuration", () => {
 		assert.equal(formatDuration(125.4946), "2m 05s")
 		assert.equal(formatDuration(3600), "60m 00s")
 		assert.equal(formatDuration(null), "—")
+	})
+})
+
+describe("breakdownBucket", () => {
+	const days = dedupeByDay(MOCK_DAYS).days
+
+	it("explains the spike week: the newsletter, not a general lift", () => {
+		// The tallest bar in the weekly chart. Its breakdown is the point of the
+		// drill-down: 54 of the 274 sessions came in on one email campaign.
+		const spike = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-06-29")!
+		assert.equal(spike.bucket.sessions, 274)
+		assert.equal(spike.attributedSessions, 274)
+		assert.deepEqual(
+			spike.channels.slice(0, 2).map((c) => [c.channel, c.sessions]),
+			[
+				["Direct", 129],
+				["Email", 54],
+			],
+		)
+		const email = spike.sources.find((s) => s.medium === "email")
+		assert.equal(email?.source, "workflowers")
+		assert.equal(email?.sessions, 54)
+		// And the day-by-day split shows where inside the week it landed.
+		assert.equal(spike.days.find((d) => d.key === "2026-07-02")?.sessions, 77)
+	})
+
+	it("splits a period into its own days, which add back up to the bar", () => {
+		for (const bucket of bucketizeDays(days, "week")) {
+			const drill = breakdownBucket(days, MOCK_CHANNELS, "week", bucket.key)!
+			const sum = drill.days.reduce((total, d) => total + d.sessions, 0)
+			assert.equal(sum, bucket.sessions, bucket.key)
+			assert.equal(drill.bucket.sessions, bucket.sessions, bucket.key)
+		}
+	})
+
+	it("recomputes the period's rates from its own counts", () => {
+		const drill = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-06-29")!
+		const [bucket] = bucketizeDays(
+			days.filter((d) => d.day! >= "2026-06-29" && d.day! <= "2026-07-05"),
+			"week",
+		)
+		assert.equal(drill.bucket.engagementRate, bucket.engagementRate)
+		assert.equal(drill.bucket.avgSessionDuration, bucket.avgSessionDuration)
+	})
+
+	it("reports a partial period against its full length", () => {
+		// Data starts 2026-04-12 and the snapshot ends 2026-08-02, so both ends
+		// of the monthly chart are partial and must not read as whole months.
+		const april = breakdownBucket(days, MOCK_CHANNELS, "month", "2026-04")!
+		assert.equal(april.firstDay, "2026-04-12")
+		assert.equal(april.days.length, 19)
+		assert.equal(april.periodDays, 30)
+		const august = breakdownBucket(days, MOCK_CHANNELS, "month", "2026-08")!
+		assert.equal(august.days.length, 2)
+		assert.equal(august.periodDays, 31)
+	})
+
+	it("keeps the acquisition total separate when the two reports disagree", () => {
+		// Recent days carry GA4 sessions still marked (not set) in the
+		// source/medium report, so its total runs ahead of Site Daily's. The
+		// drill-down has to say so rather than pass the channel split off as
+		// the whole bar.
+		const last = breakdownBucket(days, MOCK_CHANNELS, "week", "2026-07-27")!
+		assert.equal(last.bucket.sessions, 115)
+		assert.equal(last.attributedSessions, 128)
+	})
+
+	it("has no day split for a bar that is already one day", () => {
+		const one = breakdownBucket(days, MOCK_CHANNELS, "day", "2026-07-02")!
+		assert.equal(one.bucket.sessions, 77)
+		assert.deepEqual(one.days, [])
+		assert.equal(one.periodDays, 1)
+	})
+
+	it("is null for a period with no days", () => {
+		assert.equal(breakdownBucket(days, MOCK_CHANNELS, "week", "2025-01-06"), null)
+		assert.equal(breakdownBucket(days, [], "week", "2026-06-29")?.attributedSessions, 0)
+	})
+})
+
+describe("formatSpan", () => {
+	it("names a range compactly, without a timezone shift", () => {
+		assert.equal(formatSpan("2026-07-13", "2026-07-19"), "13–19 Jul")
+		assert.equal(formatSpan("2026-07-27", "2026-08-02"), "27 Jul – 2 Aug")
+		assert.equal(formatSpan("2026-07-02", "2026-07-02"), "2 Jul")
+	})
+})
+
+describe("summarizePeriodPages", () => {
+	const days = dedupeByDay(MOCK_DAYS).days
+	const titles = new Map(
+		MOCK_PAGES.filter((p) => p.sourceTitle).map((p) => [p.path, p.sourceTitle]),
+	)
+	// What the host's date filter returns for a period.
+	const slice = (from: string, to: string) =>
+		MOCK_PAGE_DAYS.filter((r) => r.day! >= from && r.day! <= to)
+
+	it("names the post behind the 2 Jul spike", () => {
+		const day = summarizePeriodPages(slice("2026-07-02", "2026-07-02"), "2026-07-02", "2026-07-02", titles)
+		const [top] = day.pages
+		assert.equal(top.path, "/blog/ai-coding-agents-evolve-no-code")
+		assert.equal(top.views, 31)
+		assert.ok(top.title.startsWith("How AI Coding Agents"))
+		// A single day, so its unique users are meaningful.
+		assert.equal(top.users, 26)
+		assert.equal(day.views, 103)
+	})
+
+	it("reconciles with Site Daily's page views, day by day", () => {
+		// Two separate GA4 reports that ought to agree. They do on every settled
+		// day; only the last two, still processing when Site Daily was
+		// snapshotted, differ — which is why the drill-down reports a mismatch
+		// instead of assuming one can't happen.
+		const off = days.filter((d) => {
+			const pages = summarizePeriodPages(slice(d.day!, d.day!), d.day!, d.day!, titles)
+			return pages.views !== d.views
+		})
+		assert.deepEqual(
+			off.map((d) => d.day),
+			["2026-08-01", "2026-08-02"],
+		)
+	})
+
+	it("sums a week per page but withholds users, which would be user-days", () => {
+		const week = summarizePeriodPages(slice("2026-06-29", "2026-07-05"), "2026-06-29", "2026-07-05", titles)
+		assert.equal(week.views, 406)
+		assert.equal(week.pages[0].path, "/")
+		assert.equal(week.pages[0].views, 87)
+		assert.ok(week.pages.every((p) => p.users === null))
+		const shares = week.pages.reduce((sum, p) => sum + (p.share ?? 0), 0)
+		assert.ok(Math.abs(shares - 1) < 1e-9)
+	})
+
+	it("falls back to the path when Page Performance has no title", () => {
+		const week = summarizePeriodPages(slice("2026-06-29", "2026-07-05"), "2026-06-29", "2026-07-05", titles)
+		const tag = week.pages.find((p) => p.path === "/blog/tags/notion")
+		assert.equal(tag?.title, "")
+	})
+
+	it("detects a client that ignored the date filter", () => {
+		// Old Notion clients drop filters silently and return an arbitrary 999
+		// rows. Re-checking the dates is the only way to notice.
+		const ignored = summarizePeriodPages(MOCK_PAGE_DAYS, "2026-07-02", "2026-07-02", titles)
+		assert.equal(ignored.views, 103)
+		assert.equal(ignored.outOfRange, MOCK_PAGE_DAYS.length - slice("2026-07-02", "2026-07-02").length)
+		const honoured = summarizePeriodPages(slice("2026-07-02", "2026-07-02"), "2026-07-02", "2026-07-02", titles)
+		assert.equal(honoured.outOfRange, 0)
+	})
+})
+
+describe("monthWindows and mergeWindows", () => {
+	// 🚥 Traffic outgrew one 999-row query, so the block loads it one calendar
+	// month per subscription and stitches the months back together.
+	const windows = monthWindows("2026-04-01", "2026-08-03")
+	const byHost = (rows: ChannelRow[], w: { from: string; to: string }) =>
+		rows.filter((r) => r.day! >= w.from && r.day! <= w.to)
+
+	it("covers every month from the start through today's, with real month ends", () => {
+		assert.deepEqual(
+			windows.map((w) => [w.from, w.to]),
+			[
+				["2026-04-01", "2026-04-30"],
+				["2026-05-01", "2026-05-31"],
+				["2026-06-01", "2026-06-30"],
+				["2026-07-01", "2026-07-31"],
+				["2026-08-01", "2026-08-31"],
+			],
+		)
+		const across = monthWindows("2026-11-15", "2027-02-01")
+		assert.deepEqual(
+			across.map((w) => w.to),
+			["2026-11-30", "2026-12-31", "2027-01-31", "2027-02-28"],
+		)
+	})
+
+	it("reassembles exactly the rows one unfiltered query would have", () => {
+		const merged = mergeWindows(windows.map((w) => ({ window: w, rows: byHost(MOCK_CHANNELS, w) })))
+		assert.equal(merged.rows.length, MOCK_CHANNELS.length)
+		assert.equal(merged.outOfRange, 0)
+		// So every figure downstream is unchanged by the switch.
+		assert.deepEqual(summarizeChannels(merged.rows), summarizeChannels(MOCK_CHANNELS))
+	})
+
+	it("keeps each month far under the cap", () => {
+		const biggest = Math.max(...windows.map((w) => byHost(MOCK_CHANNELS, w).length))
+		assert.ok(biggest < 250, `largest month has ${biggest} rows`)
+	})
+
+	it("neither multiplies rows nor hides it when the client ignores the filter", () => {
+		// An old client hands every window the same unfiltered rows. Each row is
+		// kept once — by the window it belongs to — and the rest are counted.
+		const merged = mergeWindows(windows.map((w) => ({ window: w, rows: MOCK_CHANNELS })))
+		assert.equal(merged.rows.length, MOCK_CHANNELS.length)
+		assert.equal(merged.outOfRange, MOCK_CHANNELS.length * (windows.length - 1))
 	})
 })

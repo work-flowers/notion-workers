@@ -70,6 +70,24 @@ export type PageRow = {
 	sourceTitle: string
 }
 
+/**
+ * One row of 📄 Pages Path Report — one page on one day.
+ *
+ * Only ever read for one drill-down period at a time, through a date-filtered
+ * query: the whole report is far past the 999-row cap (1,917 rows on
+ * 2026-09-30), so it can't be loaded the way the other three are.
+ */
+export type PageDayRow = {
+	id: string
+	day: string | null
+	path: string
+	pageType: string
+	views: number
+	/** Per-day unique users. Not additive across days, like `DailyRow.totalUsers`. */
+	users: number
+	engagementSeconds: number
+}
+
 // ---------------------------------------------------------------------------
 // Windows and buckets
 // ---------------------------------------------------------------------------
@@ -160,6 +178,71 @@ function bucketFor(
 		label: `${MONTHS[Number(month) - 1]} ${year}`,
 		start: `${year}-${month}-01`,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Loading past the 999-row cap
+// ---------------------------------------------------------------------------
+
+export type DateWindow = { key: string; from: string; to: string }
+
+/**
+ * Calendar months from `start`'s month through `today`'s, oldest first — the
+ * windows a data source too big for one query is loaded in. Each is a
+ * separate date-filtered subscription, so the cap applies per month.
+ */
+export function monthWindows(start: string, today: string): DateWindow[] {
+	const windows: DateWindow[] = []
+	let [year, month] = start.split("-").map(Number) as [number, number]
+	const [endYear, endMonth] = today.split("-").map(Number) as [number, number]
+
+	while (year < endYear || (year === endYear && month <= endMonth)) {
+		const mm = String(month).padStart(2, "0")
+		const last = new Date(Date.UTC(year, month, 0)).getUTCDate()
+		windows.push({ key: `${year}-${mm}`, from: `${year}-${mm}-01`, to: `${year}-${mm}-${last}` })
+		month += 1
+		if (month > 12) {
+			month = 1
+			year += 1
+		}
+	}
+	return windows
+}
+
+export type MergedWindows<T> = {
+	rows: T[]
+	/**
+	 * Rows a window returned from outside its own dates. Non-zero means the
+	 * Notion client ignored the filter (old clients do, silently): every window
+	 * then got the same arbitrary 999 rows, and the merge is incomplete.
+	 */
+	outOfRange: number
+}
+
+/**
+ * Stitch per-window results back into one row set. Each row is kept only by
+ * the window whose dates contain it, so a client that ignored the filter can't
+ * multiply rows, and the dropped rows are counted so it can be reported.
+ */
+export function mergeWindows<T extends { id: string; day: string | null }>(
+	windows: { window: DateWindow; rows: T[] }[],
+): MergedWindows<T> {
+	const rows: T[] = []
+	const seen = new Set<string>()
+	let outOfRange = 0
+
+	for (const { window, rows: got } of windows) {
+		for (const row of got) {
+			if (!row.day || row.day < window.from || row.day > window.to) {
+				outOfRange += 1
+				continue
+			}
+			if (seen.has(row.id)) continue
+			seen.add(row.id)
+			rows.push(row)
+		}
+	}
+	return { rows, outOfRange }
 }
 
 function safeRatio(numerator: number, denominator: number): number | null {
@@ -562,6 +645,165 @@ export function channelTrend(
 }
 
 // ---------------------------------------------------------------------------
+// Drill-down — one period of the traffic chart, taken apart
+// ---------------------------------------------------------------------------
+
+/** The rows whose day falls in the bucket `key` at this granularity. */
+export function inBucket<T extends { day: string | null }>(
+	rows: T[],
+	granularity: Granularity,
+	key: string,
+): T[] {
+	return rows.filter((row) => row.day && bucketFor(row.day, granularity).key === key)
+}
+
+/** Calendar days a full period of this granularity spans. */
+function periodLength(start: string, granularity: Granularity): number {
+	if (granularity === "day") return 1
+	if (granularity === "week") return 7
+	const [y, m] = start.split("-").map(Number)
+	return new Date(Date.UTC(y ?? 1970, m ?? 1, 0)).getUTCDate()
+}
+
+export type BucketBreakdown = {
+	bucket: DailyBucket
+	/** First and last day inside the bucket that actually has data. */
+	firstDay: string
+	lastDay: string
+	/** Days a full period would hold — 7 for a week — so a partial one shows. */
+	periodDays: number
+	/** The bucket's own days as one-day buckets. Empty when it already is a day. */
+	days: DailyBucket[]
+	channels: ChannelSummary[]
+	sources: SourceSummary[]
+	/**
+	 * Σ sessions across the acquisition rows in the bucket. The two reports are
+	 * separate GA4 queries, so this need not equal `bucket.sessions`; the caller
+	 * says so rather than presenting the channel split as the whole period.
+	 */
+	attributedSessions: number
+}
+
+/**
+ * Everything the drill-down shows for one bucket of the traffic chart.
+ *
+ * `days` and `channelRows` must already be deduplicated and filtered to the
+ * same range the chart plots, so the breakdown can never disagree with the
+ * bar that was clicked. Null when the bucket holds no days.
+ */
+export function breakdownBucket(
+	days: DailyRow[],
+	channelRows: ChannelRow[],
+	granularity: Granularity,
+	key: string,
+): BucketBreakdown | null {
+	const own = inBucket(days, granularity, key)
+	const [bucket] = bucketizeDays(own, granularity)
+	if (!bucket) return null
+
+	const dated = own.map((d) => d.day).filter((d): d is string => d !== null)
+	const rows = inBucket(channelRows, granularity, key)
+
+	return {
+		bucket,
+		firstDay: dated[0],
+		lastDay: dated[dated.length - 1],
+		periodDays: periodLength(bucket.start, granularity),
+		days: granularity === "day" ? [] : bucketizeDays(own, "day"),
+		channels: summarizeChannels(rows),
+		sources: summarizeSources(rows),
+		attributedSessions: rows.reduce((sum, r) => sum + r.sessions, 0),
+	}
+}
+
+export type PeriodPage = {
+	path: string
+	/** The linked Notion page's title from Page Performance, or empty. */
+	title: string
+	pageType: string
+	views: number
+	engagementSeconds: number
+	secondsPerView: number | null
+	/** This page's share of the period's views. */
+	share: number | null
+	/**
+	 * Unique users, but only when the period is a single day. Across days the
+	 * per-day counts sum to user-days, so it's withheld rather than mislabelled.
+	 */
+	users: number | null
+}
+
+export type PeriodPages = {
+	pages: PeriodPage[]
+	views: number
+	/**
+	 * Rows the host returned from outside the requested dates. Non-zero means
+	 * the Notion client ignored the date filter (old clients do, silently), so
+	 * the 999 rows it sent are an arbitrary slice and the ranking is partial.
+	 */
+	outOfRange: number
+}
+
+/**
+ * The pages viewed between `from` and `to` inclusive, most-viewed first.
+ *
+ * Rows are re-checked against the dates even though the query filtered on
+ * them — that re-check is what detects a client that ignored the filter.
+ * `titles` maps a normalised path to its Notion title (Page Performance's
+ * `Source Title`); both reports normalise paths the same way in the sync.
+ */
+export function summarizePeriodPages(
+	rows: PageDayRow[],
+	from: string,
+	to: string,
+	titles: Map<string, string>,
+): PeriodPages {
+	const byPath = new Map<
+		string,
+		{ pageType: string; views: number; engagementSeconds: number; users: number }
+	>()
+	let outOfRange = 0
+	let views = 0
+
+	for (const row of rows) {
+		if (!row.day || row.day < from || row.day > to) {
+			outOfRange += 1
+			continue
+		}
+		views += row.views
+		const held = byPath.get(row.path)
+		if (held) {
+			held.views += row.views
+			held.engagementSeconds += row.engagementSeconds
+			held.users += row.users
+		} else {
+			byPath.set(row.path, {
+				pageType: row.pageType,
+				views: row.views,
+				engagementSeconds: row.engagementSeconds,
+				users: row.users,
+			})
+		}
+	}
+
+	const oneDay = from === to
+	const pages = [...byPath.entries()]
+		.map(([path, page]) => ({
+			path,
+			title: titles.get(path) ?? "",
+			pageType: page.pageType,
+			views: page.views,
+			engagementSeconds: page.engagementSeconds,
+			secondsPerView: safeRatio(page.engagementSeconds, page.views),
+			share: safeRatio(page.views, views),
+			users: oneDay ? page.users : null,
+		}))
+		.sort((a, b) => b.views - a.views || (a.path < b.path ? -1 : 1))
+
+	return { pages, views, outOfRange }
+}
+
+// ---------------------------------------------------------------------------
 // Content
 // ---------------------------------------------------------------------------
 
@@ -704,6 +946,15 @@ export function formatDelta(value: number | null): string {
 	if (value === null) return ""
 	const sign = value > 0 ? "+" : value < 0 ? "−" : ""
 	return `${sign}${Math.abs(value * 100).toFixed(1)}%`
+}
+
+/** `13–19 Jul`, `28 Jul – 3 Aug`, or a single day. Parsed by hand, like `shortDate`. */
+export function formatSpan(first: string, last: string): string {
+	if (first === last) return shortDate(first)
+	const [, fm, fd] = first.split("-")
+	const [, lm, ld] = last.split("-")
+	if (fm === lm) return `${Number(fd)}–${Number(ld)} ${MONTHS[Number(lm) - 1] ?? ""}`
+	return `${shortDate(first)} – ${shortDate(last)}`
 }
 
 /** `2026-07-31` → `31 Jul`. Parsed by hand to avoid a timezone shift. */
