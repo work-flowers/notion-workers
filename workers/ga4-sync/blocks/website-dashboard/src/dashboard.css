@@ -375,6 +375,15 @@ body {
 	margin-bottom: var(--spacing-12);
 }
 
+/* A part's heading with an action beside it, e.g. "Show the whole week". */
+.wd-drill-part-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-8);
+	align-items: center;
+	justify-content: space-between;
+}
+
 .wd-drill-part h4 {
 	margin: 0;
 	font-size: 13px;

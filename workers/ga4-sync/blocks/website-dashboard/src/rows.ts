@@ -1,6 +1,6 @@
 import type { NotionDataSourcePage, NotionDateValue } from "@notionhq/custom-blocks"
 
-import type { ChannelRow, DailyRow, PageRow } from "./aggregate.ts"
+import type { ChannelRow, DailyRow, PageDayRow, PageRow } from "./aggregate.ts"
 
 /**
  * Turn bound rows into the shapes `aggregate.ts` works with.
@@ -56,6 +56,19 @@ export function toPageRow(row: NotionDataSourcePage): PageRow {
 		engagementSeconds28: count(props.engagementSeconds28),
 		matched: flag(props.matched),
 		sourceTitle: text(props.sourceTitle),
+	}
+}
+
+export function toPageDayRow(row: NotionDataSourcePage): PageDayRow {
+	const props = row.propertiesByKey
+	return {
+		id: row.id,
+		day: day(props.day),
+		path: text(props.path) || "(untitled)",
+		pageType: text(props.pageType) || "Other",
+		views: count(props.views),
+		users: count(props.users),
+		engagementSeconds: count(props.engagementSeconds),
 	}
 }
 

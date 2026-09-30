@@ -17,6 +17,7 @@ import {
 	summarizeChannels,
 	summarizeDays,
 	summarizePages,
+	summarizePeriodPages,
 	summarizeSources,
 	untaggedShare,
 	type ChannelRow,
@@ -26,6 +27,7 @@ import {
 import {
 	MOCK_CHANNELS,
 	MOCK_DAYS,
+	MOCK_PAGE_DAYS,
 	MOCK_PAGES,
 } from "../blocks/website-dashboard/src/mock.ts"
 
@@ -453,5 +455,67 @@ describe("formatSpan", () => {
 		assert.equal(formatSpan("2026-07-13", "2026-07-19"), "13–19 Jul")
 		assert.equal(formatSpan("2026-07-27", "2026-08-02"), "27 Jul – 2 Aug")
 		assert.equal(formatSpan("2026-07-02", "2026-07-02"), "2 Jul")
+	})
+})
+
+describe("summarizePeriodPages", () => {
+	const days = dedupeByDay(MOCK_DAYS).days
+	const titles = new Map(
+		MOCK_PAGES.filter((p) => p.sourceTitle).map((p) => [p.path, p.sourceTitle]),
+	)
+	// What the host's date filter returns for a period.
+	const slice = (from: string, to: string) =>
+		MOCK_PAGE_DAYS.filter((r) => r.day! >= from && r.day! <= to)
+
+	it("names the post behind the 2 Jul spike", () => {
+		const day = summarizePeriodPages(slice("2026-07-02", "2026-07-02"), "2026-07-02", "2026-07-02", titles)
+		const [top] = day.pages
+		assert.equal(top.path, "/blog/ai-coding-agents-evolve-no-code")
+		assert.equal(top.views, 31)
+		assert.ok(top.title.startsWith("How AI Coding Agents"))
+		// A single day, so its unique users are meaningful.
+		assert.equal(top.users, 26)
+		assert.equal(day.views, 103)
+	})
+
+	it("reconciles with Site Daily's page views, day by day", () => {
+		// Two separate GA4 reports that ought to agree. They do on every settled
+		// day; only the last two, still processing when Site Daily was
+		// snapshotted, differ — which is why the drill-down reports a mismatch
+		// instead of assuming one can't happen.
+		const off = days.filter((d) => {
+			const pages = summarizePeriodPages(slice(d.day!, d.day!), d.day!, d.day!, titles)
+			return pages.views !== d.views
+		})
+		assert.deepEqual(
+			off.map((d) => d.day),
+			["2026-08-01", "2026-08-02"],
+		)
+	})
+
+	it("sums a week per page but withholds users, which would be user-days", () => {
+		const week = summarizePeriodPages(slice("2026-06-29", "2026-07-05"), "2026-06-29", "2026-07-05", titles)
+		assert.equal(week.views, 406)
+		assert.equal(week.pages[0].path, "/")
+		assert.equal(week.pages[0].views, 87)
+		assert.ok(week.pages.every((p) => p.users === null))
+		const shares = week.pages.reduce((sum, p) => sum + (p.share ?? 0), 0)
+		assert.ok(Math.abs(shares - 1) < 1e-9)
+	})
+
+	it("falls back to the path when Page Performance has no title", () => {
+		const week = summarizePeriodPages(slice("2026-06-29", "2026-07-05"), "2026-06-29", "2026-07-05", titles)
+		const tag = week.pages.find((p) => p.path === "/blog/tags/notion")
+		assert.equal(tag?.title, "")
+	})
+
+	it("detects a client that ignored the date filter", () => {
+		// Old Notion clients drop filters silently and return an arbitrary 999
+		// rows. Re-checking the dates is the only way to notice.
+		const ignored = summarizePeriodPages(MOCK_PAGE_DAYS, "2026-07-02", "2026-07-02", titles)
+		assert.equal(ignored.views, 103)
+		assert.equal(ignored.outOfRange, MOCK_PAGE_DAYS.length - slice("2026-07-02", "2026-07-02").length)
+		const honoured = summarizePeriodPages(slice("2026-07-02", "2026-07-02"), "2026-07-02", "2026-07-02", titles)
+		assert.equal(honoured.outOfRange, 0)
 	})
 })

@@ -24,6 +24,7 @@ import {
 	summarizeChannels,
 	summarizeDays,
 	summarizePages,
+	summarizePeriodPages,
 	shortDate,
 	summarizeSources,
 	TRAFFIC_METRIC_LABELS,
@@ -53,6 +54,7 @@ import {
 	type SeriesSpec,
 	type TrendBucket,
 } from "./charts.tsx"
+import { usePeriodPages } from "./periodPages.ts"
 import { DataTable, type Column } from "./table.tsx"
 
 type Tab = "traffic" | "acquisition" | "content"
@@ -120,6 +122,8 @@ export function App({ days, channels, pages, today, status, message, stale, boun
 			),
 			pageGroups: groupPages(pages),
 			pageTotals: summarizePages(pages),
+			// Path → Notion title, so the drill-down's page ranking reads as content.
+			titles: new Map(pages.filter((p) => p.sourceTitle).map((p) => [p.path, p.sourceTitle])),
 		}
 	}, [days, channels, pages, range, today, granularity])
 
@@ -214,6 +218,7 @@ export function App({ days, channels, pages, today, status, message, stale, boun
 						days={model.inRange}
 						channelRows={model.channelRows}
 						acquisitionBound={bound.acquisition}
+						titles={model.titles}
 						totals={model.totals}
 						prior={model.prior}
 						buckets={model.buckets}
@@ -268,6 +273,7 @@ function TrafficTab({
 	days,
 	channelRows,
 	acquisitionBound,
+	titles,
 	totals,
 	prior,
 	buckets,
@@ -283,6 +289,7 @@ function TrafficTab({
 	/** Range-filtered acquisition rows, for splitting a period by channel. */
 	channelRows: ChannelRow[]
 	acquisitionBound: boolean
+	titles: Map<string, string>
 	totals: TrafficMetrics
 	prior: TrafficMetrics | null
 	buckets: DailyBucket[]
@@ -415,7 +422,11 @@ function TrafficTab({
 						/>
 						{breakdown ? (
 							<DrillDown
+								key={breakdown.bucket.key}
 								breakdown={breakdown}
+								days={days}
+								channelRows={channelRows}
+								titles={titles}
 								window={totals}
 								granularity={granularity}
 								metric={metric}
@@ -475,17 +486,26 @@ function toTrend(b: DailyBucket): TrendBucket {
 
 /** How many source/medium pairs a drill-down ranks before it's a long tail. */
 const DRILL_SOURCES = 8
+/** How many pages a drill-down ranks. */
+const DRILL_PAGES = 10
 
 /**
  * One period of the traffic chart, taken apart: its own figures against the
- * window, the days inside it, and the channels and sources behind it.
+ * window, the days inside it, and the channels, sources and pages behind it.
  *
  * Counts are compared **per day** against the window's per-day average, never
  * as a raw total against an average period: a partial week — the current one,
  * or the week the data starts — would otherwise read as a collapse.
+ *
+ * Clicking a day in the day-by-day chart narrows the channel, source and page
+ * splits to that day; the tiles stay on the whole period. The parent keys this
+ * component by period, so moving to another period drops the focused day.
  */
 function DrillDown({
 	breakdown,
+	days: allDays,
+	channelRows,
+	titles,
 	window,
 	granularity,
 	metric,
@@ -495,6 +515,11 @@ function DrillDown({
 	onNext,
 }: {
 	breakdown: BucketBreakdown
+	/** The same range-filtered days the chart plots, to split out a focused day. */
+	days: DailyRow[]
+	channelRows: ChannelRow[]
+	/** Normalised path → Notion title, from Page Performance. */
+	titles: Map<string, string>
 	window: TrafficMetrics
 	granularity: Granularity
 	metric: TrafficMetricKey
@@ -503,7 +528,8 @@ function DrillDown({
 	onPrevious: (() => void) | null
 	onNext: (() => void) | null
 }) {
-	const { bucket, days, channels, sources, attributedSessions } = breakdown
+	const [focusDay, setFocusDay] = useState<string | null>(null)
+	const { bucket, days } = breakdown
 	const title =
 		granularity === "week"
 			? `Week of ${bucket.label}`
@@ -515,6 +541,15 @@ function DrillDown({
 	const vsWindow = (key: "sessions" | "views" | "newUsers") =>
 		delta(perDay(bucket[key], bucket), perDay(window[key], window))
 	const since = granularity === "day" ? "vs daily average" : "per day, vs average"
+
+	// What the lower splits describe: the focused day, or the whole period.
+	const focus = focusDay ? breakdownBucket(allDays, channelRows, "day", focusDay) : null
+	const split = focus ?? breakdown
+	// Headings name the date when there is one; prose needs its preposition.
+	const oneDate = focus ? focus.bucket.start : granularity === "day" ? bucket.start : null
+	const scope = oneDate ? shortDate(oneDate) : `this ${granularity}`
+	const inScope = oneDate ? `on ${shortDate(oneDate)}` : `in this ${granularity}`
+	const { channels, sources, attributedSessions } = split
 
 	// The source/medium report carries sessions and new users but not page
 	// views, so a page-view drill-down splits channels by sessions — and says so.
@@ -530,7 +565,7 @@ function DrillDown({
 			tooltipTitle: c.channel,
 			tooltipFooter: `${formatPercent(
 				channelTotal > 0 ? c[channelMetric] / channelTotal : null,
-			)} of the ${granularity} · ${formatPercent(c.engagementRate)} engaged`,
+			)} of ${scope} · ${formatPercent(c.engagementRate)} engaged`,
 		}))
 	const bySource: RankedRow[] = sources.slice(0, DRILL_SOURCES).map((s) => ({
 		id: s.id,
@@ -547,7 +582,10 @@ function DrillDown({
 			className="wd-drill"
 			aria-labelledby="wd-drill-title"
 			onKeyDown={(e) => {
-				if (e.key === "Escape") onClose()
+				if (e.key !== "Escape") return
+				// Escape backs out one level: the focused day first, then the panel.
+				if (focusDay) setFocusDay(null)
+				else onClose()
 			}}
 		>
 			<div className="wd-drill-head">
@@ -628,31 +666,58 @@ function DrillDown({
 				/>
 			</div>
 
-			<div className="wd-drill-grid">
-				{days.length > 0 ? (
-					<div className="wd-drill-part">
+			{days.length > 0 ? (
+				<div className="wd-drill-part">
+					<div className="wd-drill-part-head">
 						<h4>Day by day</h4>
-						<p>
-							{TRAFFIC_METRIC_LABELS[metric]} each day of the {granularity}.
-						</p>
-						<Columns
-							buckets={days.map(toTrend)}
-							seriesKey={metric}
-							valueLabel={TRAFFIC_METRIC_LABELS[metric]}
-							ariaLabel={`${TRAFFIC_METRIC_LABELS[metric]} for each of ${days.length} days`}
-						/>
+						{focus ? (
+							<button
+								type="button"
+								className="wd-drill-button is-text"
+								onClick={() => setFocusDay(null)}
+							>
+								Show the whole {granularity}
+							</button>
+						) : null}
 					</div>
-				) : null}
+					<p>
+						{TRAFFIC_METRIC_LABELS[metric]} each day of the {granularity}.{" "}
+						{focus
+							? `Showing ${scope} below — click it again, or press Escape, for the whole ${granularity}.`
+							: "Click a day to narrow the channels, sources and pages below to it."}
+					</p>
+					<Columns
+						buckets={days.map(toTrend)}
+						seriesKey={metric}
+						valueLabel={TRAFFIC_METRIC_LABELS[metric]}
+						ariaLabel={`${TRAFFIC_METRIC_LABELS[metric]} for each of ${days.length} days`}
+						selectedKey={focusDay}
+						onSelect={(day) => setFocusDay((held) => (held === day ? null : day))}
+					/>
+				</div>
+			) : null}
+
+			<div className="wd-drill-grid">
+				<PeriodPagesPart
+					from={breakdown.firstDay}
+					to={breakdown.lastDay}
+					focusDay={focusDay}
+					scope={scope}
+					inScope={inScope}
+					granularity={granularity}
+					expectedViews={split.bucket.views}
+					titles={titles}
+				/>
 
 				<div className="wd-drill-part">
-					<h4>By channel</h4>
+					<h4>By channel · {scope}</h4>
 					{!acquisitionBound ? (
 						<p>
-							Map <code>acquisition</code> to 🚥 Traffic Session Source Medium Report to split this{" "}
-							{granularity} by channel.
+							Map <code>acquisition</code> to 🚥 Traffic Session Source Medium Report to split{" "}
+							{scope} by channel.
 						</p>
 					) : channels.length === 0 ? (
-						<p>No acquisition rows fall in this {granularity}.</p>
+						<p>No acquisition rows fall {inScope}.</p>
 					) : (
 						<>
 							<p>
@@ -665,7 +730,7 @@ function DrillDown({
 								rows={byChannel}
 								isRate={false}
 								limit={BAR_LIMIT}
-								ariaLabel={`${channelLabel} for each of ${channels.length} channels in ${title}`}
+								ariaLabel={`${channelLabel} for each of ${channels.length} channels ${inScope}`}
 								valueLabel={channelLabel}
 								format={(v) => formatCount(v)}
 							/>
@@ -676,7 +741,7 @@ function DrillDown({
 
 			{acquisitionBound && sources.length > 0 ? (
 				<div className="wd-drill-part">
-					<h4>Top sources</h4>
+					<h4>Top sources · {scope}</h4>
 					<p>
 						Sessions per source and medium
 						{sources.length > DRILL_SOURCES
@@ -687,7 +752,7 @@ function DrillDown({
 						rows={bySource}
 						isRate={false}
 						limit={DRILL_SOURCES}
-						ariaLabel={`Sessions for the top ${bySource.length} sources in ${title}`}
+						ariaLabel={`Sessions for the top ${bySource.length} sources ${inScope}`}
 						valueLabel="Sessions"
 						format={(v) => formatCount(v)}
 					/>
@@ -696,14 +761,147 @@ function DrillDown({
 
 			{/* Two separate GA4 reports. Say when they disagree rather than pass the
 			    channel split off as the whole bar. */}
-			{acquisitionBound && channels.length > 0 && attributedSessions !== bucket.sessions ? (
+			{acquisitionBound && channels.length > 0 && attributedSessions !== split.bucket.sessions ? (
 				<p className="wd-table-note">
-					The source/medium report counts {formatCount(attributedSessions)} sessions here against{" "}
-					{formatCount(bucket.sessions)} in Site Daily Summary. They're separate GA4 reports, and
-					recent days usually differ until GA4 finishes processing them.
+					The source/medium report counts {formatCount(attributedSessions)} sessions {inScope}{" "}
+					against {formatCount(split.bucket.sessions)} in Site Daily Summary. They're separate GA4
+					reports, and recent days usually differ until GA4 finishes processing them.
 				</p>
 			) : null}
 		</section>
+	)
+}
+
+/**
+ * The pages behind a period, from 📄 Pages Path Report.
+ *
+ * Always subscribes for the whole period (`from`–`to`) and narrows to
+ * `focusDay` client-side, so clicking between days doesn't replace the
+ * subscription and blank the list while it reloads.
+ */
+function PeriodPagesPart({
+	from,
+	to,
+	focusDay,
+	scope,
+	inScope,
+	granularity,
+	expectedViews,
+	titles,
+}: {
+	from: string
+	to: string
+	focusDay: string | null
+	/** "this week" or "2 Jul", for headings. */
+	scope: string
+	/** "in this week" or "on 2 Jul", for prose. */
+	inScope: string
+	granularity: Granularity
+	/** Site Daily's page views for the same scope, to reconcile against. */
+	expectedViews: number
+	titles: Map<string, string>
+}) {
+	const result = usePeriodPages(from, to)
+	const period = useMemo(
+		() => summarizePeriodPages(result.rows, from, to, titles),
+		[result.rows, from, to, titles],
+	)
+	const shown = useMemo(
+		() => (focusDay ? summarizePeriodPages(result.rows, focusDay, focusDay, titles) : period),
+		[focusDay, period, result.rows, titles],
+	)
+
+	const heading = <h4>Top pages · {scope}</h4>
+
+	if (result.status === "unbound") {
+		return (
+			<div className="wd-drill-part">
+				{heading}
+				<p>
+					Map <code>pageDays</code> to 📄 Pages Path Report in the block's config panel to see
+					which pages drove {scope}.
+				</p>
+			</div>
+		)
+	}
+	if (result.status === "error") {
+		return (
+			<div className="wd-drill-part">
+				{heading}
+				<p>Couldn't load Pages Path Report: {result.message ?? "unknown error"}.</p>
+			</div>
+		)
+	}
+	if (result.status === "loading") {
+		return (
+			<div className="wd-drill-part">
+				{heading}
+				<p>Loading pages…</p>
+			</div>
+		)
+	}
+	if (shown.pages.length === 0) {
+		return (
+			<div className="wd-drill-part">
+				{heading}
+				<p>No page views recorded {inScope}.</p>
+			</div>
+		)
+	}
+
+	const oneDay = focusDay !== null || from === to
+	const rows: RankedRow[] = shown.pages.slice(0, DRILL_PAGES).map((p) => ({
+		id: p.path,
+		label: p.title || p.path,
+		value: p.views,
+		tooltipTitle: p.path,
+		tooltipFooter: [
+			p.pageType,
+			`${formatPercent(p.share)} of views`,
+			`${formatDuration(p.secondsPerView)} engaged per view`,
+			p.users !== null ? `${formatCount(p.users)} ${p.users === 1 ? "user" : "users"}` : null,
+		]
+			.filter(Boolean)
+			.join(" · "),
+	}))
+
+	return (
+		<div className="wd-drill-part">
+			{heading}
+			<p>
+				Page views per page
+				{shown.pages.length > DRILL_PAGES
+					? ` — the top ${DRILL_PAGES} of ${formatCount(shown.pages.length)}`
+					: ""}
+				. Titles come from Page Performance; pages with none show their URL.
+				{oneDay ? "" : " Hover for engaged time; unique users only add up within a single day."}
+			</p>
+			<RankedBars
+				rows={rows}
+				isRate={false}
+				limit={DRILL_PAGES}
+				ariaLabel={`Page views for the top ${rows.length} pages ${inScope}`}
+				valueLabel="Views"
+				format={(v) => formatCount(v)}
+			/>
+			{period.outOfRange > 0 ? (
+				<p className="wd-table-note">
+					This Notion client ignored the date filter, so these pages come from an arbitrary slice
+					of the report rather than everything {inScope}. Updating Notion fixes it.
+				</p>
+			) : result.hasMore ? (
+				<p className="wd-table-note">
+					This {granularity} has more page-days than one query returns; the least-viewed pages
+					are missing from the ranking.
+				</p>
+			) : shown.views !== expectedViews ? (
+				<p className="wd-table-note">
+					Pages Path Report counts {formatCount(shown.views)} views {inScope} against{" "}
+					{formatCount(expectedViews)} in Site Daily Summary — separate GA4 reports, which differ
+					on recent days until GA4 finishes processing them.
+				</p>
+			) : null}
+		</div>
 	)
 }
 

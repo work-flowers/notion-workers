@@ -76,7 +76,8 @@ function niceCountStep(max: number): number {
 	for (const scale of [magnitude / 10, magnitude, magnitude * 10]) {
 		for (const multiple of [1, 2, 2.5, 5]) {
 			const step = scale * multiple
-			if (step > 0 && max / step <= 4.2) return step
+			// Counts are whole: a 2.5-view gridline on a 9-view day is noise.
+			if (step >= 1 && Number.isInteger(step) && max / step <= 4.2) return step
 		}
 	}
 	return magnitude * 10
