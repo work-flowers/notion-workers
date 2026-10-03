@@ -310,11 +310,12 @@ to.
 dropped the `since` / `updatedAfter` parameters that earlier versions accepted and
 silently ignored, so there is nothing left to be misled by.
 
-**Zapier exposes no stack trace anywhere** — not on the run, not on the execution,
-not on the operation. Verified against a real failed run's full journal. The
-sketched schema this was modelled on had a `Stack Trace` column; the closest thing
-that actually exists is the failing operation's own error, which `failureDetail`
-in `src/runs.ts` extracts.
+**A failed step's journal entry carries a stack trace.** Corrected 2026-10-03: this
+note used to say Zapier exposes no stack trace anywhere. It is not on the run or
+the execution, but `getDurableRun`'s `operations[].error` has `name` and `stack`
+for an exhausted step (seen on `slack-thread-to-notion-discussion`'s
+`check-page-access` failure, 2026-09-28). `failureDetail` in `src/runs.ts` reads
+the name and message from the same object.
 
 ## Markdown
 
