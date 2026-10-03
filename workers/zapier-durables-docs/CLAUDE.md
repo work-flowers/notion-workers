@@ -119,8 +119,42 @@ genuinely different apps and must stay.
 ## Execution cost
 
 Credit consumption here is dominated by **sync executions**, and the notes below
-are why. Reworked 2026-08-12 — do not undo a piece of it without reading the
-reasoning.
+are why. Reworked 2026-08-12 and again 2026-10-03 — do not undo a piece of it
+without reading the reasoning.
+
+**A replace-mode sync's state does not survive the end of a cycle.** This is the
+single most important fact in this section, and it went unnoticed for seven
+weeks. `zapsSync` was replace mode and memoised everything in state (`dirs`,
+`versions`, `hashes`), but the platform hands a replace sync `null` state at the
+start of every cycle — `ntn workers sync state get zapsSync` read `null` between
+cycles, while `runsDelta` (incremental) kept its watermarks. The vendored
+sync-guide says it in one line ("state … is effectively reset between cycles").
+So from 2026-08-12 to 2026-10-03 every daily cycle was cold: all ~84 repo
+directories read, ~93 `getWorkflow`s, 8–10 pacer-bound executions at ~43s each
+(~395s/day), and **every README body re-sent every day** — wiping hand-added
+blocks daily, which is the exact thing the body hash existed to prevent. The
+`hashes` only ever protected executions *within* one cycle.
+
+Tells, if this ever recurs on another sync: every execution in a "quiet" cycle
+emits `pageContentMarkdown` (`ntn workers runs logs <runId>` prints the whole
+output, including `nextUserContext`), and the first execution of each cycle
+starts with caches holding only its own rows.
+
+**`zapsSync` is therefore incremental, with its own deletes** (2026-10-03).
+Incremental state persists, so the caches finally hold and a quiet cycle is
+`listWorkflows` + one repo listing + one People query, in one execution, emitting
+only rows whose property fingerprint moved (`rows` in state, see `src/zaps.ts`).
+Nothing sweeps any more, so the execution that completes a cycle deletes every
+key in `rows` that its own fresh `listWorkflows` no longer returns, behind the
+same empty-list guard that used to protect the sweep. Every 7 days a cycle
+re-emits all rows' properties (no bodies) as a self-heal; that costs no upstream
+call. The declared multi-select options are part of the fingerprint seed, so a
+deploy that declares a new option re-emits every row on its own; bump
+`ROW_FORMAT` for any other change to how a row is built.
+
+Known gap from the switch: a row created under replace mode whose workflow was
+deleted before the first incremental cycle completed is not in `rows`, so nothing
+deletes it. Remove such a row by hand.
 
 Two separate problems, and the schedule was the smaller half of both:
 
@@ -202,23 +236,27 @@ forced.** A directory's README only exists in memory in the execution that read
 it, so the rows it belongs to must be emitted right there; caching 48 READMEs in
 state to decouple the two would be far heavier than the `cycle` bookkeeping.
 Workflows that no directory claims need no GitHub read, so they go last, walked
-over an `order` pinned at cycle start — in replace mode a mid-cycle list change
-that shifted an index would skip a row and **sweep** it.
+over an `order` pinned at cycle start — a mid-cycle list change that shifted an
+index would otherwise skip a row (under replace mode, **sweeping** it).
 
 **Mid-cycle state must accumulate over the previous cycle's, not start empty.**
-`hashes` and `versions` are seeded from the existing values and overwritten per
+`hashes`, `versions`, `dirs` and `rows` are seeded from the existing values and overwritten per
 row. A fresh map would be committed part-way through a cycle holding only the rows
 reached so far, so every workflow not yet visited would lose its body hash and
 have its page body re-sent next cycle — destroying hand-added blocks. Stale
 entries are pruned instead on the final execution, where every row has been seen.
 
-**`zapsSync` cannot have an early-bail gate, because it is replace mode.** A
-completed cycle sweeps every row it did not emit, so returning `changes: []` on a
-"nothing changed" verdict would delete all 57 rows. The saving there is memoising
-the *derivation* while still emitting every row: `versions` keyed on
-`current_version_id` skips `getWorkflow` until a republish, and `dirs` keyed on
-each repo directory's tree sha skips the `zap.json` / `README.md` reads until an
-edit. Both keys come off calls that are made anyway, so validating them is free.
+**Never switch `zapsSync` back to replace mode without also dropping the
+skip-unchanged-rows logic.** Under replace, a completed cycle sweeps every row it
+did not emit, so skipping an unchanged row would delete it — and the caches would
+be reset anyway. The two memoisation keys are free to validate because they come
+off calls made every cycle: `versions` keyed on `current_version_id` skips
+`getWorkflow` until a republish, and `dirs` keyed on each repo directory's tree
+sha skips the `zap.json` / `README.md` reads until an edit.
+
+**`emitted` in the cycle state means *visited*, not *emitted*.** A row skipped as
+unchanged is still recorded, or the leftover-workflows pass would rebuild it
+without its directory and blank its GitHub URL.
 
 **Only a *successful* `getWorkflowVersion` may be cached.** It degrades to
 `undefined` on failure rather than throwing, so caching that result would freeze

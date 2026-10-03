@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
@@ -37,6 +36,12 @@ import {
 	triggerAppName,
 	type WorkflowRef,
 } from "./workflows.js";
+import {
+	contentHash,
+	deletedKeys,
+	isFullEmitDue,
+	rowFingerprint,
+} from "./zaps.js";
 
 const worker = new Worker();
 export default worker;
@@ -126,8 +131,9 @@ const runs = worker.database("runs", {
 // -- Pacers -----------------------------------------------------------------
 // GitHub allows 5000 req/hour authenticated. A `zapsSync` cycle is now one
 // listing plus two reads per *edited* directory rather than per directory, so a
-// quiet cycle is a single call; the ceiling only matters on the first cycle after
-// a state reset, when every directory is read. Zapier publishes no hard number
+// quiet cycle is a single call; the ceiling only matters on a cold cycle (first
+// after a state reset, or the replace -> incremental switch), when every
+// directory is read. Zapier publishes no hard number
 // for the workflows API — a cycle is one listing plus one getWorkflow per
 // republished durable.
 //
@@ -187,9 +193,15 @@ type ZapsCycle = {
 	dirOrder: string[];
 	/** Progress through `dirOrder`. */
 	dirIndex: number;
-	/** Workflow ids already emitted this cycle. Guards the leftover pass, and a
-	 *  duplicate `workflow_id` across two zap.json files, from double-emitting. */
+	/** Workflow ids already *visited* this cycle, whether or not their row was
+	 *  emitted. Guards the leftover pass, and a duplicate `workflow_id` across two
+	 *  zap.json files, from processing a workflow twice — the leftover pass would
+	 *  otherwise rebuild a skipped row without its directory and blank its
+	 *  GitHub URL. */
 	emitted: string[];
+	/** Re-emit every row's properties this cycle. Pinned at cycle start so the
+	 *  executions of one cycle agree. Absent on a cycle started before it existed. */
+	fullEmit?: boolean;
 	/** Progress through the leftover workflows, once `dirOrder` is exhausted. */
 	restIndex?: number;
 	/** Workflow ids in a fixed order for the leftover pass. Pinned at cycle start
@@ -206,44 +218,49 @@ type SyncState = {
 	versions?: Record<string, VersionState>;
 	/** Per-directory repo state, skipping the GitHub reads until an edit. */
 	dirs?: Record<string, RepoDirState>;
+	/** Fingerprint of each row's properties as last emitted, keyed by workflow id.
+	 *  Doubles as the set of keys this sync owns, which is what deletes are
+	 *  computed against now that the platform no longer sweeps. */
+	rows?: Record<string, string>;
+	/** When a cycle last re-emitted every row. See `FULL_EMIT_INTERVAL_MS`. */
+	fullEmitAt?: string;
 	cycle?: ZapsCycle;
 };
 
-function contentHash(value: unknown): string {
-	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
+/** Anything outside a row that changes what Notion stores for it — see
+ *  `rowFingerprint`. Declaring a new option therefore re-emits every row. */
+const ROW_SEED = { apps: SEEDED_APPS, connections: SEEDED_CONNECTION_ALIASES };
 
 // -- Sync -------------------------------------------------------------------
-// Replace mode: mark-and-sweep is the cheapest correct way to handle a deleted
-// Zap, and a full listing is one call either way.
+// **Incremental, with our own deletes — not replace.** Changed 2026-10-03.
 //
-// Daily, memoised, and **spread across executions**.
+// It was replace mode, memoised with three caches (`versions` keyed on
+// `current_version_id`, `dirs` keyed on each repo directory's tree sha, `hashes`
+// on the README body). None of them ever worked across cycles: **the platform
+// discards a replace sync's state when the cycle completes** — `sync state get
+// zapsSync` reads `null` between cycles. So every daily cycle was cold: ~84
+// directory reads, ~93 `getWorkflow`s, 8–10 pacer-bound executions (~395s), and
+// every README body re-sent, wiping hand-added blocks daily — exactly what the
+// body hash was meant to prevent.
 //
-// A naive gate — bail out early with no changes when nothing looks different —
-// is **not available here**, because replace mode sweeps any row a completed
-// cycle does not emit. So every row is still emitted every cycle, and the saving
-// comes from not re-deriving what has not changed. Two caches, each keyed on an
-// identity that only moves when the content does:
+// Incremental mode keeps state, so the caches now hold and a quiet cycle is one
+// `listWorkflows`, one repo listing and one People query, in one execution. It
+// also means a row only has to be emitted when its properties fingerprint moved
+// (`rows`), with a periodic full re-emit as a self-heal.
 //
-//   - `versions`, keyed on `current_version_id`, skips `getWorkflow` (and with
-//     it the `listConnections` / `getApp` lookups) until a republish.
-//   - `dirs`, keyed on each directory's tree sha, skips the `zap.json` and
-//     `README.md` reads until someone edits the repo.
+// The cost is that nothing sweeps any more. A workflow that disappears from
+// `listWorkflows` is deleted explicitly on the execution that completes a cycle
+// (`deletedKeys`), behind the same empty-list guard that used to protect the
+// sweep.
 //
-// Both are validated against values the cheap listing calls already return, so
-// the check itself is free. A quiet cycle is one `listWorkflows` and one repo
-// listing; a cycle after one Zap was republished pays for that one Zap.
-//
-// **The pagination is not optional, and memoising alone would not have fixed
-// this sync.** It used to do everything in one execution, and at 48 directories
-// that is ~97 GitHub plus ~66 Zapier calls, which crossed the ~300s execution
+// **The pagination is not optional.** A cold cycle (first after a state reset)
+// still reads everything, and doing that in one execution crossed the ~300s
 // timeout in August 2026 and failed 325 times in a row. A timed-out handler never
-// returns, so `nextState` is never committed — the caches would have stayed empty
-// and every retry would have been another cold start. Progress has to be
-// committable in bounded slices for the memoisation to ever take hold.
+// returns, so `nextState` is never committed and the caches would never fill.
+// Progress has to be committable in bounded slices.
 worker.sync("zapsSync", {
 	database: zaps,
-	mode: "replace",
+	mode: "incremental",
 	schedule: "1d",
 	execute: async (state: SyncState | undefined) => {
 		const budget = createBudget();
@@ -258,8 +275,10 @@ worker.sync("zapsSync", {
 		const nextHashes: Record<string, string> = { ...(state?.hashes ?? {}) };
 		const nextVersions: Record<string, VersionState> = { ...(state?.versions ?? {}) };
 		const nextDirs: Record<string, RepoDirState> = { ...(state?.dirs ?? {}) };
+		const nextRows: Record<string, string> = { ...(state?.rows ?? {}) };
 		const previousHashes = state?.hashes ?? {};
 		const previousVersions = state?.versions ?? {};
+		const previousRows = state?.rows ?? {};
 
 		const resolveCreatorEmail = createUserResolver(notionApi);
 		// Both lookups behind it are cached for this execution: one listConnections,
@@ -270,9 +289,9 @@ worker.sync("zapsSync", {
 		// retries from the last good state rather than half-writing.
 		const workflows = await listWorkflows(zapier);
 
-		// Replace mode sweeps every row the cycle does not emit. An empty list
-		// is far more likely to be an upstream blip than a genuine "all Zaps
-		// deleted", and acting on it would wipe the database.
+		// The completing execution deletes every known row missing from this list.
+		// An empty list is far more likely to be an upstream blip than a genuine
+		// "all Zaps deleted", and acting on it would wipe the database.
 		if (workflows.length === 0) {
 			throw new Error("listWorkflows returned no durables — refusing to sweep every row");
 		}
@@ -286,12 +305,16 @@ worker.sync("zapsSync", {
 			dirIndex: 0,
 			emitted: [],
 			order: workflows.map((workflow) => workflow.id),
+			fullEmit: isFullEmitDue(state?.fullEmitAt, Date.now()),
 		};
+		const fullEmit = cycle.fullEmit ?? true;
 		const emitted = new Set(cycle.emitted);
 		const changes = [];
 
 		/**
-		 * Build one row, and record it as emitted.
+		 * Build one row and record it as visited. Returns `undefined` when neither
+		 * its properties nor its body moved since they were last emitted — the
+		 * common case, and the whole saving on a quiet cycle.
 		 *
 		 * Returns the change rather than pushing it, so the pushes stay in the same
 		 * scope as `changes` — TypeScript only infers an evolving array type from
@@ -373,8 +396,8 @@ worker.sync("zapsSync", {
 			// survived a day. Keyed on the body, they survive until the README
 			// itself changes.
 			//
-			// Properties are still emitted every cycle: replace mode sweeps any
-			// row it does not see, so skipping one would delete it.
+			// Properties are emitted separately, only when their own fingerprint
+			// moves (see `rows` below).
 			//
 			// When the repo directory was skipped on its sha the README was never
 			// fetched, so there is nothing to hash: carry the previous hash forward
@@ -400,37 +423,45 @@ worker.sync("zapsSync", {
 			}
 
 			emitted.add(workflow.id);
+			const properties = {
+				Name: Builder.title(fields.name),
+				"Workflow ID": Builder.richText(workflow.id),
+				Status: Builder.select(fields.status),
+				Description: Builder.richText(fields.description),
+				"Trigger App": Builder.richText(fields.triggerApp),
+				"Trigger Event": Builder.richText(fields.triggerEvent),
+				// The durables editor is safe to publish. `trigger_url` is
+				// never synced — it embeds a secret token.
+				"Editor URL": Builder.url(editorUrl(workflow.id)),
+				"Version ID": Builder.richText(fields.versionId),
+				"Durable Version": Builder.richText(fields.durableVersion),
+				Connections: Builder.multiSelect(...fields.connections),
+				Apps: Builder.multiSelect(...fields.apps),
+				Dependencies: Builder.richText(fields.dependencies),
+				Steps: Builder.number(fields.steps),
+				"Action Call Sites": Builder.number(fields.actionCallSites),
+				// `people` takes emails, not user ids. An unresolved creator
+				// leaves this empty and "Creator ID" carries the raw id.
+				Creator: Builder.people(...(creatorEmail ? [creatorEmail] : [])),
+				"Creator ID": Builder.richText(fields.creatorId),
+				// These builders reject null, so an absent value omits the
+				// property rather than writing a blank one.
+				...(fields.githubUrl ? { "GitHub URL": Builder.url(fields.githubUrl) } : {}),
+				...(fields.created ? { Created: Builder.dateTime(fields.created) } : {}),
+				...(fields.updated ? { Updated: Builder.dateTime(fields.updated) } : {}),
+			};
+			const sendBody = Boolean(body) && !bodyUnchanged;
+			const fingerprint = rowFingerprint(properties, ROW_SEED);
+			if (!fullEmit && !sendBody && previousRows[workflow.id] === fingerprint) {
+				nextRows[workflow.id] = fingerprint;
+				return undefined;
+			}
+			nextRows[workflow.id] = fingerprint;
 			return {
 				type: "upsert" as const,
 				key: workflow.id,
-				properties: {
-					Name: Builder.title(fields.name),
-					"Workflow ID": Builder.richText(workflow.id),
-					Status: Builder.select(fields.status),
-					Description: Builder.richText(fields.description),
-					"Trigger App": Builder.richText(fields.triggerApp),
-					"Trigger Event": Builder.richText(fields.triggerEvent),
-					// The durables editor is safe to publish. `trigger_url` is
-					// never synced — it embeds a secret token.
-					"Editor URL": Builder.url(editorUrl(workflow.id)),
-					"Version ID": Builder.richText(fields.versionId),
-					"Durable Version": Builder.richText(fields.durableVersion),
-					Connections: Builder.multiSelect(...fields.connections),
-					Apps: Builder.multiSelect(...fields.apps),
-					Dependencies: Builder.richText(fields.dependencies),
-					Steps: Builder.number(fields.steps),
-					"Action Call Sites": Builder.number(fields.actionCallSites),
-					// `people` takes emails, not user ids. An unresolved creator
-					// leaves this empty and "Creator ID" carries the raw id.
-					Creator: Builder.people(...(creatorEmail ? [creatorEmail] : [])),
-					"Creator ID": Builder.richText(fields.creatorId),
-					// These builders reject null, so an absent value omits the
-					// property rather than writing a blank one.
-					...(fields.githubUrl ? { "GitHub URL": Builder.url(fields.githubUrl) } : {}),
-					...(fields.created ? { Created: Builder.dateTime(fields.created) } : {}),
-					...(fields.updated ? { Updated: Builder.dateTime(fields.updated) } : {}),
-				},
-				...(body && !bodyUnchanged ? { pageContentMarkdown: body } : {}),
+				properties,
+				...(sendBody && body ? { pageContentMarkdown: body } : {}),
 			};
 		};
 
@@ -478,7 +509,8 @@ worker.sync("zapsSync", {
 				// no row, which is correct — the row set is exactly what listWorkflows
 				// returns.
 				if (!workflow) continue;
-				changes.push(await buildRow(workflow, { directory: name, readme, unchanged }));
+				const change = await buildRow(workflow, { directory: name, readme, unchanged });
+				if (change) changes.push(change);
 			}
 
 			if (budget.exhausted()) break;
@@ -492,6 +524,8 @@ worker.sync("zapsSync", {
 					hashes: nextHashes,
 					versions: nextVersions,
 					dirs: nextDirs,
+					rows: nextRows,
+					fullEmitAt: state?.fullEmitAt,
 					cycle: { ...cycle, dirIndex, emitted: [...emitted] },
 				},
 			};
@@ -506,10 +540,11 @@ worker.sync("zapsSync", {
 			restIndex++;
 			if (emitted.has(workflowId)) continue;
 			const workflow = byId.get(workflowId);
-			// Deleted mid-cycle: emitting nothing lets the sweep remove its row,
-			// which is what a deletion should do.
+			// Deleted mid-cycle: the completing execution's fresh listing no longer
+			// has it either, so `deletedKeys` removes its row there.
 			if (!workflow) continue;
-			changes.push(await buildRow(workflow));
+			const change = await buildRow(workflow);
+			if (change) changes.push(change);
 			if (budget.exhausted()) break;
 		}
 
@@ -521,6 +556,8 @@ worker.sync("zapsSync", {
 					hashes: nextHashes,
 					versions: nextVersions,
 					dirs: nextDirs,
+					rows: nextRows,
+					fullEmitAt: state?.fullEmitAt,
 					cycle: { ...cycle, dirIndex, restIndex, emitted: [...emitted] },
 				},
 			};
@@ -530,7 +567,14 @@ worker.sync("zapsSync", {
 		// Prune what the accumulate-over-previous approach leaves behind: entries
 		// for workflows and directories that no longer exist. Safe only here, at the
 		// point where every one of them has been seen.
+		//
+		// Deletes come from this execution's own fresh listing, so a durable deleted
+		// mid-cycle goes too. Dropping `cycle` resets the walk for the next cycle;
+		// everything else persists, which is the point of incremental mode.
 		const liveDirs = new Set(entries.map((entry) => entry.name));
+		for (const key of deletedKeys(previousRows, new Set(byId.keys()))) {
+			changes.push({ type: "delete" as const, key });
+		}
 		return {
 			changes,
 			hasMore: false,
@@ -544,6 +588,8 @@ worker.sync("zapsSync", {
 				dirs: Object.fromEntries(
 					Object.entries(nextDirs).filter(([name]) => liveDirs.has(name)),
 				),
+				rows: Object.fromEntries(Object.entries(nextRows).filter(([id]) => byId.has(id))),
+				fullEmitAt: fullEmit ? new Date().toISOString() : state?.fullEmitAt,
 			},
 		};
 	},

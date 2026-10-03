@@ -14,7 +14,7 @@ live here too and moved out on 2026-10-03; see *Error triage* below.
 
 ## What it does
 
-### `zapsSync` — replace mode, daily
+### `zapsSync` — incremental, daily
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -26,32 +26,37 @@ live here too and moved out on 2026-10-03; see *Error triage* below.
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
-It runs **daily**, and a cycle costs roughly 3 upstream calls per durable that
-has *changed* rather than per durable. Two caches in sync state, each keyed on an
-identity the cheap listing calls already return:
+It runs **daily**, and a cycle costs upstream calls only for durables that
+have *changed*. Three caches in sync state, each keyed on an identity the cheap
+listing calls already return:
 
 - `versions`, keyed on `current_version_id`, skips `getWorkflow` — and with it
   the `listConnections` / `getApp` lookups — until the Zap is republished.
 - `dirs`, keyed on each repo directory's tree sha, skips the `zap.json` and
   `README.md` reads until someone edits that directory.
+- `rows`, a fingerprint of each row's properties as last emitted, skips the
+  write itself when nothing moved.
 
-So a cycle in which nothing was republished or edited is two calls: one
-`listWorkflows` and one repo listing. A cycle after one republish pays for that
-one Zap. Both caches self-heal — a missing or unreadable entry falls back to
-fetching — so a state reset costs one expensive cycle and nothing more.
+So a quiet cycle is one execution and three calls (`listWorkflows`, the repo
+listing, one People query) and emits nothing. A cycle after one republish pays
+for, and writes, that one Zap. Every 7 days a cycle re-emits every row's
+properties as a self-heal, at no upstream cost. A state reset costs one cold
+cycle and nothing more.
 
-**Every row is still emitted every cycle regardless.** This is replace mode, so
-any row a completed cycle does not emit is swept. The saving is in not
-re-*deriving* unchanged data, never in skipping the write.
+**It is incremental, not replace, because replace mode throws state away.** The
+platform resets a replace sync's state at the end of every cycle, so until
+2026-10-03, when this was a replace sync, none of the caches above ever survived
+to the next cycle. Every daily cycle was cold (8–10 executions, ~395s), and every
+README body was re-sent daily, wiping hand-added blocks. Incremental mode keeps
+state, but it also means nothing sweeps: the execution that completes a cycle
+deletes, explicitly, any row whose workflow `listWorkflows` no longer returns.
 
-The cycle is **spread over several executions**, walking repo directories first
-and then any workflow no directory claimed. Measured on the 2026-08-12 deploy: a
-cold cycle is ~6 executions of 9-69s each, emitting all 57 rows; before the
-change a single execution ran 290-310s and was killed. That pagination is not a nicety: doing it all in one execution
-is what pushed this sync past the ~300s timeout in August 2026, where it failed
-325 times in a row. A timed-out handler never commits its state, so without
-committable slices the memoisation above could never take hold — every retry
-would be another cold start.
+A cold cycle is **spread over several executions**, walking repo directories
+first and then any workflow no directory claimed. That pagination is not a
+nicety: doing it all in one execution is what pushed this sync past the ~300s
+timeout in August 2026, where it failed 325 times in a row. A timed-out handler
+never commits its state, so without committable slices the memoisation above
+could never take hold — every retry would be another cold start.
 
 ### `runsBackfill` / `runsDelta` — run history
 
@@ -152,10 +157,10 @@ documentation value.
   two workflows — so both rows share one README body.
 - **`trigger_url` is never synced.** It embeds a secret token. The synced link
   is `https://zapier.com/durables-editor/<workflow-id>`.
-- **Replace mode with a non-empty guard.** Mark-and-sweep handles deleted Zaps
-  for free at this record count, but an empty `listWorkflows` is far more likely
+- **Explicit deletes with a non-empty guard.** The completing execution deletes
+  rows whose workflow is gone, but an empty `listWorkflows` is far more likely
   to be an upstream blip than a genuine "all Zaps deleted", so the sync throws
-  rather than sweeping every row.
+  rather than deleting every row.
 - **`Creator ID` sits next to `Creator`.** Only Dennis's People record has a
   `Zapier User ID` so far; keeping the raw id visible makes an unresolved
   creator obvious rather than silently blank. The lookup returns an *email*
@@ -191,8 +196,8 @@ documentation value.
   moved to trash. So the body must be re-sent as rarely as possible. Hashing
   every field meant any property change re-sent it, and `Updated` moves whenever
   the Zap is edited, so hand-added blocks rarely survived a day. Keyed on the
-  body, they survive until the README itself changes. Properties are still
-  emitted every cycle, because replace mode deletes any row it does not see.
+  body, they survive until the README itself changes. (Until 2026-10-03 that
+  protection only held *within* a cycle — see the `zapsSync` section.)
 
 ## Markdown handling
 
