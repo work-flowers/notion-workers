@@ -152,6 +152,26 @@ call. The declared multi-select options are part of the fingerprint seed, so a
 deploy that declares a new option re-emits every row on its own; bump
 `ROW_FORMAT` for any other change to how a row is built.
 
+**Measured after the 2026-10-03 deploy, and why 6h is now cheaper than 1d was.**
+A quiet cycle is 1 execution of ~10s writing 0 rows (previously 8–10 executions,
+~395s, 93 rows with bodies). Notion documents billing only as "per run", typically
+$0.0023 (~0.23 credits) per run; a fit over this worker's own 30 days of `ntn
+workers usage --json` gives about **0.2 credits per execution + 4.4 per execution-
+hour + 19 per GB ingress**, within ~9% on every day. So the *execution count*
+dominates, not wall time: a quiet 6h cycle costs ~0.21 credits, ~25/month,
+against ~70/month for the old daily cycle. Keep a quiet cycle at one execution —
+that is the number that matters.
+
+The first cycle after the switch was started by the old replace-mode code and
+finished by the new one, so most rows had no fingerprint and the next cycle
+re-emitted 80 rows (properties only) once. That is expected after any state
+reset and settles after one cycle.
+
+Not ours, but it skews any 30-day total: on 2026-09-15/16 ten workers in the
+workspace logged multi-GB network ingress at once (this one 30.8 GB, ~590
+credits, over half the month) with normal run counts and durations and no
+deploy. It looks like platform metering, not worker code.
+
 Known gap from the switch: a row created under replace mode whose workflow was
 deleted before the first incremental cycle completed is not in `rows`, so nothing
 deletes it. Remove such a row by hand.
@@ -166,7 +186,8 @@ Two separate problems, and the schedule was the smaller half of both:
 2. **Fan-out shape** — the run syncs spent ~400 executions/day advancing one
    durable at a time, almost all finding nothing.
 
-`runsDelta` and `zapsSync` also moved 6h → 1d, but cadence mattered less than
+`runsDelta` and `zapsSync` also moved 6h → 1d (`zapsSync` went back to 6h on
+2026-10-03, see above), but cadence mattered less than
 either of the above. No state reset is needed — every new state field is additive
 and absent-means-fetch, so the first cycle after deploying re-derives everything
 and later cycles are cheap.

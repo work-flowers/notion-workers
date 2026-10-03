@@ -258,10 +258,14 @@ const ROW_SEED = { apps: SEEDED_APPS, connections: SEEDED_CONNECTION_ALIASES };
 // timeout in August 2026 and failed 325 times in a row. A timed-out handler never
 // returns, so `nextState` is never committed and the caches would never fill.
 // Progress has to be committable in bounded slices.
+//
+// Every 6 hours since 2026-10-03. Measured: a quiet cycle is 1 execution of
+// ~10s writing nothing, against 8-10 executions and ~395s per daily cycle
+// before, so 6h costs about a third of what daily did.
 worker.sync("zapsSync", {
 	database: zaps,
 	mode: "incremental",
-	schedule: "1d",
+	schedule: "6h",
 	execute: async (state: SyncState | undefined) => {
 		const budget = createBudget();
 		const github = budget.meter(githubApi);
