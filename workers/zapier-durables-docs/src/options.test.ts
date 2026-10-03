@@ -45,8 +45,8 @@ test("a connection alias takes the colour of the app it binds", () => {
 });
 
 test("every shared colour is one SHARED_COLOURS declares", () => {
-	// Thirteen apps against ten colours means some must double up. The pairs are
-	// declared so a collision is a decision rather than an accident.
+	// More apps than colours means most must double up. The groups are declared
+	// so a collision is a decision rather than an accident.
 	const declared = SHARED_COLOURS.map((group) => [...group].sort().join("|"));
 	const byColour = new Map<string, string[]>();
 	for (const { name, color } of SEEDED_APPS) {
@@ -100,13 +100,16 @@ test("assertDeclared warns, but does not filter, on an undeclared value", () => 
 	const original = console.warn;
 	console.warn = (m: string) => warnings.push(m);
 	try {
-		assert.deepEqual(assertDeclared("Apps", ["Notion", "Xero"], "my-zap"), ["Notion", "Xero"]);
+		assert.deepEqual(assertDeclared("Apps", ["Notion", "Not A Real App"], "my-zap"), [
+			"Notion",
+			"Not A Real App",
+		]);
 	} finally {
 		console.warn = original;
 	}
 	assert.equal(warnings.length, 1);
 	assert.ok(warnings[0].includes("my-zap"), "names the Zap");
-	assert.ok(warnings[0].includes('"Xero"'), "names the offending value");
+	assert.ok(warnings[0].includes('"Not A Real App"'), "names the offending value");
 	// Quoted form only — the message itself says "dropped by Notion".
 	assert.ok(!warnings[0].includes('"Notion"'), "does not flag declared values");
 });
@@ -118,4 +121,63 @@ test("the Gmail Zap's values are now declared", () => {
 	const aliases = new Set(SEEDED_CONNECTION_ALIASES.map((o) => o.name));
 	for (const app of ["Gmail", "Google Drive"]) assert.ok(apps.has(app), `${app} missing`);
 	assert.ok(aliases.has("gdrive"));
+});
+
+test("the values the 2026-10-03 zapsSync run dropped are now declared", () => {
+	// Copied from the run logs' "are not declared options" warnings.
+	const apps = new Set(SEEDED_APPS.map((o) => o.name));
+	const aliases = new Set(SEEDED_CONNECTION_ALIASES.map((o) => o.name));
+	for (const app of [
+		"API by Zapier",
+		"BetterContact",
+		"Buttondown",
+		"GitHub",
+		"Google AI Studio (Gemini)",
+		"Google Calendar",
+		"Google Sheets",
+		"Google Workspace Admin",
+		"Harvest Project Status",
+		"Linear",
+		"MCP Client by Zapier",
+		"Notion Agents (Unofficial)",
+		"RSS by Zapier",
+		"Readwise",
+		"Schedule by Zapier",
+		"Solution Partner Operations Tool",
+		"Stripe",
+		"WhatsApp Business",
+		"Xero",
+		"Zapier Forms",
+		"eSignatures.com",
+		"eSignatures.com (Unofficial)",
+	]) {
+		assert.ok(apps.has(app), `${app} missing`);
+	}
+	for (const alias of [
+		"bettercontact",
+		"buttondown_wf",
+		"esign",
+		"esign_unofficial",
+		"gcal_scw",
+		"gcal_wf",
+		"gdrive_wf",
+		"gemini_wf",
+		"github_wf",
+		"gmail_wf",
+		"gsheets",
+		"harvest_wf",
+		"harvestcliapi_connection",
+		"linear_wf",
+		"notion_agents",
+		"notion_mcp",
+		"notioncliapi_connection",
+		"slack_wf",
+		"spot",
+		"typesafe",
+		"whatsapp_wf",
+		"xero_wf",
+		"zapier_partner",
+	]) {
+		assert.ok(aliases.has(alias), `${alias} missing`);
+	}
 });

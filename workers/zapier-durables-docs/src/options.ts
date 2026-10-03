@@ -21,43 +21,115 @@ import type { SelectColor } from "@notionhq/workers/types";
 /** App display title -> colour. Titles are what `getApp` returns, minus the version. */
 export const APP_COLOURS = {
 	Apollo: "purple",
+	"API by Zapier": "brown",
+	BetterContact: "blue",
+	Buttondown: "yellow",
 	"Buttondown (Unofficial)": "yellow",
 	Contrast: "pink",
+	"eSignatures.com": "green",
+	"eSignatures.com (Unofficial)": "green",
+	GitHub: "gray",
 	Gmail: "red",
+	"Google AI Studio (Gemini)": "red",
+	"Google Calendar": "red",
 	"Google Drive": "red",
+	"Google Sheets": "red",
+	"Google Workspace Admin": "red",
 	Harvest: "orange",
+	"Harvest Project Status": "orange",
+	Linear: "purple",
 	Luma: "pink",
+	"MCP Client by Zapier": "brown",
 	"Ninjapear (Unofficial)": "green",
 	Notion: "default",
 	// A different app from "Notion" — the private work.flowers build. Grey keeps
 	// it adjacent to Notion's default without colliding with it.
 	"Notion (Unofficial by work.flowers)": "gray",
+	"Notion Agents (Unofficial)": "gray",
+	Readwise: "yellow",
+	"RSS by Zapier": "brown",
+	"Schedule by Zapier": "brown",
 	Slack: "blue",
+	// Zapier's partner portal (SPOT), so it sits with the Zapier apps.
+	"Solution Partner Operations Tool": "brown",
+	Stripe: "purple",
 	"Webhooks by Zapier": "brown",
+	"WhatsApp Business": "green",
+	Xero: "blue",
+	"Zapier Forms": "brown",
 	"Zapier Manager": "brown",
 } as const satisfies Record<string, SelectColor>;
 
 /**
- * Apps that deliberately share a colour. Thirteen apps against Notion's ten
- * colours means some must double up; these are the pairs chosen.
+ * Apps that deliberately share a colour. Thirty-six apps against Notion's ten
+ * colours means most colours are shared; each group here is the complete set
+ * of apps on that colour.
  *
- * Same-vendor pairs are grouped on purpose. Luma and Contrast collide out of
- * necessity rather than meaning — they are both event tools and never appear
- * on the same Zap, so the clash is invisible in practice.
+ * Same-vendor apps are grouped on purpose (Zapier, Google, Harvest, Buttondown,
+ * eSignatures, the unofficial Notion builds). The rest are brand-adjacent
+ * collisions of necessity rather than meaning — Luma and Contrast are both
+ * event tools and never appear on the same Zap, so that clash is invisible.
  */
 export const SHARED_COLOURS: readonly (readonly string[])[] = [
-	["Webhooks by Zapier", "Zapier Manager"],
-	["Gmail", "Google Drive"],
+	[
+		"API by Zapier",
+		"MCP Client by Zapier",
+		"RSS by Zapier",
+		"Schedule by Zapier",
+		"Solution Partner Operations Tool",
+		"Webhooks by Zapier",
+		"Zapier Forms",
+		"Zapier Manager",
+	],
+	[
+		"Gmail",
+		"Google AI Studio (Gemini)",
+		"Google Calendar",
+		"Google Drive",
+		"Google Sheets",
+		"Google Workspace Admin",
+	],
 	["Contrast", "Luma"],
+	["Harvest", "Harvest Project Status"],
+	["Buttondown", "Buttondown (Unofficial)", "Readwise"],
+	["eSignatures.com", "eSignatures.com (Unofficial)", "Ninjapear (Unofficial)", "WhatsApp Business"],
+	["BetterContact", "Slack", "Xero"],
+	["Apollo", "Linear", "Stripe"],
+	["GitHub", "Notion (Unofficial by work.flowers)", "Notion Agents (Unofficial)"],
 ];
 
 /** Connection alias -> the app it binds, so it can inherit that app's colour. */
 const ALIAS_TO_APP = {
 	apollo: "Apollo",
+	bettercontact: "BetterContact",
 	buttondown: "Buttondown (Unofficial)",
+	buttondown_wf: "Buttondown",
 	enrichment: "Ninjapear (Unofficial)",
+	esign: "eSignatures.com",
+	esign_unofficial: "eSignatures.com (Unofficial)",
+	gcal_scw: "Google Calendar",
+	gcal_wf: "Google Calendar",
 	gdrive: "Google Drive",
+	gdrive_wf: "Google Drive",
+	gemini_wf: "Google AI Studio (Gemini)",
+	github_wf: "GitHub",
+	gmail_wf: "Gmail",
+	gsheets: "Google Sheets",
+	harvest_wf: "Harvest",
+	harvestcliapi_connection: "Harvest",
+	linear_wf: "Linear",
+	notion_agents: "Notion Agents (Unofficial)",
+	// The Notion MCP connection is bound through Zapier's MCP Client app.
+	notion_mcp: "MCP Client by Zapier",
 	notion_wf: "Notion",
+	notioncliapi_connection: "Notion",
+	slack_wf: "Slack",
+	spot: "Solution Partner Operations Tool",
+	// TypeSafe (Jev) is called through an API by Zapier connection.
+	typesafe: "API by Zapier",
+	whatsapp_wf: "WhatsApp Business",
+	xero_wf: "Xero",
+	zapier_partner: "Solution Partner Operations Tool",
 } as const satisfies Record<string, keyof typeof APP_COLOURS>;
 
 export type SelectOption = { name: string; color: SelectColor };
