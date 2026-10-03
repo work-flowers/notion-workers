@@ -14,7 +14,7 @@ live here too and moved out on 2026-10-03; see *Error triage* below.
 
 ## What it does
 
-### `zapsSync` — incremental, daily
+### `zapsSync` — incremental, every 6 hours
 
 1. `listWorkflows()` (experimental Zapier SDK) — the row set is exactly what is
    deployed, so non-deployed repo directories and classic Code-step Zaps never
@@ -26,7 +26,7 @@ live here too and moved out on 2026-10-03; see *Error triage* below.
 3. GitHub, for each directory's `zap.json` and `README.md`.
 4. The People database, to resolve the creator's Zapier id to a Notion person.
 
-It runs **daily**, and a cycle costs upstream calls only for durables that
+It runs **every 6 hours**, and a cycle costs upstream calls only for durables that
 have *changed*. Three caches in sync state, each keyed on an identity the cheap
 listing calls already return:
 
@@ -39,7 +39,9 @@ listing calls already return:
 
 So a quiet cycle is one execution and three calls (`listWorkflows`, the repo
 listing, one People query) and emits nothing. A cycle after one republish pays
-for, and writes, that one Zap. Every 7 days a cycle re-emits every row's
+for, and writes, that one Zap. Measured on 2026-10-03: a quiet cycle is one
+execution of ~10s writing 0 rows, against 8–10 executions and ~395s for every
+daily cycle before. Every 7 days a cycle re-emits every row's
 properties as a self-heal, at no upstream cost. A state reset costs one cold
 cycle and nothing more.
 
