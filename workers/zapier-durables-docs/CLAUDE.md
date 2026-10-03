@@ -15,15 +15,10 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 - **Managed database "Zapier Zaps"** — written only through `zapsSync`.
 - **Managed database "Zapier Zap Runs"** — written through `runsBackfill` and
   `runsDelta`.
-- **Managed database "Zapier Error Triage"**
-  (`db78a092-515d-40e6-9416-aab114460f86`) — written only through `errorsDelta`,
-  and only its machine columns. See *Error triage*.
 
-There is also a **hand-made `🚨 Error Triage` data source**
-(`41662a45-d908-4176-8a08-9f90cc83e730`) that predates the managed one and is not
-touched by any sync. It was the schema sketch this was modelled on. If it is
-still there, it is Dennis's to delete, along with the hand-added `Error Triage`
-relation on the Zaps database.
+**This worker no longer does error triage.** The `errorsDelta` sync and its
+managed `errors` database were removed on 2026-10-03; see *Error triage (moved
+out)* below before re-adding anything like it.
 
 ## Non-obvious constraints
 
@@ -67,7 +62,7 @@ delta relies on rows being newest-first and stops client-side.
 late September 2026 the endpoint also returns draft test runs (`kind: "draft"`)
 that omit `trigger_id` and `workflow_version_id`. The SDK's response schema
 requires both (checked up to 0.113), so a single editor test run failed every
-`runsDelta` and `errorsDelta` cycle from 2026-09-28. `listRunsPage` makes the
+`runsDelta` cycle (and the since-removed `errorsDelta`) from 2026-09-28. `listRunsPage` makes the
 same request without the strict parse and drops draft runs. Don't switch it back.
 
 **Runs mutate after creation.** `updated_at != created_at` on every row
@@ -153,9 +148,8 @@ upstream calls or 120s) is gone. Quiet cycles collapse to a handful of execution
 and busy ones degrade to the old behaviour.
 
 **The budget is checked only *between* durables, so the per-durable caps are
-still load-bearing.** `MAX_PAGES_PER_EXECUTION`, `MAX_DETAIL_FETCHES_PER_DURABLE`,
-`MAX_TRIAGE_DETAIL_FETCHES` and `INITIAL_PAGES_PER_EXECUTION` bound how expensive
-*one* durable can get, which is the case that caused the original timeout. The
+still load-bearing.** `MAX_PAGES_PER_EXECUTION` and
+`MAX_DETAIL_FETCHES_PER_DURABLE` bound how expensive *one* durable can get, which is the case that caused the original timeout. The
 budget bounds how many durables are attempted. Neither replaces the other — do not
 relax a per-durable cap on the strength of the budget existing.
 `MAX_CHANGES_PER_EXECUTION` exists for the same reason in the other direction: a
@@ -175,14 +169,12 @@ could skip a durable or visit one twice. `listWorkflowRefs` takes the cached val
 and only re-lists when `index === 0`. It deliberately stores `{id, name}` and not
 the full summary, which would put descriptions and trigger payloads in sync state.
 
-**`runsDelta` takes one page from a durable with no watermark; `errorsDelta` walks
-that durable's whole history. The asymmetry is deliberate.** In `runsDelta` the
-backfill owns history, so the first page is the whole job — and because that page
-can still return a cursor, completion is tracked with an explicit `firstPageOnly`
-flag rather than by testing the cursor. Testing the cursor there would silently
-turn the delta into a second backfill, walking every durable's full history one
-execution at a time. `errorsDelta` has no backfill (see below) and *must* walk it
-all, which is what `INITIAL_PAGES_PER_EXECUTION` and its cursor resume are for.
+**`runsDelta` takes one page from a durable with no watermark.** The backfill owns
+history, so the first page is the whole job — and because that page can still
+return a cursor, completion is tracked with an explicit `firstPageOnly` flag
+rather than by testing the cursor. Testing the cursor there would silently turn
+the delta into a second backfill, walking every durable's full history one
+execution at a time.
 
 **A pacer ceiling is also a floor on elapsed time, and that killed `zapsSync` for
 57 hours.** All three pacers were 30/min. At 48 repo directories a cold `zapsSync`
@@ -245,136 +237,38 @@ directory would be skipped forever.
 this explicitly: comparing `undefined === undefined` would match a cache entry that
 also lacked a sha and pin that directory permanently. There is a test.
 
-## Error triage
+## Error triage (moved out)
 
-The **data source is `db78a092-515d-40e6-9416-aab114460f86`**. A worker cannot
-discover this for itself — see the note on `DatabaseHandle` below — so anything
-outside the sync that needs to reach these rows has to be told.
+Removed from this worker on 2026-10-03. Zapier now emails the Zap owner on every
+failed Code Zap run (subjects `Your Zap "<name>" had an error` and `… couldn't
+run`), about three minutes after the failure. The
+[`zapier-error-email-to-triage`](https://github.com/work-flowers/zapier-sdk/tree/main/zapier-error-email-to-triage)
+durable turns those emails into tickets. The hourly `errorsDelta` walk existed
+only because durables used to send no notification at all, and it was the most
+frequent sync here.
 
-**Declaring a property in a managed schema makes it `readOnly` in Notion — a
-person cannot edit it.** Not emitting a value does not help; managed-ness follows
-the *declaration*, not the writes. Verified the hard way on 2026-07-29: `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` were declared in the
-schema and deliberately never written, and the result was five read-only columns
-and a triage table nobody could triage in.
+**The triage database was detached, not deleted.** `ntn workers databases detach
+errors` (ntn 0.23.17) released `Zapier Error Triage`
+(`db78a092-515d-40e6-9416-aab114460f86`) from the worker. Verified straight after:
+all 57 tickets kept their rows, bodies and `Zap` / `Zap Runs` relations, and
+every formerly managed column dropped `readOnly`. It is now an ordinary data
+source that the durable writes through the Zapier Notion connection. **Do not
+re-declare an `errors` database here**: a fresh managed database would be
+created, and the hand-made triage columns (`Status`, `Priority`, `Assignee`,
+`Resolution Notes`, `Resolved on`, `Ticket ID`, `Root Cause`, `Due`, `GitHub
+Pull Requests`) exist only on the detached one.
 
-So those are **hand-made properties on the data source, not in the schema**.
-Anything a human must edit has to stay out of `worker.database()`.
-
-**There are seven of them, not five, and they hold live triage history.** Read
-back off the live data source on 2026-08-07 — the five-property list recorded
-here previously was incomplete, and deleting these columns would destroy real
-content (`Resolution Notes` carries full write-ups on resolved tickets):
-
-| Property | Type | Notes |
-|---|---|---|
-| `Status` | status | To-do: `Untriaged` (gray) · In progress: `Ready for Claude` (purple), `Ready for GLM` (yellow), `Ready for human review` (orange), `In progress` (blue) · Complete: `Resolved` (green), `Won't fix` (brown) |
-| `Priority` | select | `High` (red), `Medium` (yellow), `Low` (gray) |
-| `Assignee` | person | — |
-| `Resolution Notes` | text | Carries real prose on resolved tickets. Deleting the column destroys it. |
-| `Resolved on` | date | Set by a Notion automation when `Status` moves to a Complete option. |
-| `Ticket ID` | auto_increment_id | `ZAP-25`. The agent write-ups in page bodies refer to tickets by this number. |
-| `GitHub Pull Requests` | relation | To `collection://3ad91b07-11ac-805d-8a56-000b61b9143a`. Someone added it by hand; nothing in this repo writes it. |
-
-`Ticket` (title) also reports as editable, because Notion cannot mark a title
-`readOnly`. The sync still owns it.
-
-**Undeclaring a property releases it rather than dropping it.** Removing five of
-these from the schema and redeploying left every one in place, options and status
-groups intact, and simply cleared `readOnly`. Nothing was lost and nothing had to
-be recreated — worth knowing before panicking about a schema change.
-
-**Properties carry only metadata lifted off the run. Diagnosis lives in the page
-body, and an agent owns that body — so `errorsDelta` must never write it.**
-`pageContentMarkdown` replaces a page body *in its entirety* (see the note on
-`zapsSync` above: it wipes appended blocks and trashes child pages). A ticket is
-re-upserted every time its signature recurs, so emitting a body here would
-destroy the agent's analysis on the next recurrence, silently and repeatedly.
-There is no `pageContentMarkdown` in the triage `changes`, and none may be added.
-
-**Triage stays in this Notion database — the issue-tracker route was evaluated
-and dropped, 2026-08-07.** Moving ticket creation into Linear was built and then
-reverted; the current setup works, and Linear is reserved for external client
-delivery rather than internal Zapier workflows. Do not add issue-tracker code to
-this worker. If it is ever revisited, the shape that survived scrutiny was a
-downstream durable on Notion's `new_data_source_item` rather than anything
-in-worker, for two reasons that are properties of syncs and not of Linear:
-
-- **A sync upserts, so a row is created exactly once** and updated thereafter. A
-  create-triggered consumer therefore fires once per signature by construction,
-  where the in-worker version needed a hashed title marker and a search before
-  every create just to survive an execution dying mid-write.
-- **A sync cannot know its own row's page URL.** `changes` are applied *after*
-  `execute` returns, so on the execution that first sees a signature the row does
-  not exist yet. Anything wanting that link needs a deferred second pass, or a
-  trigger payload that already carries it.
-
-**A worker cannot discover its own database.** `worker.database()` returns an
-opaque `DatabaseHandle` — `{ key, config }` and nothing else — so there is no
-route from the handle to the data source the platform created for it. Anything
-needing the id must be given it.
+What the walk could see and the email cannot: the run id and the failing step.
+New tickets therefore leave `Zap Runs` and `Failing Step` empty. The
+`zapier-error-email-to-triage` README covers that trade.
 
 **Zapier Manager's `zap_error_alert` trigger does not fire for Code Workflows.**
-Probed 2026-08-07 and the reason is structural, so do not re-litigate it without
-re-probing: Zapier Manager's object model is classic Zaps only. Its "Zap"
-dropdown lists 45 classic Zaps and none of the 49 durables; `node_id` is typed
-`int` while durables are UUIDs; and its find-a-Zap action returns `[]` for
-`xero-invoice-alerts` and `enrich-contact-records` while resolving a classic Zap
-by exact title. This is why triage is a walk on a schedule and not an
-event-driven Zap — the tempting simplification is not available.
+Probed 2026-08-07: its object model is classic Zaps only (its Zap dropdown lists
+none of the durables, and `node_id` is an `int` while durable ids are UUIDs).
+This is why the replacement keys on the alert *email*, not on a Zapier Manager
+trigger.
 
-**That is why there is no `Root Cause` property.** It was there, and was removed
-2026-07-29 at Dennis's request for exactly this reason. Whatever writes the body
-can get it from `fetchRunDetail(durableRunId).rootCause` — `failureDetail` in
-`src/runs.ts` pulls it out of the operations journal, and that is the only place
-Zapier exposes it. `runs.test.ts` records the real journal shape.
-
-**The signature is `workflowId · errorType · normalisedMessage` and must stay
-derivable from `listWorkflowRuns` alone.** The failing step comes from
-`getDurableRun`, which degrades to `undefined` on failure; keying on it would let
-one transient journal failure split a ticket in two and fork its count. It is
-display-only. There is a test asserting the signature is identical with and
-without the journal.
-
-**Every rule in `normaliseMessage` is driven by a message actually observed** —
-appended JSON payload dumps, ids, ISO and US-format timestamps, semver. Quoted
-substrings are kept deliberately: they are usually the discriminating part
-(`"new Date()"`, `Step "update-contact-record"`). If `MAX_TICKETS` eviction ever
-warns, the fix is a normalisation rule, not a bigger ceiling.
-
-**One sync, not the repo's usual backfill + delta pair — and this one cannot be
-split.** Sync state is per sync key, so a separate backfill would accumulate
-ticket counts the delta could not see, and the delta's first cycle would overwrite
-`Occurrences: 14` with `Occurrences: 1`. Any aggregate column forces the counting
-into a single state.
-
-**The watermark must not move until a durable's walk finishes.** Page one carries
-the newest run, so a partial pass already knows the eventual high-water mark;
-committing it early makes the next execution skip every older failure it has not
-reached yet. That is what `pendingWatermark` is for — do not "simplify" it into
-`watermarks`.
-
-**`Occurrences` is the count; the `Zap Runs` relation is a 25-run sample.** Do not
-present the number of links as the number of failures.
-
-**A ticket minted before its Zap/run rows exist lands with both relations
-empty, and completed walks re-emit recent tickets to heal that.** The `Zap` and
-`Zap Runs` relations resolve against rows the *daily* `zapsSync` and `runsDelta`
-own, but tickets come from the *hourly* `errorsDelta` — so a durable deployed
-and failing the same day gets a ticket whose relation keys match nothing, and
-the platform drops the links silently. Observed live 2026-09-01 (ZAP-34,
-`slack-thread-to-notion-discussion`). Since a ticket is only re-upserted when
-its signature recurs, a one-off failure would stay unlinked forever; the fix is
-`relinkable` in `src/errors.ts` — every completed walk re-emits tickets seen in
-the last `RELINK_WINDOW_MS` (48h), which re-resolves the relations once the
-daily syncs have landed the rows. Safe because the triage sync never writes
-page bodies or the hand-made columns. Do not shrink the window below ~30h: a
-ticket minted just after a daily cycle waits up to ~24h for its Zap row plus up
-to `FULL_WALK_INTERVAL_MS` for the next forced walk.
-
-**A durable with no runs at all never gets a watermark**, so it is re-walked every
-cycle. That is one list call and no failures — correct, just not free. Writing a
-watermark for it would need a sentinel, which is not worth the confusion.
+## Runs: workflow runs vs durable runs
 
 **A durable *is* a workflow, but a durable *run* is not a workflow run.** This is
 the easiest thing here to get wrong. There is no separate list of durables —
@@ -401,9 +295,7 @@ workflow either. Attribution therefore requires the per-durable walk. Probed
 
 The reason is structural: the engine also runs durables invoked directly
 (`runDurable`, `cancelDurableRun`), which have no workflow at all, so a durable run
-cannot carry a mandatory workflow reference. A side effect is that an ad-hoc
-`runDurable` failure will open the gate and trigger a walk that finds nothing to
-ticket — a wasted walk, never wrong data.
+cannot carry a mandatory workflow reference.
 
 **`listDurableRuns` is account-wide but carries no workflow attribution.** It
 takes no `workflow` argument and returns runs across every durable, newest-first —
@@ -411,41 +303,18 @@ verified live 2026-07-29, including that it covers workflow-triggered runs. But 
 fields are exactly `id`, `status`, `input`, `output`, `error`, `execution_id`,
 `is_private`, `created_at`, `updated_at`. No `workflow_id`, no version id, no
 trigger id, and `getDurableRun` adds none. **It therefore cannot replace the
-per-durable `listWorkflowRuns` walk** — a ticket must know which Zap it belongs to.
-Do not "optimise" the walk away on the strength of this endpoint existing.
+per-durable `listWorkflowRuns` walk** — a run row must know which Zap it belongs
+to.
 
 **Neither endpoint has a date filter.** `pageSize`, `cursor`, `maxItems` only. 0.91
 dropped the `since` / `updatedAfter` parameters that earlier versions accepted and
 silently ignored, so there is nothing left to be misled by.
 
-**The gate is advisory and must stay that way.** `listDurableRuns` is used only to
-decide whether an hourly cycle is worth walking (1 call instead of ~54). A false
-negative would mean a real failure never gets a ticket, and coverage was only
-spot-checked across three of 27 durables — so the walk happens unconditionally
-every `FULL_WALK_INTERVAL_MS` regardless of the verdict. Do not remove that
-override, and do not treat `conclusive` as optional: no watermark yet, and a full
-page that never reached back to the watermark, both have to walk.
-
-**`gateWatermark` is not one of the `watermarks`.** Those are per workflow and keyed
-on *workflow-run* timestamps; `gateWatermark` is a single account-wide baseline on
-*durable-run* timestamps. Different objects, different id spaces — do not merge
-them.
-
-**`lastFullWalkAt` is stamped when a walk starts, not when it finishes.** A cycle
-interrupted mid-walk resumes from `index` on the next tick, so the walk still
-completes; stamping on completion would need another state field to tell "resumed"
-from "started".
-
-**A title falls back to the message when the journal named no step.** `errorType`
-is `details.name`, which for a plain `throw new Error(...)` in durable code is
-literally `"Error"` — six of the first eighteen live tickets were titled
-`<zap> · Error`, unusable in a list. Do not "tidy" the fallback away.
-
 **Zapier exposes no stack trace anywhere** — not on the run, not on the execution,
 not on the operation. Verified against a real failed run's full journal. The
 sketched schema this was modelled on had a `Stack Trace` column; the closest thing
 that actually exists is the failing operation's own error, which `failureDetail`
-extracts.
+in `src/runs.ts` extracts.
 
 ## Markdown
 
@@ -484,10 +353,4 @@ npm run check --workspace=notion-worker-zapier-durables-docs
 npm test --workspace=notion-worker-zapier-durables-docs      # markdown + runs unit tests
 ntn workers sync trigger zapsSync --preview              # end to end, no writes
 ntn workers sync trigger runsDelta --preview             # run history, no writes
-ntn workers sync trigger errorsDelta --preview           # triage tickets, no writes
 ```
-
-**A new ticket's `Status` is empty, confirmed** on the first live run
-(2026-07-29): all eighteen tickets came back with `Status = null`, so the platform
-does *not* apply the status property's default to a sync-created row. Views must
-treat empty as untriaged, or the property's default has to be set in Notion.
