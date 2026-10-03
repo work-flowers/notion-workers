@@ -8,9 +8,9 @@ the page body.
 Feasibility notes and the empirical testing behind these design decisions live
 in [`docs/zapier-durables-docs-worker.md`](../../docs/zapier-durables-docs-worker.md).
 
-Three databases: **Zapier Zaps** (one row per deployed durable), **Zapier Zap
-Runs** (one row per run, related back to its Zap) and **Zapier Error Triage**
-(one row per recurring failure signature, related to both).
+Two databases: **Zapier Zaps** (one row per deployed durable) and **Zapier Zap
+Runs** (one row per run, related back to its Zap). Error triage tickets used to
+live here too and moved out on 2026-10-03; see *Error triage* below.
 
 ## What it does
 
@@ -91,136 +91,16 @@ ages runs out of its own history. A replace-mode pass would then delete exactly
 the records this database exists to preserve. Nothing in either sync ever emits
 a delete.
 
-### `errorsDelta` — failure triage, hourly
+### Error triage — moved to a durable
 
-Writes **Zapier Error Triage**: one row per *recurring error signature*, not per
-failed run. Zap Runs already keeps one row per run, so a per-run triage table
-would only mirror it; what triage needs is the opposite — repeats collapsed so a
-class of failure gets looked at once.
-
-The ratio is not marginal. Of the 33 failed runs in history when this was built,
-`Could not find a Notion page id in webhook payload` alone accounted for 14,
-across six different durables. The whole set collapsed to about eight tickets.
-
-A signature is `workflowId · errorType · normalisedMessage`. Per durable, because
-the same fault in two Zaps is usually fixed in two places. `normaliseMessage`
-strips what varies between otherwise identical failures — appended JSON payload
-dumps, ids, timestamps, version numbers — while keeping quoted substrings, which
-are normally the discriminating part (`"new Date()"`,
-`Step "update-contact-record"`).
-
-**The triage workflow columns are not in the managed schema at all.** `Status`,
-`Priority`, `Assignee`, `Resolution Notes` and `Resolved on` are ordinary
-hand-made properties on the data source. Declaring a property in a managed schema
-is what makes Notion mark it `readOnly`, and not writing a value does not help —
-managed-ness follows the declaration, not the writes. Declared, they produced
-five read-only columns and a triage table nobody could triage in.
-
-There are in fact **seven** editable properties, not five: the data source also
-carries a `Ticket ID` auto-increment (`ZAP-25`, which the page-body write-ups
-refer to by number) and a hand-added `GitHub Pull Requests` relation. `Status`
-carries a `Ready for GLM` option alongside `Ready for Claude`. None of it is
-reproducible from code — the shape is recorded in this worker's `CLAUDE.md`, and
-`Resolution Notes` in particular holds real prose that a column deletion would
-destroy.
-
-A consequence: `Status` is *empty* on a new ticket rather than "Untriaged" —
-filter on empty, or set the property's default in Notion.
-
-This database is where triage happens. Pushing tickets into an issue tracker was
-evaluated and dropped in August 2026 — see this worker's `CLAUDE.md` if it ever
-comes up again.
-
-The data source is `db78a092-515d-40e6-9416-aab114460f86`. A worker cannot
-discover this for itself, so anything reaching these rows from outside the sync
-has to be told it.
-
-**The failing step is display-only, and deliberately not part of the signature.**
-It comes from the operations journal, a separate call that can fail; keying on it
-would let one transient journal failure split a ticket in two and fork its count.
-For `StepExhaustedError` this costs nothing, since the step name is already in the
-message.
-
-**Properties carry only metadata lifted off the run — diagnosis belongs in the
-page body, which an agent owns.** So this sync never writes the body.
-`pageContentMarkdown` replaces a body in its entirety, and a ticket is re-upserted
-every time its signature recurs, so emitting one would wipe the agent's analysis
-on the next recurrence. That is also why there is no `Root Cause` property:
-whatever writes the body reads it from
-`fetchRunDetail(durableRunId).rootCause` instead.
-
-**There is one sync here, not the usual backfill + delta pair.** Sync state is
-per sync key, so a separate backfill would accumulate ticket counts the delta
-could not see — the delta's first cycle would overwrite `Occurrences: 14` with
-`Occurrences: 1`. Any aggregate column forces the counting into a single state.
-So `errorsDelta` does both jobs: with no watermark for a durable it walks that
-durable's whole history across as many executions as it takes, and afterwards
-re-scans only the one-hour overlap window.
-
-**It runs hourly**, unlike the daily run syncs — a failure is worth seeing sooner
-than the next working day. A cycle with nothing new emits no changes, so it costs
-no Notion writes and leaves every ticket untouched.
-
-#### The gate
-
-A *walking* cycle costs one `listWorkflows` plus one `listRunsPage` per durable —
-so ~58 at 57 durables. Hourly, most cycles would spend all of that to discover
-nothing happened.
-
-`listDurableRuns` answers "did anything fail anywhere" in **one** call. It takes no
-`workflow`, returns newest-first across the whole account, and carries `status`
-and `error`. So the sync asks it first and skips the walk when the answer is no: a
-quiet cycle costs 1 call instead of ~50.
-
-It cannot replace the per-durable listing. Its fields are exactly `id`, `status`,
-`input`, `output`, `error`, `execution_id`, `is_private`, `created_at`,
-`updated_at` — **no workflow attribution at all**, and `getDurableRun` doesn't add
-any. A ticket has to know which Zap it belongs to, so the walk is still the only
-way to build one.
-
-**The gate is advisory, never authoritative.** A false negative would mean a real
-failure never gets a ticket, and coverage was only spot-checked across three of 27
-durables. So the sync walks unconditionally every `FULL_WALK_INTERVAL_MS` (6h)
-whatever the gate says — a gate miss then costs latency, not a lost ticket. It
-also treats two cases as inconclusive and walks anyway: no watermark yet (first
-cycle after a deploy or state reset), and a *full* page whose oldest entry is
-still newer than the watermark, meaning it never reached back far enough to rule
-out failures in the gap. At ~5.5 runs/hour observed, one 100-run page covers ~18
-hours, so the second case should be rare.
-
-There is **no date filter on either endpoint** — `pageSize`, `cursor` and
-`maxItems` are the only levers. 0.91 dropped the `since` / `updatedAfter`
-parameters that earlier versions accepted and silently ignored.
-
-`Occurrences` is the true count; the `Zap Runs` relation samples the 25 most
-recent failing runs. To rebuild counts from scratch — after changing the
-signature scheme, say — `ntn workers sync state reset errorsDelta`. Triage columns
-survive that: they are not part of the managed schema, so no sync can touch them.
-Verified end to end on 2026-07-29 by setting a `Status`, `Priority` and
-`Resolution Notes` by hand, then resetting and re-running the whole cycle.
-
-#### Why the journal matters here
-
-The run's own error is frequently a summary that names no cause:
-
-```
-StepExhaustedError: Step "update-contact-record" exhausted all retry attempts.
-```
-
-The journal entry for that same step carries the sentence someone can act on:
-
-```
-ZapierActionError: Action execution failed: Can't edit block that is archived.
-                   You must unarchive the block before editing.
-```
-
-`failureDetail` in `src/runs.ts` reads both out of `operations[]`, taking the last
-operation whose status is not `completed` — earlier ones can retry and recover.
-`Failing Step` becomes a property; the root cause is left for whatever writes the
-page body, and `fetchRunDetail(durableRunId).rootCause` is where to get it.
-
-**Zapier exposes no stack trace anywhere** — not on the run, not on the
-execution, not on the operation. Do not add a column expecting one.
+Until 2026-10-03 an hourly `errorsDelta` sync here walked every durable's run
+history and upserted **Zapier Error Triage** tickets. Zapier now emails the Zap
+owner on every failed Code Zap run, so the
+[`zapier-error-email-to-triage`](https://github.com/work-flowers/zapier-sdk/tree/main/zapier-error-email-to-triage)
+durable builds tickets from those emails instead. The triage database was
+detached from this worker (`ntn workers databases detach errors`) rather than
+deleted, so its 57 historical tickets and their relations are intact. See
+*Error triage (moved out)* in this worker's `CLAUDE.md`.
 
 #### Run intensity — the operations journal
 
@@ -251,7 +131,7 @@ which path it takes. Zero operations is legitimate — a run can fail before any
 step executes.
 
 Run status is therefore up to a day stale, which is the trade for the lighter
-cadence — failures are not, because `errorsDelta` sees those hourly. The delta
+cadence — failures are not, because Zapier's alert emails feed triage directly. The delta
 caps the fetch at the newest 60 rows per durable and logs the
 shortfall rather than passing silently. The **backfill fetches detail for every
 row**, so a one-off re-run populates these columns across all history — at the
@@ -419,7 +299,6 @@ Then preview before letting anything write:
 ```shell
 ntn workers sync trigger zapsSync    --preview
 ntn workers sync trigger runsDelta   --preview
-ntn workers sync trigger errorsDelta --preview
 ```
 
 > Preview renders **properties only** — page content is never shown, so an empty
@@ -440,21 +319,3 @@ To redo it from scratch:
 ntn workers sync state reset runsBackfill && ntn workers sync trigger runsBackfill
 ```
 
-Error triage needs no backfill — `errorsDelta` walks each durable's whole history
-on its first cycle. It is safe to trigger by hand at any time:
-
-```shell
-ntn workers sync trigger errorsDelta
-```
-
-To recompute every ticket's `Occurrences` from scratch (after changing the
-signature scheme, for instance). Human triage columns are untouched by this,
-because the sync never writes them:
-
-```shell
-ntn workers sync state reset errorsDelta && ntn workers sync trigger errorsDelta
-```
-
-A reset re-upserts existing rows rather than creating them. Changing the
-*signature scheme* is the one thing that mints new primary keys, and so the one
-thing that produces new rows rather than updating the ones already there.
