@@ -107,7 +107,7 @@ worker.sync("timeEntriesBackfill", {
 worker.sync("timeEntriesDelta", {
 	database: timeEntries,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: async (
 		state:
 			| { cursor?: string; page?: number; cycleStart?: string }

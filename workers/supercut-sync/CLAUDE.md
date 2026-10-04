@@ -7,7 +7,7 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 
 Syncs the **public** recordings of the `workflowers` Supercut workspace into a
 worker-managed database, **Supercut Recordings**, one page per recording, so
-Bullet.so can publish them. Hourly, replace mode, one batch.
+Bullet.so can publish them. Daily, replace mode, one batch. (Hourly until 2026-10-04; cut to daily for credit cost, since the page sees little use.)
 
 - **Row set = recordings in at least one playlist with `is_public: true`.** The
   Supercut API has no per-recording visibility flag; playlists carry one. A

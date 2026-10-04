@@ -313,7 +313,7 @@ worker.sync("pagesPathBackfill", {
 worker.sync("pagesPathDelta", {
 	database: pagesDb,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: windowedSync({
 		dimensions: ["date", "pagePath"],
 		metrics: PAGE_METRICS,
@@ -408,7 +408,7 @@ worker.sync("trafficSourceMediumBackfill", {
 worker.sync("trafficSourceMediumDelta", {
 	database: acquisitionDb,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: windowedSync({
 		dimensions: ACQUISITION_DIMENSIONS,
 		metrics: ACQUISITION_METRICS,
@@ -507,7 +507,7 @@ worker.sync("landingPageBackfill", {
 worker.sync("landingPageDelta", {
 	database: landingDb,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: windowedSync({
 		dimensions: LANDING_DIMENSIONS,
 		metrics: LANDING_METRICS,
@@ -599,7 +599,7 @@ worker.sync("siteDailyBackfill", {
 worker.sync("siteDailyDelta", {
 	database: siteDailyDb,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: windowedSync({
 		dimensions: ["date"],
 		metrics: SITE_METRICS,
@@ -651,7 +651,7 @@ const ROLLUP_METRICS = ["screenPageViews", "totalUsers", "userEngagementDuration
 worker.sync("pagePerformanceSync", {
 	database: pagePerformanceDb,
 	mode: "replace",
-	schedule: "6h",
+	schedule: "1d",
 	execute: async () => {
 		const end = latestCompleteDay();
 		const syncedAt = new Date().toISOString();
@@ -727,7 +727,7 @@ interface RelinkState {
 worker.sync("pagePerformanceRelink", {
 	database: pagePerformanceDb,
 	mode: "incremental",
-	schedule: "6h",
+	schedule: "1d",
 	execute: async (state: RelinkState | undefined | null) => {
 		const sources = await loadSourcePages();
 		const result = await relinkPage(sources, state?.cursor, () => notionApi.wait());

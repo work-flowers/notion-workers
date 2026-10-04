@@ -101,7 +101,7 @@ worker.sync("recordingsSync", {
 	// Replace mode: a recording that leaves every public playlist is swept from
 	// Notion on the next run. The whole set is a handful of rows, so one batch.
 	mode: "replace",
-	schedule: "1h",
+	schedule: "1d",
 	execute: async () => {
 		const found = await collectPublicRecordings();
 
