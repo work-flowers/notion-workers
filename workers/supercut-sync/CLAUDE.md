@@ -124,6 +124,18 @@ ntn workers sync trigger recordingsSync
 ntn workers logs
 ```
 
+**A deploy runs the sync immediately.** `deploy` re-registers the sync and the
+platform starts a real (non-preview) run straight away (observed 2026-10-05:
+two `recordingsSync` runs within ten seconds of deploy). So a `--preview`
+*after* deploying is not a gate: by then the new code has already written and
+swept. If you need to preview a row-set change, do it before merging and
+deploying, or pause the sync before deploying
+(`ntn workers sync pause recordingsSync`) and resume after the preview.
+
+Supercut's `recording_count` on a playlist lags behind its contents (it showed
+5 for a playlist holding 8). The worker never reads it; to check what will
+sync, list the playlist's recordings.
+
 The run log prints one line per pass:
 `embed blocks: N appended, N updated, N unchanged, N awaiting page creation (N pages in database)`.
 A healthy steady state is all `unchanged`; `awaiting page creation` should only
