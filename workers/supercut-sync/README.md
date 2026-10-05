@@ -1,8 +1,8 @@
 # notion-worker-supercut-sync
 
-A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md) that syncs the public recordings of a [Supercut](https://supercut.ai) workspace into a Notion database — one page per recording, with the recording's thumbnail as the page cover and its embed code in the page body as a code block captioned `bullet:HTML`, ready for [Bullet.so](https://bullet.so) to render.
+A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md) that syncs a curated set of recordings from a [Supercut](https://supercut.ai) workspace into a Notion database — one page per recording, with the recording's thumbnail as the page cover and its embed code in the page body as a code block captioned `bullet:HTML`, ready for [Bullet.so](https://bullet.so) to render.
 
-"Public" means the recording is in at least one public Supercut playlist. The `recordingsSync` capability runs hourly in replace mode, so recordings removed from every public playlist are removed from Notion too.
+"Curated" means the recording is in the Supercut playlist named by `WEBSITE_PLAYLIST_ID`. The `recordingsSync` capability runs daily in replace mode, so a recording removed from that playlist is removed from Notion too.
 
 | Notion property | Source |
 |---|---|
@@ -11,7 +11,7 @@ A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md)
 | Share URL, Embed URL | `https://supercut.ai/{share,embed}/{workspace}/{public_id}` |
 | Thumbnail URL, page cover | oEmbed `thumbnail_url` |
 | Recorded At, Duration (s), Status, Owner | recording metadata |
-| Playlists (multi-select) | public playlists containing the recording |
+| Playlists (multi-select) | public topic playlists containing the recording (the Website gate is excluded) |
 | Summary, Chapters | Supercut AI summary and chapter list (`mm:ss Title` per line) |
 
 ## Setup

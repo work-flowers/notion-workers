@@ -21,7 +21,10 @@ export default worker;
 /** Notion caps a rich_text property at 2000 chars; leave headroom for the ellipsis. */
 const MAX_RICH_TEXT = 1_900;
 
-/** Public Supercut playlists, as multi-select options. See the schema note below. */
+/**
+ * Public Supercut topic playlists, as multi-select options. See the schema
+ * note below. The Website gate playlist is deliberately not one of them.
+ */
 const PLAYLIST_OPTIONS = [
 	"Dashboards & Custom UI",
 	"Zapier Error Triage & Dev",
@@ -62,8 +65,8 @@ const recordings = worker.database("recordings", {
 			]),
 			// A multi-select value whose option is not declared here is silently
 			// dropped on write (observed 2026-09-03: only the one seeded option
-			// survived). Every public playlist must be listed; a new playlist needs
-			// an entry here and a redeploy. `collectPublicRecordings` warns when it
+			// survived). Every public topic playlist must be listed; a new one needs
+			// an entry here and a redeploy. `collectWebsiteRecordings` warns when it
 			// meets a name that is missing.
 			Playlists: Schema.multiSelect(
 				PLAYLIST_OPTIONS.map((name, i) => ({ name, color: PLAYLIST_COLORS[i % PLAYLIST_COLORS.length] })),
@@ -89,7 +92,7 @@ const notionApi = worker.pacer("notionApi", { allowedRequests: 3, intervalMs: 1_
 // Sync
 // ---------------------------------------------------------------------------
 
-interface PublicRecording {
+interface WebsiteRecording {
 	listing: PlaylistRecording;
 	playlists: Set<string>;
 	detail?: RecordingDetail;
@@ -98,24 +101,25 @@ interface PublicRecording {
 
 worker.sync("recordingsSync", {
 	database: recordings,
-	// Replace mode: a recording that leaves every public playlist is swept from
+	// Replace mode: a recording taken out of the Website playlist is swept from
 	// Notion on the next run. The whole set is a handful of rows, so one batch.
 	mode: "replace",
 	schedule: "1d",
 	execute: async () => {
-		const found = await collectPublicRecordings();
+		const found = await collectWebsiteRecordings();
 
 		// Replace mode sweeps every row absent from the batch, so an empty batch
-		// would archive the whole database. Zero public recordings is far more
-		// likely to be a token that sees nothing (a workspace token returns 200
-		// with no playlists for user-owned content) than a real empty set, so
-		// fail loudly and leave the rows alone. If the set is ever legitimately
-		// empty, pause the sync instead of relaxing this.
+		// would archive the whole database. An empty Website playlist is far more
+		// likely to be a mistake (emptied by accident, or a token that sees
+		// nothing — a workspace token returns 200 with no items for user-owned
+		// content) than a real empty gallery, so fail loudly and leave the rows
+		// alone. If the gallery is ever legitimately empty, pause the sync
+		// instead of relaxing this.
 		if (found.size === 0) {
 			throw new Error(
-				"Supercut returned no recordings in public playlists — refusing to sweep the " +
-					"database. Check SUPERCUT_API_TOKEN (a personal sk_u_ token is needed to see " +
-					"user-owned playlists) and that at least one playlist is public.",
+				"The Website playlist has no recordings — refusing to sweep the database. Add " +
+					"recordings to it, or check SUPERCUT_API_TOKEN (a personal sk_u_ token is needed " +
+					"to see user-owned playlists).",
 			);
 		}
 
@@ -136,16 +140,49 @@ worker.sync("recordingsSync", {
 		);
 
 		const changes = [...found.values()].map(toChange);
-		console.log(`recordings: ${changes.length} upserts from ${found.size} public recordings`);
+		console.log(`recordings: ${changes.length} upserts from ${found.size} Website recordings`);
 		return { changes, hasMore: false, nextState: undefined };
 	},
 });
 
-/** Every recording in at least one public playlist, with detail + oEmbed attached. */
-async function collectPublicRecordings(): Promise<Map<string, PublicRecording>> {
-	const playlists = (await listPlaylists(supercutApi)).filter((p) => p.is_public);
-	console.log(`playlists: ${playlists.length} public — ${playlists.map((p) => p.name).join(", ")}`);
-	for (const p of playlists) {
+/**
+ * Every recording in the Website playlist, tagged with the public topic
+ * playlists it also belongs to, with detail + oEmbed attached.
+ *
+ * The Website playlist is the publish gate; the topic playlists only supply
+ * the Playlists category. A recording in a topic playlist but not in Website is
+ * not synced, so client-specific or throwaway videos can live in topic
+ * playlists without reaching the site.
+ */
+async function collectWebsiteRecordings(): Promise<Map<string, WebsiteRecording>> {
+	const websiteId = websitePlaylistId();
+	const all = await listPlaylists(supercutApi);
+
+	const website = all.find((p) => p.public_id === websiteId);
+	if (!website) {
+		throw new Error(
+			`WEBSITE_PLAYLIST_ID ${websiteId} is not among the ${all.length} playlists the token ` +
+				"can see — it was deleted, or SUPERCUT_API_TOKEN is not the personal token of its owner.",
+		);
+	}
+	if (!website.is_public) {
+		console.warn(
+			`playlist "${website.name}" (the Website gate) is not public — make it public in Supercut ` +
+				"so its recordings' embeds and share links are viewable on the site.",
+		);
+	}
+
+	const found = new Map<string, WebsiteRecording>();
+	for (const listing of await listPlaylistRecordings(website.public_id, supercutApi)) {
+		found.set(listing.public_id, { listing, playlists: new Set() });
+	}
+
+	const topics = all.filter((p) => p.is_public && p.public_id !== websiteId);
+	console.log(
+		`playlists: gate "${website.name}" holds ${found.size} recordings; ` +
+			`${topics.length} public topic playlists — ${topics.map((p) => p.name).join(", ")}`,
+	);
+	for (const p of topics) {
 		if (!PLAYLIST_OPTIONS.includes(p.name)) {
 			console.warn(
 				`playlist "${p.name}" is not a declared Playlists option — its name will be dropped ` +
@@ -153,18 +190,20 @@ async function collectPublicRecordings(): Promise<Map<string, PublicRecording>> 
 			);
 		}
 	}
-
-	const found = new Map<string, PublicRecording>();
-	for (const playlist of playlists) {
-		for (const listing of await listPlaylistRecordings(playlist.public_id, supercutApi)) {
-			const existing = found.get(listing.public_id);
-			if (existing) existing.playlists.add(playlist.name);
-			else found.set(listing.public_id, { listing, playlists: new Set([playlist.name]) });
+	for (const topic of topics) {
+		for (const listing of await listPlaylistRecordings(topic.public_id, supercutApi)) {
+			found.get(listing.public_id)?.playlists.add(topic.name);
 		}
 	}
 
 	for (const rec of found.values()) {
 		const id = rec.listing.public_id;
+		if (rec.playlists.size === 0) {
+			console.warn(
+				`recording ${id} ("${rec.listing.title}") is in the Website playlist but no public ` +
+					"topic playlist — it will sync with an empty Playlists category.",
+			);
+		}
 		const workspace = rec.listing.workspace_safename;
 		// Neither enrichment is load-bearing for the row itself: a failure here
 		// logs and degrades to the listing data rather than failing the run.
@@ -182,7 +221,13 @@ async function collectPublicRecordings(): Promise<Map<string, PublicRecording>> 
 	return found;
 }
 
-function toChange(rec: PublicRecording) {
+function websitePlaylistId(): string {
+	const id = process.env.WEBSITE_PLAYLIST_ID;
+	if (!id) throw new Error("WEBSITE_PLAYLIST_ID environment variable is not set");
+	return id;
+}
+
+function toChange(rec: WebsiteRecording) {
 	const { listing, detail, oembed } = rec;
 	const id = listing.public_id;
 	const workspace = listing.workspace_safename;
