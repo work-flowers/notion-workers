@@ -15,6 +15,8 @@ When a page is added to the Meeting Notes data source, a Notion DB automation ca
 5. Patches the page with `Date`, `Google Calendar Event ID`, `Description`, `Call Link`, `Contacts`, `Internal Attendees` — plus `Companies` and `Deals`, copied from each resolved Contact's `Related Company` / `Deals` relations (the native "link from Contacts" DB automation doesn't fire on API-driven updates). Deals are filtered to **open stages only**: a deal whose `Status` sits in the status property's "Complete" group (Closed Won / Closed Lost / Declined) is skipped. The closed set is read from the Deals schema at run time, and every failure in the filter (schema unreadable, deal page unreadable, empty Status) fails open — the deal stays linked — so an open deal is never silently dropped.
 6. Find-or-creates a row in the Zapier `[Table] Meeting Note IDs` (`01JZCVG73MBWWB0357CEPS4903`) keyed on the calendar event's **occurrence** id (`event.id`), storing the `iCalUID` alongside it in the `iCal UID` column. **The key must stay the occurrence id** — see [Operating notes](#operating-notes).
 
+7. Classifies the meeting into the **Type** select with [Jev](#meeting-type-classification), in a second, separate write — only when Type is still empty, and only when Jev's top pick clears the confidence threshold.
+
 If the calendar lookup fails or finds nothing, the run still completes with whatever the block resolved (Date, internal attendees, guest-visible contacts).
 
 ## Layout
@@ -25,6 +27,7 @@ src/
 ├── handler.ts             # handlePageCreated orchestration + attendee resolution
 ├── meetingNotesBlock.ts   # Poll for the populated meeting_notes child block
 ├── googleCalendar.ts      # Service-account JWT auth (DWD) + exact-start event lookup
+├── classifyMeetingType.ts # Jev question + criteria for the Type select
 └── meetingNoteIdsTable.ts # Find-or-create Zapier Table row mapping pageId ↔ occurrence event id
 ```
 
@@ -91,6 +94,40 @@ NOTION_API_TOKEN=$(op read "op://Employee/notion-worker-automations/credential")
 GOOGLE_SA_KEY_BASE64=$(op document get google-sa-notion-workers | base64 | tr -d '\n') \
   npx tsx --env-file=.env ./test-handler.ts <real-meeting-page-id>
 ```
+
+## Meeting Type classification
+
+After enrichment the Worker asks **Jev** (TypeSafe's typed-judgement model) one `choice` question — which `Type` option this meeting is — and writes the answer as a separate `pages.update`. Jev returns a probability per option, never generated text, so it can't invent an option. The call goes through `zapier.fetch` with the `Jev` *API by Zapier* connection (`02c36cbc-669d-8c82-9c72-7b7813e5cde0`, overridable with `ZAPIER_TYPESAFE_CONNECTION_ID`), the same one the zapier-sdk `gmail-attachments-to-drive-by-type` and `merge-duplicate-contacts` Zaps use, so the TypeSafe key never sits in this Worker's env. Each call costs one Zapier task plus ~$0.0001 of TypeSafe usage.
+
+- **Never overwrites.** A Type that's already set (by hand or a template) is left alone; if the page can't be read, classification is skipped rather than risk overwriting.
+- **Leaves Type empty below `MIN_TYPE_PROBABILITY` (0.5).** A blank Type is visible and easy to fill; a confidently wrong one skews every view grouped by Type.
+- **Best effort.** Any Jev or Notion failure is logged and swallowed — the enrichment has already been written.
+- **What Jev sees** is only what's known at enrichment time: the event title, the description (HTML-stripped, first 1,500 chars), the number of work.flowers attendees, external attendees' names and emails, linked Company names and linked open Deal names. There's no transcript yet when the page is created.
+
+The option criteria live in `TYPE_CRITERIA` in [`src/classifyMeetingType.ts`](src/classifyMeetingType.ts) and are the reviewable "prompt". **Keys must match the select options exactly** — Notion creates a new option for any unknown name, and a unit test pins the list. Update the table below with the code.
+
+| Type | Means |
+| --- | --- |
+| 1:1 | A one-on-one between two workFlowers team members (both on the work.flowers domain), e.g. 'Dennis x Peter', a huddle or lunch with one colleague. |
+| Team | An internal workFlowers meeting with three or more of our own team, such as the weekly team meeting or our own stand-up. |
+| Client | A meeting with an existing client's people about ongoing paid work: recurring syncs, stand-ups, planning or scoping sessions with the client team. Includes meetings mirrored from a client's calendar (description begins '[gcal-block]' or 'Mirrored from …'). |
+| Project | A focused working session on one specific piece of delivery — a proposal, a test run, a rollout, a training agenda — rather than a routine client sync. |
+| Discovery | A first or introductory call with a potential new client to understand their needs: 'Discovery call', 'Intro call', a booked first meeting about possible work. |
+| Prospect | A follow-up sales conversation with a potential client already in discussion — a regroup, follow-up or options discussion about a proposal not yet won. |
+| Onboarding | A kick-off call that starts a newly signed client engagement. |
+| Notion Setup Session | A '1:1 Notion Expert Session' booked through the Notion expert programme, where Dennis helps someone set up their Notion workspace. |
+| Partner | A meeting with a business partner rather than a client: a referral partner, a fellow consultant or agency, or Zapier/Notion staff about working together. |
+| Zapier Solution Partners | A Zapier Solution Partner programme session: partner office hours, town halls, or partner-programme syncs run by Zapier. |
+| Community | A community gathering we take part in: Notion ambassador or community calls, cohort sessions, community hangouts. |
+| Coffee | An informal catch-up or networking chat with an external person, with no client work or sale on the table — often a booked '30min Meeting'. |
+| Product Demo | A demo or walkthrough of someone's product, a vendor onboarding session, or a user-research interview about a product. |
+| Training | A training or enablement session delivered or attended: a walkthrough, office hours on a tool, a '101', an enablement session. |
+| Webinar | An online webinar, livestream or broadcast-style session with many attendees, typically on Luma, Goldcast or a Zoom webinar link. |
+| Event | An in-person event, conference, meetup or gathering attended, rather than a working meeting. |
+| Vendor | A meeting with a supplier or service provider to workFlowers itself: accountant, corporate secretary, subcontractor, software vendor account manager. |
+| Legal | A meeting about legal matters: contracts, agreements, or advice from a lawyer. |
+
+**Not yet validated offline.** 680 existing notes carry a hand-set Type, but the labels are noisy (the same recurring stand-up is labelled Client, Event and Team on different occurrences), so expect agreement well short of 100%. Before trusting the threshold, replay a sample of labelled notes through Jev and record the agreement and the threshold's coverage here.
 
 ## Operating notes
 

@@ -7,6 +7,7 @@ import {
 	resolveContactPageIds,
 	retrieveDataSource,
 } from "@work-flowers/notion-worker-shared";
+import { classifyMeetingType } from "./classifyMeetingType";
 import { findCalendarEvent, type CalendarEvent } from "./googleCalendar";
 import { upsertMeetingNoteIdRow } from "./meetingNoteIdsTable";
 import { waitForMeetingNotesBlock } from "./meetingNotesBlock";
@@ -54,19 +55,7 @@ function stripTrailingTimestamp(title: string): string {
 	return title.replace(TRAILING_TIMESTAMP, "").trim();
 }
 
-async function fetchPageTitle(
-	notion: Client,
-	pageId: string,
-): Promise<string | null> {
-	let page: any;
-	try {
-		page = await notion.pages.retrieve({ page_id: pageId });
-	} catch (err) {
-		console.log(
-			`Could not read page title for ${pageId}: ${(err as Error)?.message ?? err}`,
-		);
-		return null;
-	}
+function titleOf(page: any): string | null {
 	for (const prop of Object.values(page?.properties ?? {})) {
 		if ((prop as any)?.type === "title") {
 			const text = ((prop as any).title ?? [])
@@ -76,6 +65,46 @@ async function fetchPageTitle(
 		}
 	}
 	return null;
+}
+
+/**
+ * The page's title and current `Type`. A null result means the page couldn't
+ * be read, which callers treat as "title unknown, Type unknown" — classification
+ * then stays off rather than risk overwriting a Type someone set.
+ */
+async function fetchPage(
+	notion: Client,
+	pageId: string,
+): Promise<{ title: string | null; type: string | null } | null> {
+	let page: any;
+	try {
+		page = await notion.pages.retrieve({ page_id: pageId });
+	} catch (err) {
+		console.log(
+			`Could not read page ${pageId}: ${(err as Error)?.message ?? err}`,
+		);
+		return null;
+	}
+	return {
+		title: titleOf(page),
+		type: page?.properties?.["Type"]?.select?.name ?? null,
+	};
+}
+
+/** Titles of related pages, for classifier context. Unreadable pages are skipped. */
+async function pageTitles(notion: Client, pageIds: string[]): Promise<string[]> {
+	const titles: string[] = [];
+	for (const id of pageIds) {
+		try {
+			const title = titleOf(await notion.pages.retrieve({ page_id: id }));
+			if (title) titles.push(title);
+		} catch (err) {
+			console.log(
+				`Could not read title of ${id}: ${(err as Error)?.message ?? err}`,
+			);
+		}
+	}
+	return titles;
 }
 
 function stripHtml(html: string): string {
@@ -344,7 +373,8 @@ export async function handlePageCreated(
 	// disambiguate same-start calendar events on the parent page title instead —
 	// it holds the event summary (plus a trailing ISO timestamp) from creation.
 	// Fall back to the block title if the page title can't be read.
-	const pageTitle = await fetchPageTitle(notion, pageId);
+	const page = await fetchPage(notion, pageId);
+	const pageTitle = page?.title ?? null;
 	const eventTitle =
 		(pageTitle && stripTrailingTimestamp(pageTitle)) || meetingNotesBlock.title;
 	if (pageTitle) {
@@ -432,14 +462,16 @@ export async function handlePageCreated(
 			properties["Call Link"] = { url: event.hangoutLink };
 		}
 	}
+	let companyIds: string[] = [];
+	let dealIds: string[] = [];
 	if (contactPageIds.length > 0) {
 		properties["Contacts"] = {
 			relation: contactPageIds.map((id) => ({ id })),
 		};
-		const { companyIds, dealIds } = await collectContactRelations(
+		({ companyIds, dealIds } = await collectContactRelations(
 			notion,
 			contactPageIds,
-		);
+		));
 		if (companyIds.length > 0) {
 			properties["Companies"] = {
 				relation: companyIds.map((id) => ({ id })),
@@ -464,6 +496,49 @@ export async function handlePageCreated(
 	console.log(
 		`Updated ${pageId}: event=${event?.id ?? "none"}, contacts=${contactPageIds.length}, internal=${internalUserIds.length}`,
 	);
+
+	// Classify the meeting into `Type` with Jev, as a separate write after the
+	// enrichment so a classifier failure can never cost the enrichment. Only an
+	// empty Type is filled: one set by hand (or by a template) is left alone.
+	if (page && !page.type) {
+		try {
+			const externalAttendees = new Map<string, { email: string; name?: string }>();
+			for (const c of [...externalContacts, ...eventCandidates]) {
+				if (!c.email || c.email.endsWith(DEFAULT_INTERNAL_DOMAIN)) continue;
+				const existing = externalAttendees.get(c.email);
+				if (!existing?.name) externalAttendees.set(c.email, { email: c.email, name: c.name });
+			}
+			const result = await classifyMeetingType(zapier, {
+				title: event?.summary || eventTitle,
+				description: event?.description ? stripHtml(event.description) : undefined,
+				internalAttendeeCount: internalUserIds.length,
+				externalAttendees: [...externalAttendees.values()],
+				companyNames: await pageTitles(notion, companyIds),
+				openDealNames: await pageTitles(notion, dealIds),
+			});
+			if (!result) {
+				console.log("Jev returned no usable meeting type; Type left empty.");
+			} else if (!result.type) {
+				console.log(
+					`Jev ${result.model}: top type "${result.top}" at ${result.probability.toFixed(2)} is under the threshold; Type left empty.`,
+				);
+			} else {
+				await notion.pages.update({
+					page_id: pageId,
+					properties: { Type: { select: { name: result.type } } },
+				} as any);
+				console.log(
+					`Jev ${result.model}: Type set to "${result.type}" (${result.probability.toFixed(2)}).`,
+				);
+			}
+		} catch (err) {
+			console.log(
+				`Meeting type classification failed; Type left empty: ${(err as Error)?.message ?? err}`,
+			);
+		}
+	} else if (page?.type) {
+		console.log(`Type already set to "${page.type}"; not classifying.`);
+	}
 
 	// Notion DB automations don't reliably fire on API-driven property updates,
 	// and the native "set Companies from Contacts" automation can't cascade-trigger
