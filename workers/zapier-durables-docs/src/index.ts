@@ -649,6 +649,20 @@ const MAX_DETAIL_FETCHES_PER_DURABLE = 60;
  */
 const MAX_CHANGES_PER_EXECUTION = 2_000;
 
+/**
+ * `runsDelta`'s call budget: `zapierApi`'s full minute rate times the 120s time
+ * budget, so the time budget is what ends an execution, not the call count.
+ *
+ * The default of 40 split a daily cycle of ~500 calls into ~13 executions, and
+ * billing is mostly per execution (~0.2 credits each, against ~4.4 per
+ * execution-hour). The default exists to stop one execution monopolising a pacer
+ * that other syncs share, but nothing contends here: `runsBackfill` is manual and
+ * `zapsSync` finishes in ~10s before this sync starts. Calls run ~1–2.5s each,
+ * so expect ~7–8 executions a cycle. The time budget is untouched, because
+ * that is what keeps an execution inside the ~300s timeout.
+ */
+const RUNS_DELTA_CALL_BUDGET = 120;
+
 type RunsState = {
 	watermarks?: Record<string, string>;
 	index?: number;
@@ -783,7 +797,7 @@ worker.sync("runsDelta", {
 	mode: "incremental",
 	schedule: "1d",
 	execute: async (state: RunsState | undefined) => {
-		const budget = createBudget();
+		const budget = createBudget({ callBudget: RUNS_DELTA_CALL_BUDGET });
 		const zapier = budget.meter(zapierApi);
 		const startIndex = state?.index ?? 0;
 		const workflows = await listWorkflowRefs(

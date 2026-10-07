@@ -202,6 +202,14 @@ The fix is `src/budget.ts`: keep taking durables until an actual spend budget (4
 upstream calls or 120s) is gone. Quiet cycles collapse to a handful of executions
 and busy ones degrade to the old behaviour.
 
+**`runsDelta` overrides the call budget to 120** (2026-10-07,
+`RUNS_DELTA_CALL_BUDGET`), so only the 120s time budget ends its executions.
+Run volume had grown to ~1,800 rows a day (~70% from the two `scw-events-to-
+workflowers-block*` calendar durables), a daily cycle needed ~500 calls, and at
+40 calls per execution that was 9–13 executions a day — ~85 of this worker's
+~110 credits/month. Nothing contends for the pacer during the cycle. `zapsSync`
+keeps the default.
+
 **The budget is checked only *between* durables, so the per-durable caps are
 still load-bearing.** `MAX_PAGES_PER_EXECUTION` and
 `MAX_DETAIL_FETCHES_PER_DURABLE` bound how expensive *one* durable can get, which is the case that caused the original timeout. The
