@@ -51,13 +51,13 @@ export const TYPE_CRITERIA: Record<string, string> = {
 	"Notion Setup Session":
 		"A '1:1 Notion Expert Session' booked through the Notion expert programme, where Dennis helps someone set up their Notion workspace. Its title always mentions Notion, typically '<name> & Dennis Chiuten: 1:1 Notion Expert Session'.",
 	Partner:
-		"A meeting with a business partner rather than a client: a referral partner, a fellow consultant or agency, or Zapier/Notion staff about working together.",
+		"A meeting with a business partner rather than a client: a referral partner, a fellow consultant or agency, or anyone from Zapier or Notion (an @zapier.com or @makenotion.com/@notion.so attendee, or Zapier Inc. / Notion Labs as the linked company), unless it is a webinar, a community gathering, a product demo or a Notion Expert Session.",
 	"Zapier Solution Partners":
 		"A Zapier Solution Partner programme session: partner office hours, town halls, or partner-programme syncs run by Zapier.",
 	Community:
 		"A community gathering we take part in: Notion ambassador or community calls, cohort sessions, community hangouts.",
 	Coffee:
-		"An informal catch-up or networking chat with an external person, with no client work or sale on the table. Includes booked '30min Meeting' or '30-minute call' slots that have no linked deal and no business need stated.",
+		"An informal catch-up or networking chat with an external person, with no client work or sale on the table. Includes booked '30min Meeting' or '30-minute call' slots that have no linked deal and no business need stated. Never Coffee when the other person is from Zapier or Notion (that is Partner) or from a company we already work for (that is Client).",
 	"Product Demo":
 		"A demo or walkthrough of someone's product, a vendor onboarding session, or a user-research interview about a product.",
 	Training:
