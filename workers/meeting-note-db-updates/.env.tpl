@@ -18,7 +18,3 @@ ZAPIER_CLIENT_SECRET=op://Shared/zapier-workflowers/client secret
 
 # Optional: icon-sync webhook the handler POSTs to after updating a Meeting Note.
 # ICON_SYNC_WEBHOOK_URL=
-
-# Optional: Zapier connection id for the Jev (TypeSafe) API-by-Zapier connection
-# used to classify the meeting Type. Defaults to 02c36cbc-669d-8c82-9c72-7b7813e5cde0.
-# ZAPIER_TYPESAFE_CONNECTION_ID=

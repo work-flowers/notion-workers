@@ -10,7 +10,7 @@ type Zapier = ReturnType<typeof createZapierSdk>;
  * Each call is a Zapier task plus ~$0.0001 of TypeSafe usage.
  */
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
-const DEFAULT_JEV_CONNECTION_ID = "02c36cbc-669d-8c82-9c72-7b7813e5cde0";
+const JEV_CONNECTION_ID = "02c36cbc-669d-8c82-9c72-7b7813e5cde0";
 // `jev-latest` moves when TypeSafe ships a release; the answering model is
 // logged on every call so a behaviour change can be traced to a version.
 const JEV_MODEL = "jev-latest";
@@ -21,7 +21,7 @@ const JEV_MODEL = "jev-latest";
  * grouped by Type. See the README's "Meeting Type classification" section for
  * how it was chosen.
  */
-export const MIN_TYPE_PROBABILITY = 0.5;
+export const MIN_TYPE_PROBABILITY = 0.7;
 
 const DESCRIPTION_CAP = 1500;
 
@@ -30,23 +30,26 @@ const DESCRIPTION_CAP = 1500;
  * options byte-for-byte: Notion creates a new option for any unknown name. These
  * criteria are the reviewable "prompt" for this step; they're tabulated in the
  * README too, so update both together.
+ *
+ * `Event` and `Project` are deliberately absent: they stay manual. In the
+ * hand-labelled history neither has a consistent meaning (the same recurring
+ * client stand-up is labelled Event, Team and Client on different days), so
+ * Jev can't learn them from a definition and never picks them.
  */
 export const TYPE_CRITERIA: Record<string, string> = {
 	"1:1":
-		"A one-on-one between two workFlowers team members (both on the work.flowers domain), e.g. 'Dennis x Peter', a huddle or lunch with one colleague.",
-	Team: "An internal workFlowers meeting with three or more of our own team, such as the weekly team meeting or our own stand-up.",
+		"A one-on-one between two workFlowers team members, e.g. 'Dennis x Peter', a huddle or lunch with one colleague. Only when nobody outside work.flowers attends: any external attendee means it is not 1:1.",
+	Team: "An internal workFlowers meeting with three or more of our own team, such as our weekly team meeting, with nobody from another organisation. A stand-up or team meeting run by a client or another company is not Team.",
 	Client:
-		"A meeting with an existing client's people about ongoing paid work: recurring syncs, stand-ups, planning or scoping sessions with the client team. Includes meetings mirrored from a client's calendar (description begins '[gcal-block]' or 'Mirrored from …').",
-	Project:
-		"A focused working session on one specific piece of delivery — a proposal, a test run, a rollout, a training agenda — rather than a routine client sync.",
+		"A meeting with an existing client's people about ongoing paid work: recurring syncs, stand-ups, planning or scoping sessions with the client team, including the client's own internal stand-ups and team meetings that we attend. Includes meetings mirrored from a client's calendar (description begins '[gcal-block]' or 'Mirrored from …').",
 	Discovery:
-		"A first or introductory call with a potential new client to understand their needs: 'Discovery call', 'Intro call', a booked first meeting about possible work.",
+		"A first or introductory call with a potential new client to understand their needs. Needs a sign of possible paid work: 'discovery' or 'intro' in the title, a linked open deal, or a business need stated in the booking. A booked call with none of these is Coffee. A '1:1 Notion Expert Session' is Notion Setup Session, never Discovery.",
 	Prospect:
 		"A follow-up sales conversation with a potential client already in discussion — a regroup, follow-up or options discussion about a proposal not yet won.",
 	Onboarding:
 		"A kick-off call that starts a newly signed client engagement.",
 	"Notion Setup Session":
-		"A '1:1 Notion Expert Session' booked through the Notion expert programme, where Dennis helps someone set up their Notion workspace.",
+		"A '1:1 Notion Expert Session' booked through the Notion expert programme, where Dennis helps someone set up their Notion workspace. Its title always mentions Notion, typically '<name> & Dennis Chiuten: 1:1 Notion Expert Session'.",
 	Partner:
 		"A meeting with a business partner rather than a client: a referral partner, a fellow consultant or agency, or Zapier/Notion staff about working together.",
 	"Zapier Solution Partners":
@@ -54,14 +57,13 @@ export const TYPE_CRITERIA: Record<string, string> = {
 	Community:
 		"A community gathering we take part in: Notion ambassador or community calls, cohort sessions, community hangouts.",
 	Coffee:
-		"An informal catch-up or networking chat with an external person, with no client work or sale on the table — often a booked '30min Meeting'.",
+		"An informal catch-up or networking chat with an external person, with no client work or sale on the table. Includes booked '30min Meeting' or '30-minute call' slots that have no linked deal and no business need stated.",
 	"Product Demo":
 		"A demo or walkthrough of someone's product, a vendor onboarding session, or a user-research interview about a product.",
 	Training:
 		"A training or enablement session delivered or attended: a walkthrough, office hours on a tool, a '101', an enablement session.",
 	Webinar:
 		"An online webinar, livestream or broadcast-style session with many attendees, typically on Luma, Goldcast or a Zoom webinar link.",
-	Event: "An in-person event, conference, meetup or gathering attended, rather than a working meeting.",
 	Vendor:
 		"A meeting with a supplier or service provider to workFlowers itself: accountant, corporate secretary, subcontractor, software vendor account manager.",
 	Legal: "A meeting about legal matters: contracts, agreements, or advice from a lawyer.",
@@ -130,8 +132,7 @@ export async function classifyMeetingType(
 	meeting: MeetingContext,
 ): Promise<TypeClassification | null> {
 	const res = await zapier.fetch(JEV_URL, {
-		connection:
-			process.env.ZAPIER_TYPESAFE_CONNECTION_ID || DEFAULT_JEV_CONNECTION_ID,
+		connection: JEV_CONNECTION_ID,
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({

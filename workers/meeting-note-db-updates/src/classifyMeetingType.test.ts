@@ -43,15 +43,20 @@ test("a missing probability reads as zero, so nothing is written", () => {
 	assert.equal(r?.type, null);
 });
 
-test("every criteria key is one of the Meeting Notes Type options", () => {
+test("Jev picks from every Type option except the manual-only Event and Project", () => {
 	assert.deepEqual(
 		Object.keys(TYPE_CRITERIA).sort(),
 		[
-			"1:1", "Client", "Coffee", "Community", "Discovery", "Event", "Legal",
-			"Notion Setup Session", "Onboarding", "Partner", "Product Demo", "Project",
+			"1:1", "Client", "Coffee", "Community", "Discovery", "Legal",
+			"Notion Setup Session", "Onboarding", "Partner", "Product Demo",
 			"Prospect", "Team", "Training", "Vendor", "Webinar", "Zapier Solution Partners",
 		].sort(),
 	);
+});
+
+test("a manual-only option is never written, however confident", () => {
+	assert.equal(readTypeAnswer(answer("Event", 0.99)), null);
+	assert.equal(readTypeAnswer(answer("Project", 0.99)), null);
 });
 
 test("state marks absent context explicitly and caps the description", () => {
