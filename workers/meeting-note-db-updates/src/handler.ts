@@ -6,6 +6,7 @@ import {
 	extractAddresses,
 	resolveContactPageIds,
 	retrieveDataSource,
+	updatePage,
 } from "@work-flowers/notion-worker-shared";
 import { classifyMeetingType } from "./classifyMeetingType";
 import { findCalendarEvent, type CalendarEvent } from "./googleCalendar";
@@ -492,7 +493,8 @@ export async function handlePageCreated(
 		};
 	}
 
-	await notion.pages.update({ page_id: pageId, properties } as any);
+	// Silent: setting Internal Attendees would otherwise notify every attendee.
+	await updatePage(pageId, { properties });
 	console.log(
 		`Updated ${pageId}: event=${event?.id ?? "none"}, contacts=${contactPageIds.length}, internal=${internalUserIds.length}`,
 	);
@@ -523,10 +525,9 @@ export async function handlePageCreated(
 					`Jev ${result.model}: top type "${result.top}" at ${result.probability.toFixed(2)} is under the threshold; Type left empty.`,
 				);
 			} else {
-				await notion.pages.update({
-					page_id: pageId,
+				await updatePage(pageId, {
 					properties: { Type: { select: { name: result.type } } },
-				} as any);
+				});
 				console.log(
 					`Jev ${result.model}: Type set to "${result.type}" (${result.probability.toFixed(2)}).`,
 				);

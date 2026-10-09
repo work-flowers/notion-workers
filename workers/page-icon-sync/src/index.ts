@@ -1,4 +1,5 @@
 import { Worker } from "@notionhq/workers";
+import { updatePage } from "@work-flowers/notion-worker-shared";
 
 const worker = new Worker();
 export default worker;
@@ -61,11 +62,8 @@ async function syncOne(
 	}
 
 	await notionApi.wait();
-	await notion.pages.update({
-		page_id: pageId,
-		// Cast: the response emoji type is a specific union; the update API accepts the same set of strings at runtime.
-		icon: iconUpdate as Parameters<typeof notion.pages.update>[0]["icon"],
-	});
+	// Raw, silent write: an icon change otherwise notifies the page's followers.
+	await updatePage(pageId, { icon: iconUpdate });
 
 	console.log("Synced icon", { pageId, companyId });
 }

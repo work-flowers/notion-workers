@@ -137,6 +137,8 @@ async function linkIssueRelations(): Promise<void> {
 				properties: {
 					[ISSUE_RELATION_PROPERTY]: { relation: [{ id: issuePageId }] },
 				},
+				// Silent: suppresses page-update notifications for the change.
+				notifications: { mode: "silent" },
 			}),
 		});
 		linked += 1;

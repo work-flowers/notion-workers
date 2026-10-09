@@ -87,7 +87,8 @@ async function updatePage(
 	pageId: string,
 	properties: Record<string, unknown>,
 ): Promise<void> {
-	await notionFetch(`/pages/${pageId}`, "PATCH", { properties });
+	// Silent: suppresses page-update notifications for the change.
+	await notionFetch(`/pages/${pageId}`, "PATCH", { properties, notifications: { mode: "silent" } });
 }
 
 /** Extract a plain string value from a Notion property, across common types. */
