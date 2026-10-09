@@ -525,6 +525,7 @@ async function applyTemplate(
 	for (let i = 0; i < children.length; i += 100) {
 		await notionRequest(token, "PATCH", `/blocks/${newPageId}/children`, {
 			children: children.slice(i, i + 100),
+			notifications: { mode: "silent" },
 		});
 	}
 }
@@ -617,6 +618,8 @@ worker.webhook("onCreateNewsletter", {
 						relation: [{ id: blogPageId }],
 					},
 				},
+				// Silent: suppresses page-update notifications for the change.
+				notifications: { mode: "silent" },
 			};
 			if (cover) createBody.cover = cover;
 			if (md.markdown && md.markdown.trim().length > 0) {

@@ -4,6 +4,7 @@ import {
 	buildInternalUserMap,
 	resolveContactPageIds,
 	resolveInternalUserIds,
+	updatePage,
 } from "@work-flowers/notion-worker-shared";
 import { parseMailMetadata, waitForMailPageText } from "./mailBlock.js";
 
@@ -109,7 +110,8 @@ export async function handlePageCreated(
 		};
 	}
 
-	await notion.pages.update({ page_id: pageId, properties } as any);
+	// Silent: setting Internal Recipients would otherwise notify every recipient.
+	await updatePage(pageId, { properties });
 	console.log(
 		`Updated ${pageId}: contacts=${mergedContactIds.length} (existing=${meta.existingContactIds.length}, resolved=${resolvedContactIds.length}), internal=${internalUserIds.length}`,
 	);

@@ -84,7 +84,12 @@ export function getNotion(pacer?: Pacer): NotionClient {
 		},
 		pages: {
 			update: ({ page_id, properties }) =>
-				notionFetch(`pages/${page_id}`, { method: "PATCH", body: { properties } }, pacer),
+				notionFetch(
+					`pages/${page_id}`,
+					// Silent: suppresses page-update notifications for the change.
+					{ method: "PATCH", body: { properties, notifications: { mode: "silent" } } },
+					pacer,
+				),
 		},
 	};
 }

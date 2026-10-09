@@ -48,13 +48,28 @@ export async function queryDataSource(
 	return await call("POST", `data_sources/${dataSourceId}/query`, body);
 }
 
+/**
+ * Sent on every page write so worker edits don't notify anyone: Notion skips
+ * page-update, @mention and Person-property notifications for the change,
+ * while database automations and webhooks still fire. The `@notionhq/client`
+ * 2.x SDK strips unknown body params, so `context.notion.pages.update` can't
+ * send this — page writes have to go through these raw helpers.
+ */
+export const SILENT_NOTIFICATIONS = { mode: "silent" } as const;
+
 export async function createPage(body: Record<string, unknown>): Promise<any> {
-	return await call("POST", "pages", body);
+	return await call("POST", "pages", {
+		notifications: SILENT_NOTIFICATIONS,
+		...body,
+	});
 }
 
 export async function updatePage(
 	pageId: string,
 	body: Record<string, unknown>,
 ): Promise<any> {
-	return await call("PATCH", `pages/${pageId}`, body);
+	return await call("PATCH", `pages/${pageId}`, {
+		notifications: SILENT_NOTIFICATIONS,
+		...body,
+	});
 }

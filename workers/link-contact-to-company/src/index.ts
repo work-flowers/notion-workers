@@ -111,7 +111,8 @@ function retrievePage(pageId: string): Promise<any> {
 function updatePage(pageId: string, properties: unknown): Promise<any> {
 	return notionFetch(`/pages/${pageId}`, {
 		method: "PATCH",
-		body: { properties },
+		// Silent: suppresses page-update notifications for the change.
+		body: { properties, notifications: { mode: "silent" } },
 	});
 }
 
@@ -121,6 +122,7 @@ function createPage(dataSourceId: string, properties: unknown): Promise<any> {
 		body: {
 			parent: { type: "data_source_id", data_source_id: dataSourceId },
 			properties,
+			notifications: { mode: "silent" },
 		},
 	});
 }

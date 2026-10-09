@@ -91,7 +91,12 @@ export async function listChildren(blockId: string, pacer: Pacer): Promise<Notio
 }
 
 export function appendChildren(blockId: string, children: unknown[], pacer: Pacer): Promise<unknown> {
-	return notionRequest(`/blocks/${blockId}/children`, { method: "PATCH", body: { children } }, pacer);
+	// Silent: suppresses page-update notifications for the change.
+	return notionRequest(
+		`/blocks/${blockId}/children`,
+		{ method: "PATCH", body: { children, notifications: { mode: "silent" } } },
+		pacer,
+	);
 }
 
 export function updateBlock(blockId: string, body: Record<string, unknown>, pacer: Pacer): Promise<unknown> {

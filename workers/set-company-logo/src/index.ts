@@ -1,4 +1,5 @@
 import { Worker } from "@notionhq/workers";
+import { updatePage } from "@work-flowers/notion-worker-shared";
 
 const worker = new Worker();
 export default worker;
@@ -69,8 +70,8 @@ worker.webhook("setCompanyLogo", {
 				domain,
 			)}?token=${encodeURIComponent(logoToken)}`;
 
-			await notion.pages.update({
-				page_id: pageId,
+			// Raw, silent write: an icon change otherwise notifies the page's followers.
+			await updatePage(pageId, {
 				icon: { type: "external", external: { url: logoUrl } },
 			});
 
