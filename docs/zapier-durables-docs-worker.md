@@ -41,9 +41,8 @@ rejects both plain and `sdk.fetch` requests with
 `401 Expected valid JWT in authorization header`. The versioned SDK is the only
 route that works from a worker.
 
-This auth pattern already runs in four workers off `ZAPIER_CLIENT_ID` /
-`ZAPIER_CLIENT_SECRET`: `bq-sync`, `buttondown-tools`, `luma-guest-sync`,
-`xero-invoice-sync`.
+This auth pattern already runs in three workers off `ZAPIER_CLIENT_ID` /
+`ZAPIER_CLIENT_SECRET`: `bq-sync`, `buttondown-tools`, `xero-invoice-sync`.
 
 `listWorkflows()` returns `{ data, nextCursor }`. Each row: `id`, `name`,
 `description`, `trigger_url`, `enabled`, `disabled_reason`, `is_private`,
