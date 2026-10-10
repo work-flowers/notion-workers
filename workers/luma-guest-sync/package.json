@@ -14,7 +14,7 @@
 	"dependencies": {
 		"@notionhq/workers": "0.8.3",
 		"@zapier/zapier-sdk": "^0.40.1",
-		"csv-parse": "^5.5.6"
+		"csv-parse": "^7.0.3"
 	},
 	"devDependencies": {
 		"@types/node": "^22.9.0",
