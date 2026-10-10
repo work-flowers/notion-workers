@@ -31,7 +31,7 @@ src/
 └── meetingNoteIdsTable.ts # Find-or-create Zapier Table row mapping pageId ↔ occurrence event id
 ```
 
-Contact resolution, internal-user lookup, and raw data-source helpers live in [`@work-flowers/notion-worker-shared`](https://github.com/work-flowers/notion-worker-shared), shared with [notion-worker-email-db-updates](https://github.com/work-flowers/notion-worker-email-db-updates).
+Contact resolution, internal-user lookup, and raw data-source helpers live in [`@work-flowers/notion-worker-shared`](https://github.com/work-flowers/notion-worker-shared).
 
 ```
 ```

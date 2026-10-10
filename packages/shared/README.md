@@ -49,8 +49,7 @@ Used by `zapier-durables-docs` and `worker-readme-sync`.
 
 ## Consumers
 
-- `workers/email-db-updates`, `workers/meeting-note-db-updates` — contact and
-  internal-user resolution
+- `workers/meeting-note-db-updates` — contact and internal-user resolution
 - `workers/zapier-durables-docs`, `workers/worker-readme-sync` — `toNotionMarkdown`
 
 Historical standalone repos, superseded by this monorepo:

@@ -46,8 +46,8 @@ Two credentials are duplicated widely enough to need a checklist (as of 2026-09-
 
 | Credential | Workers holding it |
 |---|---|
-| `ZAPIER_CLIENT_ID` + `ZAPIER_CLIENT_SECRET` | `bq-sync`, `buttondown-tools`, `email-db-updates`, `ga4-sync`, `gdrive-tools`, `luma-guest-sync`, `meeting-note-db-updates`, `xero-invoice-sync`, `zapier-durables-docs` |
-| `NOTION_API_TOKEN` | `buttondown-sync`, `create-newsletter-page`, `email-db-updates`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `luma-guest-sync`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `supercut-sync` |
+| `ZAPIER_CLIENT_ID` + `ZAPIER_CLIENT_SECRET` | `bq-sync`, `buttondown-tools`, `ga4-sync`, `gdrive-tools`, `luma-guest-sync`, `meeting-note-db-updates`, `xero-invoice-sync`, `zapier-durables-docs` |
+| `NOTION_API_TOKEN` | `buttondown-sync`, `create-newsletter-page`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `luma-guest-sync`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `supercut-sync` |
 
 `NOTION_API_TOKEN` is only needed when worker code reads it (REST calls or `context.notion`) — the platform writes managed-database sync rows without it (`fx-rates` has no env vars and reports healthy; `lovable-changelog-sync` ran its first sync, 528 upserts, with none set). Don't set it on a worker that doesn't read it.
 
