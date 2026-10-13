@@ -21,6 +21,7 @@ export {
 	createPage,
 	queryDataSource,
 	retrieveDataSource,
+	retrievePage,
 	SILENT_NOTIFICATIONS,
 	updatePage,
 } from "./notionRaw";
