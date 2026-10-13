@@ -91,7 +91,9 @@ worker.tool("validateFollowUps", {
 				ref: j.string(),
 				title: j.string(),
 				verdict: j.enum("create", "needs_owner", "review", "reject"),
-				reasons: j.array(j.string()).describe("Why it isn't 'create'. Empty when it is."),
+				reasons: j
+					.array(j.string())
+					.describe("Why it isn't 'create', plus any 'title note:' about the title's wording (which never changes the verdict)."),
 				checks: checkScores.describe("Probability that each check passes (0–1)."),
 			}),
 		),

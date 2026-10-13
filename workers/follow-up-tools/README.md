@@ -32,7 +32,7 @@ Each candidate is scored on six checks, each a probability that it passes:
 |---|---|
 | `concrete` | it's a specific action or deliverable, not a theme or goal |
 | `committed` | someone agreed, was assigned, or it's an instruction-style action item; not "consider / maybe / should" |
-| `grounded` | the title doesn't add a commitment, owner or deadline the quote doesn't contain |
+| `grounded` | the title doesn't add a commitment, owner or deadline the quote doesn't contain. *Advisory: it adds a note but never changes the verdict.* |
 | `not_done` | it wasn't already done during the meeting |
 | `owner_clear` | one person clearly owns it |
 | `owner_internal` | that person is in workFlowers |

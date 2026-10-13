@@ -38,9 +38,16 @@ export interface FollowUpCandidate {
 export const PASS = 0.7;
 export const FAIL = 0.3;
 
-const HARD_CHECKS = ["concrete", "committed", "grounded", "not_done", "owner_internal"] as const;
-type HardCheck = (typeof HARD_CHECKS)[number];
-type Check = HardCheck | "owner_clear";
+/**
+ * Checks that decide the verdict. `grounded` is asked and reported but never
+ * decides: on its first live run (DU EMBA meeting, 2026-10-13) it rejected
+ * faithful rewordings ("share feedback" for "share any thoughts, questions or
+ * considerations", p=0.30), dropping two real tasks. It is also redundant as a
+ * gate, since `committed` and `concrete` judge the verbatim quote, not the title.
+ */
+const GATING_CHECKS = ["concrete", "committed", "not_done", "owner_internal"] as const;
+type Check = (typeof GATING_CHECKS)[number] | "grounded" | "owner_clear";
+const ALL_CHECKS: Check[] = [...GATING_CHECKS, "grounded", "owner_clear"];
 
 /** Asked as the failure condition ("already done?", "overclaims?"); inverted to P(pass). */
 const INVERTED = new Set<Check>(["not_done", "grounded"]);
@@ -49,7 +56,7 @@ const INVERTED = new Set<Check>(["not_done", "grounded"]);
 const FAILURE_REASON: Record<Check, string> = {
 	concrete: "not a concrete, checkable action (a theme, goal, habit or topic)",
 	committed: "no commitment or assignment: reads as a suggestion or idea",
-	grounded: "the title claims more than the evidence says (commitment, scope, owner or deadline)",
+	grounded: "the title may say more than the evidence (commitment, scope, owner or deadline); check its wording",
 	not_done: "already done during or before the meeting",
 	owner_internal: "owned by someone outside workFlowers",
 	owner_clear: "no single clear owner",
@@ -152,11 +159,16 @@ const round = (p: number) => Math.round(p * 100) / 100;
 
 /**
  * Combine the per-check probabilities into a verdict. Precedence:
- * reject (a hard check clearly fails) > review (one is uncertain or missing)
+ * reject (a gating check clearly fails) > review (one is uncertain or missing)
  * > needs_owner (passes, but nobody clearly owns it) > create.
  *
- * `owner_internal` is only meaningful once there *is* a clear owner; when
- * `owner_clear` fails its answer is ignored rather than allowed to reject.
+ * With no clear owner, `owner_internal` can still reject but can't make a
+ * candidate uncertain. Across the first two live meetings it scored 0.08–0.17
+ * for external owners ("Team to send…", "Allison to send…") and 0.55–0.62 for
+ * unowned internal items, so a clear fail is meaningful even then, while the
+ * middle of the range is just "no owner to judge".
+ *
+ * A low `grounded` never changes the verdict; it adds a title note to `reasons`.
  */
 export function decide(
 	candidate: FollowUpCandidate,
@@ -166,17 +178,17 @@ export function decide(
 	const id = idOf(index);
 	const raw = (check: Check) => noulOf(answers[`${id}__${check}`]);
 	const checks = {} as Record<Check, number | null>;
-	for (const check of [...HARD_CHECKS, "owner_clear"] as Check[]) {
+	for (const check of ALL_CHECKS) {
 		const p = raw(check);
 		checks[check] = p === null ? null : round(INVERTED.has(check) ? 1 - p : p);
 	}
 
 	const ownerClear = checks.owner_clear;
 	const ownerUnclear = ownerClear !== null && ownerClear <= FAIL;
-	const hard = HARD_CHECKS.filter((c) => !(c === "owner_internal" && ownerUnclear));
-
-	const failed = hard.filter((c) => checks[c] !== null && (checks[c] as number) <= FAIL);
-	const uncertain = hard.filter((c) => checks[c] === null || (checks[c] as number) < PASS);
+	const failed = GATING_CHECKS.filter((c) => checks[c] !== null && (checks[c] as number) <= FAIL);
+	const uncertain = GATING_CHECKS.filter(
+		(c) => !(c === "owner_internal" && ownerUnclear) && (checks[c] === null || (checks[c] as number) < PASS),
+	);
 	const ownerUncertain = ownerClear === null || ownerClear < PASS;
 
 	const describe = (c: Check) =>
@@ -196,6 +208,9 @@ export function decide(
 	} else {
 		verdict = "create";
 		reasons = [];
+	}
+	if (checks.grounded !== null && checks.grounded < PASS) {
+		reasons.push(`title note: ${describe("grounded")}`);
 	}
 	return { ref: candidate.ref, title: candidate.title, verdict, reasons, checks };
 }
