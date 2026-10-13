@@ -52,11 +52,11 @@ worker.tool("validateFollowUps", {
 		"Check which proposed follow-ups from a meeting count as tasks. Call this once with every " +
 		"candidate you extracted, before searching for duplicates. For each candidate pass a short " +
 		"title and a VERBATIM quote from the meeting summary or transcript as evidence (never a " +
-		"paraphrase: the judgement is made on the quote). Each result has a verdict: 'create' (file " +
-		"it), 'needs_owner' (valid, but no clear owner: follow your instructions for unowned tasks), " +
-		"'review' (uncertain: report it, " +
-		"don't create), or 'reject' (not a task: report the reason). Then pass the 'create' items " +
-		"to findTaskMatches.",
+		"paraphrase: the judgement is made on the quote). Each result has a verdict: 'valid' (a real " +
+		"follow-up; this does NOT mean create it, since findTaskMatches decides whether to create or " +
+		"update), 'needs_owner' (valid, but no clear owner: follow your instructions for unowned " +
+		"tasks), 'review' (uncertain: report it, don't create), or 'reject' (not a task: report the " +
+		"reason). Then pass the 'valid' and 'needs_owner' items to findTaskMatches.",
 	schema: j.object({
 		meetingTitle: j.string().describe("Title of the meeting note."),
 		workflowersPeople: j
@@ -90,10 +90,10 @@ worker.tool("validateFollowUps", {
 			j.object({
 				ref: j.string(),
 				title: j.string(),
-				verdict: j.enum("create", "needs_owner", "review", "reject"),
+				verdict: j.enum("valid", "needs_owner", "review", "reject"),
 				reasons: j
 					.array(j.string())
-					.describe("Why it isn't 'create', plus any 'title note:' about the title's wording (which never changes the verdict)."),
+					.describe("Why it isn't 'valid', plus any 'title note:' about the title's wording (which never changes the verdict)."),
 				checks: checkScores.describe("Probability that each check passes (0–1)."),
 			}),
 		),
@@ -122,7 +122,7 @@ worker.tool("validateFollowUps", {
 				model: res.model,
 				results,
 				message:
-					`${count("create")} to create, ${count("needs_owner")} need an owner, ` +
+					`${count("valid")} valid, ${count("needs_owner")} need an owner, ` +
 					`${count("review")} uncertain, ${count("reject")} rejected.` +
 					(dropped ? ` ${dropped} candidate(s) over the limit of ${MAX_CANDIDATES} were not checked.` : ""),
 			};
@@ -160,7 +160,7 @@ worker.tool("findTaskMatches", {
 	description:
 		"Compare validated follow-ups with the Tasks database (open and closed tasks) and say, for " +
 		"each, whether to update an existing task, create it as a sub-task, or create it with links. " +
-		"Call after validateFollowUps, with only the candidates whose verdict was 'create' (or " +
+		"Call after validateFollowUps, with only the candidates whose verdict was 'valid' (or " +
 		"'needs_owner', with the owner you'll assign). Follow each recommendation: " +
 		"'update_existing' → update targetTaskId and link the meeting, don't create; " +
 		"'confirm_duplicate' / 'confirm_subtask' → ask the user; " +

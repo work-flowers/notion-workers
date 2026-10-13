@@ -9,8 +9,8 @@ Tools only: no syncs, webhooks or databases. The worker never writes to Notion; 
 ```
 meeting summary completed
   └─ agent extracts candidate follow-ups, each with a verbatim quote as evidence
-       └─ validateFollowUps → create / needs_owner / review / reject
-            └─ findTaskMatches (create + needs_owner only)
+       └─ validateFollowUps → valid / needs_owner / review / reject
+            └─ findTaskMatches (valid + needs_owner only)
                  → update an existing task, create as a sub-task,
                    check a closed twin, or create with links
                       └─ agent writes the tasks and comments on the meeting note
@@ -44,7 +44,7 @@ Each candidate is scored on six checks, each a probability that it passes:
 | `reject` | a check clearly fails (≤ 0.3): not a task, or owned outside workFlowers |
 | `review` | a check is uncertain (< 0.7) or unanswered: report, don't create |
 | `needs_owner` | a valid task with no single owner |
-| `create` | file it |
+| `valid` | a real follow-up: pass it to `findTaskMatches`, which decides whether to create or update |
 
 ### `findTaskMatches`
 
