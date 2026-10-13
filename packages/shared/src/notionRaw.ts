@@ -41,6 +41,10 @@ export async function retrieveDataSource(
 	return await call("GET", `data_sources/${dataSourceId}`);
 }
 
+export async function retrievePage(pageId: string): Promise<any> {
+	return await call("GET", `pages/${pageId}`);
+}
+
 export async function queryDataSource(
 	dataSourceId: string,
 	body: Record<string, unknown>,
