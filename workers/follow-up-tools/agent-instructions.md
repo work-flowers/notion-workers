@@ -28,7 +28,7 @@ Two tools from the **follow-up-tools** worker make the two judgement calls: `val
 ## 2️⃣ Validate with `validateFollowUps`
 - Call it once with all candidates, the meeting title, the workFlowers attendees' names (from Internal Attendees) as `workflowersPeople`, and everyone else as `externalPeople`.
 - Act on each verdict:
-  - `create`: carry forward to step 3.
+  - `valid`: a real follow-up. Carry it forward to step 3. This doesn't mean create it: `findTaskMatches` decides whether to create a task or update an existing one.
   - `needs_owner`: valid, but no single clear owner. Carry forward and assign it to @Dennis so he can reassign it manually. Note in the meeting comment that it needs an owner.
   - `review`: uncertain. Don't create it; list it in the meeting comment with the tool's reasons.
   - `reject`: not a task (a suggestion, too vague, already done, or owned outside workFlowers). Don't create it; list it in the comment with the reason.

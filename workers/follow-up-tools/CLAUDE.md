@@ -8,7 +8,7 @@ rules that combine Jev's answers kept here in code.
 
 | Tool | Jev requests | What it decides |
 |---|---|---|
-| `validateFollowUps` | 1 for the whole batch | Does each candidate count as a task? `create` / `needs_owner` / `review` / `reject` |
+| `validateFollowUps` | 1 for the whole batch | Does each candidate count as a task? `valid` / `needs_owner` / `review` / `reject` |
 | `findTaskMatches` | 1 per candidate (4 concurrent) | Update an existing task, create as a sub-task, check a closed twin, or create with links |
 
 No syncs, no databases, no writes: the agent still creates and updates the pages.
@@ -44,7 +44,7 @@ One Noul per criterion per candidate, all in one request (11 candidates = 66 que
 | `owner_internal` | is the owner in `workflowersPeople`? | client/partner owns it → `reject` |
 
 Verdict precedence: **reject** (any gating check ≤ `FAIL` 0.3) > **review** (any < `PASS`
-0.7, or no answer) > **needs_owner** > **create**. The gating checks are `concrete`,
+0.7, or no answer) > **needs_owner** > **valid**. The gating checks are `concrete`,
 `committed`, `not_done` and `owner_internal`. When `owner_clear` fails, `owner_internal`
 can still reject (≤ 0.3) but can't send a candidate to review: with no owner, its middle
 range just means "nobody to judge".
@@ -74,6 +74,11 @@ nothing:
   clear of the 0.3 cut.
 - Known miss, pinned in `validate.test.ts`: "Dennis to *consider* whether any contacts…"
   scored `committed` 0.8, so it's filed to the default owner.
+
+**`valid`, not `create`.** The passing verdict was called `create` until 2026-10-13. It
+read as "file it", which contradicted `findTaskMatches` whenever that found a duplicate
+(the walkthrough showed "create" next to "update_existing"), and it invited the agent to
+skip matching. It means only "a real follow-up: carry it forward".
 
 ## findTaskMatches
 

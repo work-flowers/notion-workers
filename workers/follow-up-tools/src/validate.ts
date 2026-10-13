@@ -144,7 +144,12 @@ export function buildValidationRequest(meeting: MeetingInput, candidates: Follow
 	return { state, questions };
 }
 
-export type Verdict = "create" | "needs_owner" | "review" | "reject";
+/**
+ * `valid` means "a real follow-up: carry it to findTaskMatches", never "create it".
+ * It was called `create` until 2026-10-13, which read as an instruction to file the
+ * task and contradicted the matcher whenever it found a duplicate.
+ */
+export type Verdict = "valid" | "needs_owner" | "review" | "reject";
 
 export interface ValidationResult {
 	ref: string;
@@ -160,7 +165,7 @@ const round = (p: number) => Math.round(p * 100) / 100;
 /**
  * Combine the per-check probabilities into a verdict. Precedence:
  * reject (a gating check clearly fails) > review (one is uncertain or missing)
- * > needs_owner (passes, but nobody clearly owns it) > create.
+ * > needs_owner (passes, but nobody clearly owns it) > valid.
  *
  * With no clear owner, `owner_internal` can still reject but can't make a
  * candidate uncertain. Across the first two live meetings it scored 0.08–0.17
@@ -206,7 +211,7 @@ export function decide(
 		verdict = "needs_owner";
 		reasons = [describe("owner_clear")];
 	} else {
-		verdict = "create";
+		verdict = "valid";
 		reasons = [];
 	}
 	if (checks.grounded !== null && checks.grounded < PASS) {
