@@ -13,7 +13,7 @@ import {
 	type PhaseView,
 	type Project,
 } from "./gate.ts"
-import { today, type Store } from "./store.ts"
+import { today, type ProjectDetails, type Store } from "./store.ts"
 
 type StatusOverride = { status: ItemStatus; completedDate: string | null }
 
@@ -35,9 +35,9 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		}
 	}, [creatingId, store.projects])
 
-	async function createProject(name: string): Promise<string | null> {
+	async function createProject(name: string, details: ProjectDetails): Promise<string | null> {
 		setError(null)
-		const result = await store.createProject(name)
+		const result = await store.createProject(name, details)
 		if (!result.ok) return result.message
 		setCreatingId(result.id)
 		return null
@@ -216,7 +216,7 @@ function Overview(props: {
 	deliverables: Deliverable[]
 	contextProjectId: string | null
 	onOpen: (id: string) => void
-	onCreate: (name: string) => Promise<string | null>
+	onCreate: (name: string, details: ProjectDetails) => Promise<string | null>
 	waitingForNew: boolean
 }) {
 	const cards = props.projects
@@ -308,9 +308,15 @@ function Overview(props: {
 	)
 }
 
-function NewProject(props: { onCreate: (name: string) => Promise<string | null>; waiting: boolean }) {
+const NO_DETAILS: ProjectDetails = { make: "", model: "", variant: "" }
+
+function NewProject(props: {
+	onCreate: (name: string, details: ProjectDetails) => Promise<string | null>
+	waiting: boolean
+}) {
 	const [open, setOpen] = useState(false)
 	const [name, setName] = useState("")
+	const [details, setDetails] = useState<ProjectDetails>(NO_DETAILS)
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const label = `New ${PROJECT_NOUN}`
@@ -331,18 +337,36 @@ function NewProject(props: { onCreate: (name: string) => Promise<string | null>;
 		if (!trimmed) return
 		setBusy(true)
 		setError(null)
-		const message = await props.onCreate(trimmed)
+		const message = await props.onCreate(trimmed, details)
 		setBusy(false)
 		if (message) {
 			setError(`Couldn't create it: ${message}`)
 			return
 		}
 		setName("")
+		setDetails(NO_DETAILS)
 		setOpen(false)
 	}
 
+	const field = (key: keyof ProjectDetails, label: string, placeholder: string) => (
+		<input
+			className="sg-input sg-input--small"
+			placeholder={placeholder}
+			aria-label={label}
+			value={details[key]}
+			disabled={busy}
+			onChange={(e) => setDetails((d) => ({ ...d, [key]: e.target.value }))}
+		/>
+	)
+
 	return (
-		<form className="sg-new" onSubmit={submit}>
+		<form
+			className="sg-new"
+			onSubmit={submit}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") setOpen(false)
+			}}
+		>
 			<input
 				className="sg-input"
 				autoFocus
@@ -351,10 +375,12 @@ function NewProject(props: { onCreate: (name: string) => Promise<string | null>;
 				value={name}
 				disabled={busy}
 				onChange={(e) => setName(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === "Escape") setOpen(false)
-				}}
 			/>
+			<div className="sg-new-details">
+				{field("make", "Make", "Make")}
+				{field("model", "Model", "Model")}
+				{field("variant", "Variant", "Variant, e.g. Dual cab · 4x4")}
+			</div>
 			<button type="submit" className="sg-button" disabled={busy || name.trim() === ""}>
 				{busy ? "Creating…" : "Create"}
 			</button>

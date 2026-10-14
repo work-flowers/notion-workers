@@ -46,6 +46,21 @@ worker.customBlock("stageGate", {
 						"Status property. Option names must match the checklist's phases, plus a final 'Handed over'.",
 					type: "status",
 				},
+				make: {
+					name: "Make",
+					description: "Text. Optional; filled in from the New vehicle platform form.",
+					type: "rich_text",
+				},
+				model: {
+					name: "Model",
+					description: "Text. Optional; filled in from the New vehicle platform form.",
+					type: "rich_text",
+				},
+				variant: {
+					name: "Variant",
+					description: "Text. Optional; filled in from the New vehicle platform form.",
+					type: "rich_text",
+				},
 				deliverables: {
 					name: "Deliverables",
 					description:

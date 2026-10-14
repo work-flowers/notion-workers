@@ -96,7 +96,7 @@ export function useMockStore(): Store {
 				setProjects((all) => all.map((p) => (p.id === project.id ? { ...p, phase } : p)))
 				return { ok: true }
 			},
-			async createProject(name) {
+			async createProject(name, _details) {
 				await delay(300)
 				const id = `new-project-${nextId.current++}`
 				setProjects((all) => [...all, { id, name, phase: PHASES[0].name, deliverableIds: [] }])

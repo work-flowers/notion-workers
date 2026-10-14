@@ -656,7 +656,7 @@ body {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--spacing-8);
-	max-width: 420px;
+	max-width: 460px;
 	justify-content: flex-end;
 }
 
@@ -691,4 +691,24 @@ body {
 	background: var(--error-bg);
 	border-radius: var(--radius-4);
 	padding: var(--spacing-4) var(--spacing-8);
+}
+
+.sg-new > .sg-input:first-child {
+	flex-basis: 100%;
+}
+
+.sg-new-details {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--spacing-8);
+	flex-basis: 100%;
+}
+
+.sg-new-details .sg-input:last-child {
+	grid-column: 1 / -1;
+}
+
+.sg-input--small {
+	min-width: 0;
+	font-size: 13px;
 }

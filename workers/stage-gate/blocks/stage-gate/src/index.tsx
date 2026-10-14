@@ -85,10 +85,11 @@ function useNotionStore(): Store {
 				return result.status === "success" ? { ok: true } : failed(result.error.message)
 			},
 
-			async createProject(name) {
+			// Make, model and variant are optional bindings: unmapped ones are simply not written.
+			async createProject(name, details) {
 				const result = await pages.create({
 					parent: { type: "data_source_key", key: "projects" },
-					properties: onlyBound(newProjectProperties(name), projects.propertyIdsByKey),
+					properties: onlyBound(newProjectProperties(name, details), projects.propertyIdsByKey),
 				})
 				return result.status === "success" ? { ok: true, id: result.page.id } : failed(result.error.message)
 			},

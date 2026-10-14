@@ -8,6 +8,9 @@ import type { ChecklistItem, ItemStatus } from "./checklist.ts"
 import type { Deliverable, Project } from "./gate.ts"
 
 export type SaveResult = { ok: true } | { ok: false; message: string }
+/** Optional descriptive fields on a new project; blank ones are left unset. */
+export type ProjectDetails = { make: string; model: string; variant: string }
+
 export type CreateResult = { ok: true; id: string } | { ok: false; message: string }
 
 export type Store = {
@@ -22,7 +25,7 @@ export type Store = {
 	setStatus: (item: Deliverable, status: ItemStatus) => Promise<SaveResult>
 	setPhase: (project: Project, phase: string) => Promise<SaveResult>
 	/** Creates a project in the first phase. Its checklist is seeded when it's opened. */
-	createProject: (name: string) => Promise<CreateResult>
+	createProject: (name: string, details: ProjectDetails) => Promise<CreateResult>
 	createItems: (
 		project: Project,
 		items: readonly ChecklistItem[],

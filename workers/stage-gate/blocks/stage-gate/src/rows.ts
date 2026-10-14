@@ -84,11 +84,19 @@ export function statusProperties(
 	}
 }
 
-export function newProjectProperties(name: string): NotionPagePropertyInputMap {
-	return {
+export function newProjectProperties(
+	name: string,
+	details: { make: string; model: string; variant: string },
+): NotionPagePropertyInputMap {
+	const properties: NotionPagePropertyInputMap = {
 		name: { type: "title", title: [{ type: "text", text: { content: name } }] },
 		phase: { type: "status", status: { name: PHASES[0].name } },
 	}
+	for (const key of ["make", "model", "variant"] as const) {
+		const value = details[key].trim()
+		if (value) properties[key] = richText(value)
+	}
+	return properties
 }
 
 export function phaseProperties(phase: string): NotionPagePropertyInputMap {
