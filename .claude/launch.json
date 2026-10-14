@@ -42,6 +42,20 @@
 				"--strictPort"
 			],
 			"port": 5176
+		},
+		{
+			"name": "stage-gate",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-stage-gate",
+				"--",
+				"--port",
+				"5177",
+				"--strictPort"
+			],
+			"port": 5177
 		}
 	]
 }

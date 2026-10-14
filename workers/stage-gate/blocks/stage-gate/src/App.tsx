@@ -1,0 +1,567 @@
+import { useEffect, useMemo, useRef, useState } from "react"
+
+import { FINAL_PHASE, PHASES, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
+import {
+	buildPhases,
+	deliverablesFor,
+	gate,
+	missingItems,
+	phaseIndex,
+	sameId,
+	shouldSeed,
+	type Deliverable,
+	type PhaseView,
+	type Project,
+} from "./gate.ts"
+import { today, type Store } from "./store.ts"
+
+type StatusOverride = { status: ItemStatus; completedDate: string | null }
+
+type Seed =
+	| { projectId: string; state: "running"; created: number; total: number }
+	| { projectId: string; state: "done"; total: number }
+	| { projectId: string; state: "error"; message: string }
+
+export function App({ store, contextProjectId }: { store: Store; contextProjectId: string | null }) {
+	// The overview comes first; a project opens only when picked from it.
+	const [selectedId, setSelectedId] = useState<string | null>(null)
+	const baseProject = store.projects.find((p) => p.id === selectedId) ?? null
+
+	// Optimistic state: shown immediately, dropped once the store agrees.
+	const [statusOv, setStatusOv] = useState<Record<string, StatusOverride>>({})
+	const [phaseOv, setPhaseOv] = useState<Record<string, string>>({})
+	const [saving, setSaving] = useState<ReadonlySet<string>>(new Set())
+	const [error, setError] = useState<string | null>(null)
+	const [advancing, setAdvancing] = useState(false)
+	const [seed, setSeed] = useState<Seed | null>(null)
+	const seeded = useRef(new Set<string>())
+
+	useEffect(() => {
+		setStatusOv((ov) => {
+			const next = { ...ov }
+			let changed = false
+			for (const [id, o] of Object.entries(ov)) {
+				const row = store.deliverables.find((d) => d.id === id)
+				if (row && row.status === o.status) {
+					delete next[id]
+					changed = true
+				}
+			}
+			return changed ? next : ov
+		})
+		setPhaseOv((ov) => {
+			const next = { ...ov }
+			let changed = false
+			for (const [id, phase] of Object.entries(ov)) {
+				if (store.projects.find((p) => p.id === id)?.phase === phase) {
+					delete next[id]
+					changed = true
+				}
+			}
+			return changed ? next : ov
+		})
+	}, [store.deliverables, store.projects])
+
+	const project: Project | null = baseProject
+		? { ...baseProject, phase: phaseOv[baseProject.id] ?? baseProject.phase }
+		: null
+
+	const items = useMemo(
+		() =>
+			project
+				? deliverablesFor(project.id, store.deliverables).map((d) =>
+						statusOv[d.id] ? { ...d, ...statusOv[d.id] } : d,
+					)
+				: [],
+		[project?.id, store.deliverables, statusOv],
+	)
+
+	// Seed the checklist once for a project with no deliverables at all.
+	useEffect(() => {
+		if (!baseProject) return
+		const ok = shouldSeed({
+			project: baseProject,
+			rows: store.deliverables,
+			loading: store.loading,
+			truncated: store.truncated,
+			alreadyAttempted: seeded.current.has(baseProject.id),
+		})
+		if (!ok || store.bindingProblems.length > 0) return
+		void runSeed(baseProject)
+	}, [baseProject?.id, store.loading, store.truncated, store.deliverables.length])
+
+	async function runSeed(p: Project) {
+		seeded.current.add(p.id)
+		const todo = missingItems(deliverablesFor(p.id, store.deliverables))
+		if (todo.length === 0) return
+		setSeed({ projectId: p.id, state: "running", created: 0, total: todo.length })
+		const result = await store.createItems(p, todo, (created) =>
+			setSeed({ projectId: p.id, state: "running", created, total: todo.length }),
+		)
+		setSeed(
+			result.ok
+				? { projectId: p.id, state: "done", total: todo.length }
+				: { projectId: p.id, state: "error", message: result.message },
+		)
+	}
+
+	async function changeStatus(item: Deliverable, status: ItemStatus) {
+		if (item.status === status) return
+		setError(null)
+		const completedDate = status === STATUS.complete ? (item.completedDate ?? today()) : null
+		setStatusOv((ov) => ({ ...ov, [item.id]: { status, completedDate } }))
+		setSaving((s) => new Set(s).add(item.id))
+		const result = await store.setStatus(item, status)
+		setSaving((s) => {
+			const next = new Set(s)
+			next.delete(item.id)
+			return next
+		})
+		if (!result.ok) {
+			setStatusOv(({ [item.id]: _dropped, ...rest }) => rest)
+			setError(`Couldn't update “${item.item}”: ${result.message}`)
+		}
+	}
+
+	async function advance(p: Project, to: string) {
+		setError(null)
+		setAdvancing(true)
+		setPhaseOv((ov) => ({ ...ov, [p.id]: to }))
+		const result = await store.setPhase(p, to)
+		setAdvancing(false)
+		if (!result.ok) {
+			setPhaseOv(({ [p.id]: _dropped, ...rest }) => rest)
+			setError(`Couldn't move the project to ${to}: ${result.message}`)
+		}
+	}
+
+	if (store.loading && store.projects.length === 0) {
+		return <div className="sg-empty">Loading…</div>
+	}
+
+	// Overview rows reflect optimistic edits too, so going back shows what was just done.
+	const overviewProjects = store.projects.map((p) => ({ ...p, phase: phaseOv[p.id] ?? p.phase }))
+	const overviewItems = store.deliverables.map((d) => (statusOv[d.id] ? { ...d, ...statusOv[d.id] } : d))
+
+	return (
+		<div className="sg">
+			{store.bindingProblems.length > 0 && (
+				<div className="sg-banner sg-banner--warn" role="status">
+					<strong>Finish setting up this block.</strong>
+					<ul>
+						{store.bindingProblems.map((p) => (
+							<li key={p}>{p}</li>
+						))}
+					</ul>
+				</div>
+			)}
+			{store.truncated && (
+				<div className="sg-banner sg-banner--warn" role="status">
+					Deliverables has more than 999 rows; some items may not show and new checklists won't be created
+					automatically.
+				</div>
+			)}
+			{error && (
+				<div className="sg-banner sg-banner--error" role="alert">
+					{error}
+					<button type="button" className="sg-link" onClick={() => setError(null)}>
+						Dismiss
+					</button>
+				</div>
+			)}
+			{project ? (
+				<GateView
+					onBack={() => setSelectedId(null)}
+					project={project}
+					items={items}
+					saving={saving}
+					advancing={advancing}
+					seed={seed?.projectId === project.id ? seed : null}
+					onStatus={changeStatus}
+					onAdvance={(to) => advance(project, to)}
+					onSeed={() => runSeed(project)}
+				/>
+			) : (
+				<Overview
+					projects={overviewProjects}
+					deliverables={overviewItems}
+					contextProjectId={contextProjectId}
+					onOpen={setSelectedId}
+				/>
+			)}
+		</div>
+	)
+}
+
+function Overview(props: {
+	projects: Project[]
+	deliverables: Deliverable[]
+	contextProjectId: string | null
+	onOpen: (id: string) => void
+}) {
+	if (props.projects.length === 0) {
+		return <div className="sg-empty">No projects found in the mapped data source.</div>
+	}
+	const cards = props.projects
+		.map((p) => {
+			const items = deliverablesFor(p.id, props.deliverables)
+			return { project: p, items, gate: gate(p.phase, items), index: phaseIndex(p.phase) }
+		})
+		.sort((a, b) => a.project.name.localeCompare(b.project.name))
+
+	// One column per phase plus Handed over; projects whose phase the checklist
+	// doesn't know get an extra column rather than disappearing.
+	const columns = [
+		...PHASES.map((p, i) => ({ key: p.name, title: `${i + 1} · ${p.short}`, cards: cards.filter((c) => c.index === i) })),
+		{ key: FINAL_PHASE, title: FINAL_PHASE, cards: cards.filter((c) => c.index === PHASES.length) },
+	]
+	const unknown = cards.filter((c) => c.index === null)
+	if (unknown.length > 0) columns.push({ key: "__none", title: "No phase", cards: unknown })
+	const ready = cards.filter((c) => c.gate.canAdvance).length
+
+	return (
+		<section className="sg-card">
+			<header className="sg-head">
+				<div>
+					<div className="sg-eyebrow">Stage gate</div>
+					<h2 className="sg-title">All projects</h2>
+					<div className="sg-phase-now">
+						{cards.length} {cards.length === 1 ? "project" : "projects"}
+						{ready > 0 && ` · ${ready} ready to advance`}
+					</div>
+				</div>
+			</header>
+			<div className="sg-board" role="list" aria-label="Projects by phase">
+				{columns.map((col) => (
+					<section key={col.key} className="sg-col" role="listitem" aria-label={col.title}>
+						<header className="sg-col-head">
+							<span className="sg-col-title">{col.title}</span>
+							<span className="sg-col-count">{col.cards.length}</span>
+						</header>
+						<div className="sg-col-cards">
+							{col.cards.map(({ project, items, gate: g }) => {
+								const here = props.contextProjectId !== null && sameId(project.id, props.contextProjectId)
+								const handedOver = project.phase === FINAL_PHASE
+								return (
+									<button
+										key={project.id}
+										type="button"
+										className="sg-kcard"
+										aria-label={`Open ${project.name}, ${project.phase ?? "no phase"}`}
+										onClick={() => props.onOpen(project.id)}
+									>
+										<span className="sg-kcard-name">{project.name}</span>
+										{items.length === 0 ? (
+											<span className="sg-ov-note">No checklist yet</span>
+										) : (
+											<>
+												{g.current && (
+													<span className="sg-kcard-gate">
+														<span className={g.current.ready ? "sg-ov-good" : undefined}>
+															Gate {g.current.mandatoryDone}/{g.current.mandatoryTotal}
+														</span>
+														<Meter done={g.current.mandatoryDone} total={g.current.mandatoryTotal} />
+													</span>
+												)}
+												<span className="sg-kcard-pack">
+													Handover pack {g.handover.done}/{g.handover.total}
+												</span>
+											</>
+										)}
+										{(here || g.canAdvance || handedOver) && (
+											<span className="sg-kcard-tags">
+												{g.canAdvance && <span className="sg-tag sg-tag--good">Ready to advance</span>}
+												{handedOver && <span className="sg-tag sg-tag--good">✓ Complete</span>}
+												{here && <span className="sg-tag">This page</span>}
+											</span>
+										)}
+									</button>
+								)
+							})}
+							{col.cards.length === 0 && <div className="sg-col-empty">None</div>}
+						</div>
+					</section>
+				))}
+			</div>
+		</section>
+	)
+}
+
+function Meter({ done, total }: { done: number; total: number }) {
+	const pct = total === 0 ? 0 : Math.round((done / total) * 100)
+	return (
+		<span className="sg-meter" aria-hidden>
+			<span className="sg-meter-fill" style={{ width: `${pct}%` }} />
+		</span>
+	)
+}
+
+function GateView(props: {
+	onBack: () => void
+	project: Project
+	items: Deliverable[]
+	saving: ReadonlySet<string>
+	advancing: boolean
+	seed: Seed | null
+	onStatus: (item: Deliverable, status: ItemStatus) => void
+	onAdvance: (to: string) => void
+	onSeed: () => void
+}) {
+	const { project, items, seed } = props
+	const { phases, unphased } = buildPhases(project.phase, items)
+	const g = gate(project.phase, items)
+	const index = phaseIndex(project.phase)
+	const handedOver = project.phase === FINAL_PHASE
+
+	const back = (
+		<button type="button" className="sg-back" onClick={props.onBack}>
+			‹ All projects
+		</button>
+	)
+
+	if (items.length === 0) {
+		return (
+			<section className="sg-card">
+				{back}
+				<Header project={project} />
+				<SeedState seed={seed} onSeed={props.onSeed} />
+			</section>
+		)
+	}
+
+	const open = g.current ? g.current.mandatoryTotal - g.current.mandatoryDone : 0
+
+	return (
+		<section className="sg-card">
+			{back}
+			<Header project={project}>
+				<div className="sg-stats">
+					{g.current && (
+						<Stat
+							label={`${g.current.phase.short} gate`}
+							value={`${g.current.mandatoryDone}/${g.current.mandatoryTotal}`}
+							good={g.current.ready}
+						/>
+					)}
+					<Stat
+						label="Handover pack"
+						value={`${g.handover.done}/${g.handover.total}`}
+						good={g.handover.done === g.handover.total}
+					/>
+				</div>
+			</Header>
+
+			<Stepper index={index} />
+
+			{index === null && (
+				<div className="sg-banner sg-banner--warn">
+					{project.phase
+						? `“${project.phase}” isn't one of this checklist's phases, so no gate applies.`
+						: "This project has no phase set."}
+				</div>
+			)}
+
+			<div className="sg-phases">
+				{phases.map((p) => (
+					<PhaseSection
+						key={`${project.id}:${project.phase}:${p.index}`}
+						view={p}
+						saving={props.saving}
+						onStatus={props.onStatus}
+					/>
+				))}
+				{unphased.length > 0 && (
+					<div className="sg-phase sg-phase--future">
+						<div className="sg-phase-head">
+							<span className="sg-phase-title">Other items</span>
+						</div>
+						<ul className="sg-items">
+							{unphased.map((d) => (
+								<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onStatus={props.onStatus} />
+							))}
+						</ul>
+					</div>
+				)}
+			</div>
+
+			<footer className="sg-footer">
+				{handedOver ? (
+					<span className="sg-done-note">✓ Handed over</span>
+				) : g.next ? (
+					<>
+						<span className="sg-hint">
+							{g.canAdvance
+								? g.current && g.current.mandatoryTotal > 0
+									? "Every mandatory item in this phase is complete."
+									: "No mandatory items in this phase."
+								: `${open} mandatory ${open === 1 ? "item" : "items"} still open in this phase.`}
+						</span>
+						<button
+							type="button"
+							className="sg-button"
+							disabled={!g.canAdvance || props.advancing}
+							onClick={() => g.next && props.onAdvance(g.next)}
+						>
+							{props.advancing ? "Moving…" : g.next === FINAL_PHASE ? "Hand over" : `Advance to ${shortName(g.next)}`}
+						</button>
+					</>
+				) : null}
+			</footer>
+		</section>
+	)
+}
+
+function shortName(phase: string): string {
+	return PHASES.find((p) => p.name === phase)?.short ?? phase
+}
+
+function Header({ project, children }: { project: Project; children?: React.ReactNode }) {
+	return (
+		<header className="sg-head">
+			<div>
+				<div className="sg-eyebrow">Stage gate</div>
+				<h2 className="sg-title">{project.name}</h2>
+				<div className="sg-phase-now">{project.phase ?? "No phase"}</div>
+			</div>
+			{children}
+		</header>
+	)
+}
+
+function Stat({ label, value, good }: { label: string; value: string; good: boolean }) {
+	return (
+		<div className={`sg-stat${good ? " sg-stat--good" : ""}`}>
+			<div className="sg-stat-value">{value}</div>
+			<div className="sg-stat-label">{label}</div>
+		</div>
+	)
+}
+
+function Stepper({ index }: { index: number | null }) {
+	const steps = [...PHASES.map((p) => p.short), FINAL_PHASE]
+	return (
+		<ol className="sg-stepper" aria-label="Phases">
+			{steps.map((label, i) => {
+				const state = index === null ? "future" : i < index ? "done" : i === index ? "current" : "future"
+				return (
+					<li key={label} className={`sg-step sg-step--${state}`} aria-current={state === "current" ? "step" : undefined}>
+						<span className="sg-step-dot">{state === "done" ? "✓" : i < PHASES.length ? i + 1 : "★"}</span>
+						<span className="sg-step-label">{label}</span>
+					</li>
+				)
+			})}
+		</ol>
+	)
+}
+
+function PhaseSection(props: {
+	view: PhaseView
+	saving: ReadonlySet<string>
+	onStatus: (item: Deliverable, status: ItemStatus) => void
+}) {
+	const { view } = props
+	const [open, setOpen] = useState(view.state === "current")
+	const reopened = view.state === "done" && !view.ready
+	return (
+		<div className={`sg-phase sg-phase--${view.state}`}>
+			<button
+				type="button"
+				className="sg-phase-head"
+				aria-expanded={open}
+				onClick={() => setOpen((o) => !o)}
+			>
+				<span className="sg-chevron" aria-hidden>
+					{open ? "▾" : "▸"}
+				</span>
+				<span className="sg-phase-mark" aria-hidden>
+					{view.state === "done" && !reopened ? "✓" : ""}
+				</span>
+				<span className="sg-phase-title">{view.phase.name}</span>
+				{view.state === "current" && <span className="sg-tag">Current</span>}
+				{reopened && <span className="sg-tag sg-tag--warn">Reopened</span>}
+				<span className="sg-phase-count">
+					{view.items.length === 0
+						? "No items"
+						: `${view.mandatoryDone}/${view.mandatoryTotal}`}
+				</span>
+			</button>
+			{open && view.items.length > 0 && (
+				<ul className="sg-items">
+					{view.items.map((d) => (
+						<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onStatus={props.onStatus} />
+					))}
+				</ul>
+			)}
+		</div>
+	)
+}
+
+function ItemRow(props: {
+	item: Deliverable
+	saving: boolean
+	onStatus: (item: Deliverable, status: ItemStatus) => void
+}) {
+	const { item } = props
+	const done = item.status === STATUS.complete || item.status === STATUS.na
+	return (
+		<li className={`sg-item${done ? " sg-item--done" : ""}`}>
+			<div className="sg-item-main">
+				<div className="sg-item-title">
+					{item.item}
+					{!item.mandatory && <span className="sg-tag">Optional</span>}
+				</div>
+				{item.description && <div className="sg-item-desc">{item.description}</div>}
+				<div className="sg-item-meta">
+					{item.format && <span>{item.format}</span>}
+					{item.status === STATUS.complete && item.completedDate && (
+						<span>Completed {formatDate(item.completedDate)}</span>
+					)}
+				</div>
+			</div>
+			<div className="sg-seg" role="group" aria-label={`Status of ${item.item}`}>
+				{STATUS_ORDER.map((s) => (
+					<button
+						key={s}
+						type="button"
+						className={`sg-seg-btn sg-seg-btn--${s === STATUS.na ? "na" : s.toLowerCase()}`}
+						aria-pressed={item.status === s}
+						disabled={props.saving}
+						onClick={() => props.onStatus(item, s)}
+					>
+						{s}
+					</button>
+				))}
+			</div>
+		</li>
+	)
+}
+
+function SeedState({ seed, onSeed }: { seed: Seed | null; onSeed: () => void }) {
+	if (seed?.state === "running") {
+		return (
+			<div className="sg-seed">
+				<div>
+					Creating the checklist… {seed.created}/{seed.total}
+				</div>
+				<progress max={seed.total} value={seed.created} />
+			</div>
+		)
+	}
+	if (seed?.state === "done") {
+		return <div className="sg-seed">Created {seed.total} checklist items. Loading them…</div>
+	}
+	return (
+		<div className="sg-seed">
+			{seed?.state === "error" && <div className="sg-banner sg-banner--error">{seed.message}</div>}
+			<div>This project has no deliverables yet.</div>
+			<button type="button" className="sg-button" onClick={onSeed}>
+				Create checklist
+			</button>
+		</div>
+	)
+}
+
+function formatDate(day: string): string {
+	const [y, m, d] = day.split("-").map(Number)
+	return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+}
