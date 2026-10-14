@@ -10,7 +10,7 @@ import type {
 	NotionPagePropertyInputMap,
 } from "@notionhq/custom-blocks"
 
-import { CHECKLIST, FINAL_PHASE, PHASES, STATUS, type ChecklistItem, type ItemStatus } from "./checklist.ts"
+import { CHECKLIST, FINAL_PHASE, PHASES, STATUS, type ChecklistItem } from "./checklist.ts"
 import type { Deliverable, Project } from "./gate.ts"
 
 function asText(value: NotionDataSourceValue | undefined): string | null {
@@ -62,6 +62,7 @@ export function toDeliverable(row: NotionDataSourcePage): Deliverable {
 		mandatory: p.mandatory === true,
 		status: asText(p.status),
 		completedDate: asDate(p.completedDate),
+		fileLink: asText(p.fileLink),
 		order: asNumber(p.order),
 	}
 }
@@ -71,16 +72,12 @@ const richText = (text: string) => ({
 	rich_text: [{ type: "text" as const, text: { content: text } }],
 })
 
-export function statusProperties(
-	item: Deliverable,
-	status: ItemStatus,
-	date: string,
-): NotionPagePropertyInputMap {
-	// Keep the original date when an already-complete item is re-marked.
-	const completed = status === STATUS.complete ? (item.completedDate ?? date) : null
+/** The fields an item edit owns, all written every time (see `applyChange`). */
+export function itemProperties(next: Deliverable): NotionPagePropertyInputMap {
 	return {
-		status: { type: "status", status: { name: status } },
-		completedDate: { type: "date", date: completed === null ? null : { start: completed } },
+		status: { type: "status", status: { name: next.status ?? STATUS.pending } },
+		completedDate: { type: "date", date: next.completedDate === null ? null : { start: next.completedDate } },
+		fileLink: { type: "url", url: next.fileLink },
 	}
 }
 
@@ -147,7 +144,7 @@ export function bindingProblems(args: {
 	for (const key of ["name", "phase"]) {
 		if (!args.projectIds[key]) problems.push(`Projects: map the “${key}” property.`)
 	}
-	for (const key of ["item", "project", "status", "phase", "itemKey"]) {
+	for (const key of ["item", "project", "status", "phase", "itemKey", "fileLink"]) {
 		if (!args.deliverableIds[key]) problems.push(`Deliverables: map the “${key}” property.`)
 	}
 	const phaseOptions = new Set(args.projectPhase?.options?.map((o) => o.name) ?? [])

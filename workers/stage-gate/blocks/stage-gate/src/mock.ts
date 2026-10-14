@@ -11,7 +11,7 @@ import { useMemo, useRef, useState } from "react"
 
 import { CHECKLIST, PHASES, STATUS } from "./checklist.ts"
 import type { Deliverable, Project } from "./gate.ts"
-import { today, type Store } from "./store.ts"
+import type { Store } from "./store.ts"
 
 export const MOCK_PROJECT_IDS = { a: "mock-a", b: "mock-b", c: "mock-c" } as const
 
@@ -34,6 +34,8 @@ function rows(projectId: string, completed: Record<string, string>): Deliverable
 		mandatory: c.mandatory,
 		status: c.key in completed ? STATUS.complete : STATUS.pending,
 		completedDate: completed[c.key] ?? null,
+		// Sample evidence on every completed item, so the demo starts compliant.
+		fileLink: c.key in completed ? `https://example.sharepoint.com/sites/rnd/${projectId}/${c.key}` : null,
 		order: c.order,
 	}))
 }
@@ -76,19 +78,9 @@ export function useMockStore(): Store {
 			loading: false,
 			truncated: false,
 			bindingProblems: [],
-			async setStatus(item, status) {
+			async updateItem(item, next) {
 				await delay(250)
-				setDeliverables((all) =>
-					all.map((d) =>
-						d.id === item.id
-							? {
-									...d,
-									status,
-									completedDate: status === STATUS.complete ? (d.completedDate ?? today()) : null,
-								}
-							: d,
-					),
-				)
+				setDeliverables((all) => all.map((d) => (d.id === item.id ? next : d)))
 				return { ok: true }
 			},
 			async setPhase(project, phase) {
@@ -120,6 +112,7 @@ export function useMockStore(): Store {
 							mandatory: c.mandatory,
 							status: STATUS.pending,
 							completedDate: null,
+							fileLink: null,
 							order: c.order,
 						},
 					])

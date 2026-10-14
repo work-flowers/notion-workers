@@ -120,6 +120,12 @@ worker.customBlock("stageGate", {
 					description: "Date. Set when an item is marked Complete, cleared otherwise.",
 					type: "date",
 				},
+				fileLink: {
+					name: "File link",
+					description:
+						"URL. Where the file lives (workbook tab, server folder, PDM). Required before an item can be marked Complete.",
+					type: "url",
+				},
 				order: {
 					name: "Order",
 					description: "Number. Position in the checklist.",

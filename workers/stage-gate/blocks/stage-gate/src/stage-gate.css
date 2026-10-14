@@ -712,3 +712,74 @@ body {
 	min-width: 0;
 	font-size: 13px;
 }
+
+/* File link */
+
+.sg-file {
+	display: flex;
+	align-items: baseline;
+	gap: var(--spacing-6);
+	margin-top: var(--spacing-4);
+	font-size: 12px;
+	min-width: 0;
+}
+
+.sg-file-label {
+	color: var(--content-tertiary);
+}
+
+.sg-file-url {
+	color: var(--content-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.sg-file .sg-link {
+	margin-left: 0;
+	flex-shrink: 0;
+}
+
+.sg-link--muted {
+	color: var(--content-tertiary);
+	text-decoration: none;
+}
+
+.sg-link--muted:hover {
+	color: var(--content-primary);
+}
+
+.sg-link-form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--spacing-6);
+	margin-top: var(--spacing-6);
+}
+
+.sg-link-form .sg-input {
+	flex: 1;
+	min-width: 220px;
+}
+
+.sg-link-hint {
+	flex-basis: 100%;
+	font-size: 12px;
+	color: var(--warn);
+}
+
+.sg-button--small {
+	padding: var(--spacing-4) var(--spacing-10);
+	font-size: 13px;
+}
+
+.sg-item-error {
+	margin-top: var(--spacing-4);
+	font-size: 12px;
+	padding: var(--spacing-4) var(--spacing-8);
+	border-radius: var(--radius-4);
+	background: var(--error-bg);
+}

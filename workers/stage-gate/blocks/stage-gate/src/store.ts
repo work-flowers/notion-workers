@@ -4,7 +4,7 @@
  * the real seeding, status and advance flows without a binding or a write.
  */
 
-import type { ChecklistItem, ItemStatus } from "./checklist.ts"
+import type { ChecklistItem } from "./checklist.ts"
 import type { Deliverable, Project } from "./gate.ts"
 
 export type SaveResult = { ok: true } | { ok: false; message: string }
@@ -22,7 +22,8 @@ export type Store = {
 	/** Human-readable binding gaps, shown as a banner. Empty when healthy. */
 	bindingProblems: string[]
 
-	setStatus: (item: Deliverable, status: ItemStatus) => Promise<SaveResult>
+	/** Writes `next`'s status, completed date and file link (already validated by `applyChange`). */
+	updateItem: (item: Deliverable, next: Deliverable) => Promise<SaveResult>
 	setPhase: (project: Project, phase: string) => Promise<SaveResult>
 	/** Creates a project in the first phase. Its checklist is seeded when it's opened. */
 	createProject: (name: string, details: ProjectDetails) => Promise<CreateResult>

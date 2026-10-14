@@ -37,6 +37,12 @@ This file records only what's specific to this block.
   `PROJECT_NOUN` in `checklist.ts`, the per-client file.
 - **No checklist ≠ gate met.** A project with no deliverables can't advance;
   otherwise the empty phase would pass vacuously.
+- **Complete needs evidence.** An item can only be marked Complete with a File
+  link (`applyChange` in `gate.ts`); clicking Complete without one opens a link
+  field with *Save & complete*. N/A and Pending need none, and a Complete item
+  can't have its link removed. The rule applies to edits only: rows completed
+  before it existed keep counting toward the gate and carry a *No file link*
+  tag. Links are shown as text, not anchors, because the sandbox can't open them.
 - **The gate is computed in the block**, not read from the `Gate ready` formula,
   because statuses update optimistically and the formula lags a round trip.
 - **Seeding is automatic and conservative.** Rows are created only when the
@@ -46,7 +52,7 @@ This file records only what's specific to this block.
   `Item key`, so a part-failed seed is completed (not duplicated) by the
   **Create checklist** retry button. Two people opening an empty project at the
   same moment could still both seed; acceptable for the demo.
-- **Writes.** Status + Completed date together (date set on Complete, kept if
+- **Writes.** Status, Completed date and File link together (date set on Complete, kept if
   already set, cleared on Pending/N/A); project Phase on advance. Never writes
   the helper formulas (`Project phase`, `In current phase`, `Open in current
   phase`, `Done`).

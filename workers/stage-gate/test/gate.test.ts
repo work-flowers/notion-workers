@@ -3,9 +3,11 @@ import { test } from "node:test"
 
 import { CHECKLIST, FINAL_PHASE, PHASES, STATUS } from "../blocks/stage-gate/src/checklist.ts"
 import {
+	applyChange,
 	buildPhases,
 	deliverablesFor,
 	gate,
+	missingEvidence,
 	missingItems,
 	nextPhase,
 	shouldSeed,
@@ -26,6 +28,7 @@ function rows(projectId: string, done: string[], na: string[] = []): Deliverable
 		mandatory: c.mandatory,
 		status: done.includes(c.key) ? STATUS.complete : na.includes(c.key) ? STATUS.na : STATUS.pending,
 		completedDate: null,
+		fileLink: done.includes(c.key) ? "https://example.com/file" : null,
 		order: c.order,
 	}))
 }
@@ -125,4 +128,34 @@ test("seeding only for a fully loaded, untruncated, genuinely empty project", ()
 
 test("a project with no checklist cannot advance", () => {
 	assert.equal(gate(PHASES[0].name, []).canAdvance, false)
+})
+
+const pinOut = A.find((d) => d.key === "electrical_pin_out_sheet")!
+
+test("Complete needs a file link; N/A and Pending don't", () => {
+	assert.equal(applyChange(pinOut, { status: STATUS.complete }, "2026-10-14").ok, false)
+	assert.equal(applyChange(pinOut, { status: STATUS.complete, fileLink: "   " }, "2026-10-14").ok, false)
+	assert.equal(applyChange(pinOut, { status: STATUS.na }, "2026-10-14").ok, true)
+	const done = applyChange(pinOut, { status: STATUS.complete, fileLink: " https://x/pinout.xlsx " }, "2026-10-14")
+	assert.ok(done.ok)
+	assert.equal(done.next.fileLink, "https://x/pinout.xlsx")
+	assert.equal(done.next.completedDate, "2026-10-14")
+})
+
+test("a Complete item can't lose its link, but can go back to Pending without one", () => {
+	const complete = { ...pinOut, status: STATUS.complete, fileLink: "https://x", completedDate: "2026-10-01" }
+	assert.equal(applyChange(complete, { fileLink: "" }, "2026-10-14").ok, false)
+	const pending = applyChange(complete, { status: STATUS.pending, fileLink: null }, "2026-10-14")
+	assert.ok(pending.ok)
+	assert.equal(pending.next.completedDate, null)
+	// Re-completing keeps the original date only while it is still set.
+	const again = applyChange(complete, { status: STATUS.complete }, "2026-10-14")
+	assert.ok(again.ok)
+	assert.equal(again.next.completedDate, "2026-10-01")
+})
+
+test("legacy Complete rows without a link are flagged, not reverted", () => {
+	const legacy = { ...pinOut, status: STATUS.complete, fileLink: null }
+	assert.equal(missingEvidence(legacy), true)
+	assert.equal(gate(PHASES[1].name, A.map((d) => (d.id === legacy.id ? legacy : d))).canAdvance, true)
 })

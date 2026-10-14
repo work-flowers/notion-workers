@@ -13,6 +13,7 @@ current phase is done. Neutral styling (Notion's own design tokens), no branding
 - Shows completed phases collapsed and ticked, the current phase open, future
   phases greyed out; plus the current gate (e.g. 2/3) and the handover pack
   (e.g. 13/16).
+- Requires a file link before an item can be marked Complete.
 - Advances the project's Phase, ending at "Handed over".
 
 ## Use it

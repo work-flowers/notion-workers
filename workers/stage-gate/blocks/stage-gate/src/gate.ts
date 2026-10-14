@@ -35,7 +35,41 @@ export type Deliverable = {
 	mandatory: boolean
 	status: string | null
 	completedDate: string | null
+	fileLink: string | null
 	order: number | null
+}
+
+/** What an item edit may change. Omitted fields are left as they are. */
+export type ItemChange = { status?: string; fileLink?: string | null }
+
+/**
+ * Applies a change and checks the one rule edits must obey: **a Complete item
+ * needs a file link.** N/A and Pending don't. Enforced on edits only — rows
+ * that were completed before the rule existed keep their status and are
+ * flagged in the UI instead (`missingEvidence`).
+ */
+export function applyChange(
+	item: Deliverable,
+	change: ItemChange,
+	today: string,
+): { ok: true; next: Deliverable } | { ok: false; message: string } {
+	const status = change.status ?? item.status
+	const fileLink = change.fileLink !== undefined ? normaliseLink(change.fileLink) : item.fileLink
+	if (status === STATUS.complete && fileLink === null) {
+		return { ok: false, message: "Add a file link before marking this item Complete." }
+	}
+	const completedDate = status === STATUS.complete ? (item.completedDate ?? today) : null
+	return { ok: true, next: { ...item, status, fileLink, completedDate } }
+}
+
+export function normaliseLink(link: string | null): string | null {
+	const trimmed = link?.trim() ?? ""
+	return trimmed.length > 0 ? trimmed : null
+}
+
+/** Complete, but without the file link the rule now requires. */
+export function missingEvidence(item: Deliverable): boolean {
+	return item.status === STATUS.complete && item.fileLink === null
 }
 
 export function isDone(status: string | null): boolean {

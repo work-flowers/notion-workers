@@ -2,20 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import { FINAL_PHASE, PHASES, PROJECT_NOUN, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
 import {
+	applyChange,
 	buildPhases,
 	deliverablesFor,
 	gate,
+	missingEvidence,
 	missingItems,
+	normaliseLink,
 	phaseIndex,
 	sameId,
 	shouldSeed,
 	type Deliverable,
+	type ItemChange,
 	type PhaseView,
 	type Project,
 } from "./gate.ts"
 import { today, type ProjectDetails, type Store } from "./store.ts"
 
-type StatusOverride = { status: ItemStatus; completedDate: string | null }
+type ItemOverride = Pick<Deliverable, "status" | "completedDate" | "fileLink">
 
 type Seed =
 	| { projectId: string; state: "running"; created: number; total: number }
@@ -44,7 +48,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 	}
 
 	// Optimistic state: shown immediately, dropped once the store agrees.
-	const [statusOv, setStatusOv] = useState<Record<string, StatusOverride>>({})
+	const [statusOv, setStatusOv] = useState<Record<string, ItemOverride>>({})
 	const [phaseOv, setPhaseOv] = useState<Record<string, string>>({})
 	const [saving, setSaving] = useState<ReadonlySet<string>>(new Set())
 	const [error, setError] = useState<string | null>(null)
@@ -58,7 +62,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 			let changed = false
 			for (const [id, o] of Object.entries(ov)) {
 				const row = store.deliverables.find((d) => d.id === id)
-				if (row && row.status === o.status) {
+				if (row && row.status === o.status && row.fileLink === o.fileLink) {
 					delete next[id]
 					changed = true
 				}
@@ -121,13 +125,19 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		)
 	}
 
-	async function changeStatus(item: Deliverable, status: ItemStatus) {
-		if (item.status === status) return
+	/** Returns an error message, or null once saved. */
+	async function updateItem(item: Deliverable, change: ItemChange): Promise<string | null> {
+		const applied = applyChange(item, change, today())
+		if (!applied.ok) return applied.message
+		const { next } = applied
+		if (next.status === item.status && next.fileLink === item.fileLink) return null
 		setError(null)
-		const completedDate = status === STATUS.complete ? (item.completedDate ?? today()) : null
-		setStatusOv((ov) => ({ ...ov, [item.id]: { status, completedDate } }))
+		setStatusOv((ov) => ({
+			...ov,
+			[item.id]: { status: next.status, completedDate: next.completedDate, fileLink: next.fileLink },
+		}))
 		setSaving((s) => new Set(s).add(item.id))
-		const result = await store.setStatus(item, status)
+		const result = await store.updateItem(item, next)
 		setSaving((s) => {
 			const next = new Set(s)
 			next.delete(item.id)
@@ -136,7 +146,9 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		if (!result.ok) {
 			setStatusOv(({ [item.id]: _dropped, ...rest }) => rest)
 			setError(`Couldn't update “${item.item}”: ${result.message}`)
+			return result.message
 		}
+		return null
 	}
 
 	async function advance(p: Project, to: string) {
@@ -193,7 +205,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 					saving={saving}
 					advancing={advancing}
 					seed={seed?.projectId === project.id ? seed : null}
-					onStatus={changeStatus}
+					onUpdate={updateItem}
 					onAdvance={(to) => advance(project, to)}
 					onSeed={() => runSeed(project)}
 				/>
@@ -409,7 +421,7 @@ function GateView(props: {
 	saving: ReadonlySet<string>
 	advancing: boolean
 	seed: Seed | null
-	onStatus: (item: Deliverable, status: ItemStatus) => void
+	onUpdate: (item: Deliverable, change: ItemChange) => Promise<string | null>
 	onAdvance: (to: string) => void
 	onSeed: () => void
 }) {
@@ -473,7 +485,7 @@ function GateView(props: {
 						key={`${project.id}:${project.phase}:${p.index}`}
 						view={p}
 						saving={props.saving}
-						onStatus={props.onStatus}
+						onUpdate={props.onUpdate}
 					/>
 				))}
 				{unphased.length > 0 && (
@@ -483,7 +495,7 @@ function GateView(props: {
 						</div>
 						<ul className="sg-items">
 							{unphased.map((d) => (
-								<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onStatus={props.onStatus} />
+								<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onUpdate={props.onUpdate} />
 							))}
 						</ul>
 					</div>
@@ -563,7 +575,7 @@ function Stepper({ index }: { index: number | null }) {
 function PhaseSection(props: {
 	view: PhaseView
 	saving: ReadonlySet<string>
-	onStatus: (item: Deliverable, status: ItemStatus) => void
+	onUpdate: (item: Deliverable, change: ItemChange) => Promise<string | null>
 }) {
 	const { view } = props
 	const [open, setOpen] = useState(view.state === "current")
@@ -594,7 +606,7 @@ function PhaseSection(props: {
 			{open && view.items.length > 0 && (
 				<ul className="sg-items">
 					{view.items.map((d) => (
-						<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onStatus={props.onStatus} />
+						<ItemRow key={d.id} item={d} saving={props.saving.has(d.id)} onUpdate={props.onUpdate} />
 					))}
 				</ul>
 			)}
@@ -605,16 +617,54 @@ function PhaseSection(props: {
 function ItemRow(props: {
 	item: Deliverable
 	saving: boolean
-	onStatus: (item: Deliverable, status: ItemStatus) => void
+	onUpdate: (item: Deliverable, change: ItemChange) => Promise<string | null>
 }) {
 	const { item } = props
 	const done = item.status === STATUS.complete || item.status === STATUS.na
+	// "complete": the editor was opened by clicking Complete without a link.
+	const [editing, setEditing] = useState<null | "edit" | "complete">(null)
+	const [draft, setDraft] = useState("")
+	const [message, setMessage] = useState<string | null>(null)
+
+	function openEditor(mode: "edit" | "complete") {
+		setDraft(item.fileLink ?? "")
+		setMessage(null)
+		setEditing(mode)
+	}
+
+	async function choose(status: ItemStatus) {
+		if (status === STATUS.complete && item.fileLink === null) {
+			openEditor("complete")
+			return
+		}
+		const error = await props.onUpdate(item, { status })
+		setMessage(error)
+	}
+
+	async function saveLink(e: React.FormEvent) {
+		e.preventDefault()
+		const change: ItemChange =
+			editing === "complete" ? { status: STATUS.complete, fileLink: draft } : { fileLink: draft }
+		const error = await props.onUpdate(item, change)
+		if (error) {
+			setMessage(
+				item.status === STATUS.complete && normaliseLink(draft) === null
+					? "A Complete item needs a file link. Set it back to Pending first to remove the link."
+					: error,
+			)
+			return
+		}
+		setEditing(null)
+		setMessage(null)
+	}
+
 	return (
 		<li className={`sg-item${done ? " sg-item--done" : ""}`}>
 			<div className="sg-item-main">
 				<div className="sg-item-title">
 					{item.item}
 					{!item.mandatory && <span className="sg-tag">Optional</span>}
+					{missingEvidence(item) && <span className="sg-tag sg-tag--warn">No file link</span>}
 				</div>
 				{item.description && <div className="sg-item-desc">{item.description}</div>}
 				<div className="sg-item-meta">
@@ -623,6 +673,54 @@ function ItemRow(props: {
 						<span>Completed {formatDate(item.completedDate)}</span>
 					)}
 				</div>
+				{editing ? (
+					<form className="sg-link-form" onSubmit={saveLink}>
+						<input
+							className="sg-input sg-input--small"
+							autoFocus
+							placeholder="Paste the file link (SharePoint, server folder, PDM)"
+							aria-label={`File link for ${item.item}`}
+							value={draft}
+							disabled={props.saving}
+							onChange={(e) => setDraft(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Escape") setEditing(null)
+							}}
+						/>
+						<button
+							type="submit"
+							className="sg-button sg-button--small"
+							disabled={props.saving || (editing === "complete" && normaliseLink(draft) === null)}
+						>
+							{editing === "complete" ? "Save & complete" : "Save"}
+						</button>
+						<button type="button" className="sg-link" onClick={() => setEditing(null)}>
+							Cancel
+						</button>
+						{editing === "complete" && !message && (
+							<span className="sg-link-hint">A file link is required to mark this item Complete.</span>
+						)}
+					</form>
+				) : (
+					<div className="sg-file">
+						{item.fileLink ? (
+							<>
+								<span className="sg-file-label">File</span>
+								<span className="sg-file-url" title={item.fileLink}>
+									{item.fileLink}
+								</span>
+								<button type="button" className="sg-link" onClick={() => openEditor("edit")}>
+									Edit
+								</button>
+							</>
+						) : (
+							<button type="button" className="sg-link sg-link--muted" onClick={() => openEditor("edit")}>
+								+ Add file link
+							</button>
+						)}
+					</div>
+				)}
+				{message && <div className="sg-item-error">{message}</div>}
 			</div>
 			<div className="sg-seg" role="group" aria-label={`Status of ${item.item}`}>
 				{STATUS_ORDER.map((s) => (
@@ -632,7 +730,8 @@ function ItemRow(props: {
 						className={`sg-seg-btn sg-seg-btn--${s === STATUS.na ? "na" : s.toLowerCase()}`}
 						aria-pressed={item.status === s}
 						disabled={props.saving}
-						onClick={() => props.onStatus(item, s)}
+						title={s === STATUS.complete && item.fileLink === null ? "Needs a file link" : undefined}
+						onClick={() => choose(s)}
 					>
 						{s}
 					</button>

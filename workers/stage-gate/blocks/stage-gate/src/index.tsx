@@ -18,11 +18,11 @@ import {
 	newProjectProperties,
 	onlyBound,
 	phaseProperties,
-	statusProperties,
+	itemProperties,
 	toDeliverable,
 	toProject,
 } from "./rows.ts"
-import { today, type Store } from "./store.ts"
+import type { Store } from "./store.ts"
 import "./stage-gate.css"
 
 /** The per-subscription cap. Plenty for projects; the banner covers deliverables past it. */
@@ -69,11 +69,11 @@ function useNotionStore(): Store {
 			// Only meaningful once the bindings have resolved.
 			bindingProblems: projects.isLoading || deliverables.isLoading ? [] : problems,
 
-			async setStatus(item, status) {
+			async updateItem(item, next) {
 				const row = deliverableRows.get(item.id)
 				if (!row) return failed("row not loaded")
 				const result = await row.update({
-					properties: onlyBound(statusProperties(item, status, today()), deliverables.propertyIdsByKey),
+					properties: onlyBound(itemProperties(next), deliverables.propertyIdsByKey),
 				})
 				return result.status === "success" ? { ok: true } : failed(result.error.message)
 			},
