@@ -84,6 +84,13 @@ export function statusProperties(
 	}
 }
 
+export function newProjectProperties(name: string): NotionPagePropertyInputMap {
+	return {
+		name: { type: "title", title: [{ type: "text", text: { content: name } }] },
+		phase: { type: "status", status: { name: PHASES[0].name } },
+	}
+}
+
 export function phaseProperties(phase: string): NotionPagePropertyInputMap {
 	return { phase: { type: "status", status: { name: phase } } }
 }

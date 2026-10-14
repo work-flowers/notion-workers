@@ -15,13 +15,14 @@ import { MOCK_PROJECT_IDS, useMockStore } from "./mock.ts"
 import {
 	bindingProblems,
 	newItemProperties,
+	newProjectProperties,
 	onlyBound,
 	phaseProperties,
 	statusProperties,
 	toDeliverable,
 	toProject,
 } from "./rows.ts"
-import { today, type SaveResult, type Store } from "./store.ts"
+import { today, type Store } from "./store.ts"
 import "./stage-gate.css"
 
 /** The per-subscription cap. Plenty for projects; the banner covers deliverables past it. */
@@ -38,7 +39,7 @@ function Shell({ theme, children }: { theme: "light" | "dark"; children: React.R
 	)
 }
 
-function failed(message: string): SaveResult {
+function failed(message: string): { ok: false; message: string } {
 	return { ok: false, message }
 }
 
@@ -82,6 +83,14 @@ function useNotionStore(): Store {
 				if (!row) return failed("project not loaded")
 				const result = await row.update({ properties: phaseProperties(phase) })
 				return result.status === "success" ? { ok: true } : failed(result.error.message)
+			},
+
+			async createProject(name) {
+				const result = await pages.create({
+					parent: { type: "data_source_key", key: "projects" },
+					properties: onlyBound(newProjectProperties(name), projects.propertyIdsByKey),
+				})
+				return result.status === "success" ? { ok: true, id: result.page.id } : failed(result.error.message)
 			},
 
 			// Sequential, so a failure part-way leaves a prefix of the checklist

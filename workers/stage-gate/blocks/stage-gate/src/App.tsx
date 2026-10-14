@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import { FINAL_PHASE, PHASES, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
+import { FINAL_PHASE, PHASES, PROJECT_NOUN, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
 import {
 	buildPhases,
 	deliverablesFor,
@@ -25,7 +25,23 @@ type Seed =
 export function App({ store, contextProjectId }: { store: Store; contextProjectId: string | null }) {
 	// The overview comes first; a project opens only when picked from it.
 	const [selectedId, setSelectedId] = useState<string | null>(null)
-	const baseProject = store.projects.find((p) => p.id === selectedId) ?? null
+	const baseProject = store.projects.find((p) => sameId(p.id, selectedId ?? "")) ?? null
+	// A just-created project is opened as soon as the data source delivers its row.
+	const [creatingId, setCreatingId] = useState<string | null>(null)
+	useEffect(() => {
+		if (creatingId && store.projects.some((p) => sameId(p.id, creatingId))) {
+			setSelectedId(creatingId)
+			setCreatingId(null)
+		}
+	}, [creatingId, store.projects])
+
+	async function createProject(name: string): Promise<string | null> {
+		setError(null)
+		const result = await store.createProject(name)
+		if (!result.ok) return result.message
+		setCreatingId(result.id)
+		return null
+	}
 
 	// Optimistic state: shown immediately, dropped once the store agrees.
 	const [statusOv, setStatusOv] = useState<Record<string, StatusOverride>>({})
@@ -187,6 +203,8 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 					deliverables={overviewItems}
 					contextProjectId={contextProjectId}
 					onOpen={setSelectedId}
+					onCreate={createProject}
+					waitingForNew={creatingId !== null}
 				/>
 			)}
 		</div>
@@ -198,10 +216,9 @@ function Overview(props: {
 	deliverables: Deliverable[]
 	contextProjectId: string | null
 	onOpen: (id: string) => void
+	onCreate: (name: string) => Promise<string | null>
+	waitingForNew: boolean
 }) {
-	if (props.projects.length === 0) {
-		return <div className="sg-empty">No projects found in the mapped data source.</div>
-	}
 	const cards = props.projects
 		.map((p) => {
 			const items = deliverablesFor(p.id, props.deliverables)
@@ -230,7 +247,11 @@ function Overview(props: {
 						{ready > 0 && ` · ${ready} ready to advance`}
 					</div>
 				</div>
+				<NewProject onCreate={props.onCreate} waiting={props.waitingForNew} />
 			</header>
+			{cards.length === 0 && (
+				<div className="sg-empty">No {PROJECT_NOUN}s yet. Create the first one above.</div>
+			)}
 			<div className="sg-board" role="list" aria-label="Projects by phase">
 				{columns.map((col) => (
 					<section key={col.key} className="sg-col" role="listitem" aria-label={col.title}>
@@ -284,6 +305,65 @@ function Overview(props: {
 				))}
 			</div>
 		</section>
+	)
+}
+
+function NewProject(props: { onCreate: (name: string) => Promise<string | null>; waiting: boolean }) {
+	const [open, setOpen] = useState(false)
+	const [name, setName] = useState("")
+	const [busy, setBusy] = useState(false)
+	const [error, setError] = useState<string | null>(null)
+	const label = `New ${PROJECT_NOUN}`
+
+	if (props.waiting) return <span className="sg-hint">Creating… it opens when it's ready.</span>
+
+	if (!open) {
+		return (
+			<button type="button" className="sg-button" onClick={() => setOpen(true)}>
+				+ {label}
+			</button>
+		)
+	}
+
+	async function submit(e: React.FormEvent) {
+		e.preventDefault()
+		const trimmed = name.trim()
+		if (!trimmed) return
+		setBusy(true)
+		setError(null)
+		const message = await props.onCreate(trimmed)
+		setBusy(false)
+		if (message) {
+			setError(`Couldn't create it: ${message}`)
+			return
+		}
+		setName("")
+		setOpen(false)
+	}
+
+	return (
+		<form className="sg-new" onSubmit={submit}>
+			<input
+				className="sg-input"
+				autoFocus
+				placeholder={`${PROJECT_NOUN[0].toUpperCase()}${PROJECT_NOUN.slice(1)} name`}
+				aria-label={`${label} name`}
+				value={name}
+				disabled={busy}
+				onChange={(e) => setName(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Escape") setOpen(false)
+				}}
+			/>
+			<button type="submit" className="sg-button" disabled={busy || name.trim() === ""}>
+				{busy ? "Creating…" : "Create"}
+			</button>
+			<button type="button" className="sg-link" onClick={() => setOpen(false)} disabled={busy}>
+				Cancel
+			</button>
+			{error && <span className="sg-new-error">{error}</span>}
+			<span className="sg-new-note">Starts in {PHASES[0].name}; its checklist is created when you open it.</span>
+		</form>
 	)
 }
 

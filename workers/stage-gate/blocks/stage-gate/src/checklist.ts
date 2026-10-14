@@ -25,6 +25,9 @@ export const PHASES: readonly PhaseDef[] = [
 	{ name: "Phase 5 · Master build & validation", short: "Build & validation" },
 ]
 
+/** What one project is called in this client's language, for buttons and prompts. */
+export const PROJECT_NOUN = "vehicle platform"
+
 /** The project Phase option after the last gated phase. */
 export const FINAL_PHASE = "Handed over"
 

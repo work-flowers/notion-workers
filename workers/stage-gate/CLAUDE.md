@@ -30,6 +30,10 @@ This file records only what's specific to this block.
   draggable** on purpose: dragging between columns would bypass the gate. When the block sits
   on a project page, that card is tagged "This page" but is not auto-opened.
   Seeding only runs once a project is opened, never from the overview.
+- **Creating a project.** "+ New vehicle platform" on the board takes a name,
+  creates the row in the first phase (title + Phase only), then opens it as soon
+  as the subscription delivers the row, which seeds its checklist. The noun is
+  `PROJECT_NOUN` in `checklist.ts`, the per-client file.
 - **No checklist ≠ gate met.** A project with no deliverables can't advance;
   otherwise the empty phase would pass vacuously.
 - **The gate is computed in the block**, not read from the `Gate ready` formula,

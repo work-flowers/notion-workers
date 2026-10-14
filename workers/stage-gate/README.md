@@ -8,6 +8,7 @@ current phase is done. Neutral styling (Notion's own design tokens), no branding
 ## What it does
 
 - Opens on a board of all projects, one column per phase; click a card to open its gate.
+- Creates a new project from the board (name only; it starts in Phase 1).
 - Creates the checklist rows for a project that has none, linked to the project.
 - Shows completed phases collapsed and ticked, the current phase open, future
   phases greyed out; plus the current gate (e.g. 2/3) and the handover pack
