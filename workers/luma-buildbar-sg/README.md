@@ -2,7 +2,7 @@
 
 A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md) that syncs registrations for **Notion Build Bar Singapore** (22 Oct 2026, [luma.com/buildbar-sg-oct](https://luma.com/buildbar-sg-oct), event `evt-WCXl3pOH3lRap1F`) from the NotionSG Luma calendar into a Notion database.
 
-Every 5 minutes, `buildBarSgGuestsSync` pulls every guest from Luma's List Guests endpoint (`GET /v1/events/guests/list`) and writes them to a Worker-managed database titled **Build Bar SG Registrations**, keyed on Guest ID. The sync runs in replace mode, so guests removed on Luma are also removed from Notion.
+Every 15 minutes, `buildBarSgGuestsSync` pulls every guest from Luma's List Guests endpoint (`GET /v1/events/guests/list`) and writes them to a Worker-managed database titled **Build Bar SG Registrations**, keyed on Guest ID. The sync runs in replace mode, so guests removed on Luma are also removed from Notion.
 
 This is a one-event fork of [`luma-api-sync`](../luma-api-sync). The event ID is a constant in [src/index.ts](src/index.ts), not an env var, because the registration questions are hard-coded against it.
 

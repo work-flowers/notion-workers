@@ -305,7 +305,7 @@ function guestToChange(guest: LumaGuest) {
 worker.sync("buildBarSgGuestsSync", {
 	database: guests,
 	mode: "replace",
-	schedule: "5m",
+	schedule: "15m",
 	execute: async (state: { cursor?: string } | undefined) => {
 		const page = await fetchGuestsPage(state?.cursor);
 		return {
