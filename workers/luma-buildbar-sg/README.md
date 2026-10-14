@@ -61,9 +61,11 @@ ntn workers sync trigger buildBarSgGuestsSync            # force an immediate re
 ntn workers sync status
 ```
 
-## Rate limits
+## Rate limits and cost
 
-Luma allows 200 requests/minute per calendar API key and returns at most 50 guests per page, whatever `pagination_limit` asks for. The pacer is set to 100 requests/minute, so the roughly 250 guests take about five requests per cycle. The key is shared with anything else on the NotionSG calendar, and Luma returns 429s when calls arrive in bursts.
+Luma allows 200 requests/minute per calendar API key and returns at most 50 guests per page, whatever `pagination_limit` asks for. The pacer is set to 100 requests/minute. The key is shared with anything else on the NotionSG calendar, and Luma returns 429s when calls arrive in bursts.
+
+Worker credits are charged per execution (about 0.2 each), not per API call. So one execution fetches every page, up to 20 pages or about 1,000 guests, and writes them in a single batch. A run over the roughly 250 guests costs about 0.25 credits, about 24 a day at the 15-minute schedule. When it fetched one page per execution, the same run took 5 executions and about 1.15 credits.
 
 ## When the event's questions change
 

@@ -300,18 +300,33 @@ function guestToChange(guest: LumaGuest) {
 // Sync — simple replace: the list-guests endpoint has no change tracking, and
 // a single event's guest list is small. Replace mode also removes guests no
 // longer returned by Luma.
+//
+// Credits are billed mostly per *execution* (~0.2 each), not per API call, so
+// one execution drains every page rather than returning after each one. Luma
+// caps pages at 50 guests whatever `pagination_limit` says, so one page per
+// execution made a ~250-guest cycle cost 5 executions. The cap below only
+// bounds a single execution; past it the cycle continues via `hasMore`.
 // ---------------------------------------------------------------------------
+
+const MAX_PAGES_PER_EXECUTION = 20; // ~1,000 guests
 
 worker.sync("buildBarSgGuestsSync", {
 	database: guests,
 	mode: "replace",
 	schedule: "15m",
 	execute: async (state: { cursor?: string } | undefined) => {
-		const page = await fetchGuestsPage(state?.cursor);
+		let cursor = state?.cursor;
+		const entries: LumaGuest[] = [];
+		for (let i = 0; i < MAX_PAGES_PER_EXECUTION; i++) {
+			const page = await fetchGuestsPage(cursor);
+			entries.push(...page.entries);
+			cursor = page.has_more ? page.next_cursor : undefined;
+			if (!cursor) break;
+		}
 		return {
-			changes: page.entries.map(guestToChange),
-			hasMore: page.has_more,
-			nextState: page.has_more ? { cursor: page.next_cursor } : undefined,
+			changes: entries.map(guestToChange),
+			hasMore: cursor !== undefined,
+			nextState: cursor ? { cursor } : undefined,
 		};
 	},
 });
