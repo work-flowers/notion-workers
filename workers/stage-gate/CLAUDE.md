@@ -57,7 +57,7 @@ This file records only what's specific to this block.
   `descriptionVi`), meant to be AI autofill properties so novel items get
   translated too and people can correct a row in place. Order: stored property
   → built-in translation (16 stock items only, a fallback until autofill has
-  run) → English. The API can't configure AI autofill; it was switched on in
+  run) → English. The API can't configure AI autofill; it has to be switched on in
   the Notion UI. Everything written to Notion stays English, because option names
   must match the bound properties; translation is applied at render time by
   option name or `Item key`. A title or description someone edited in Notion is
