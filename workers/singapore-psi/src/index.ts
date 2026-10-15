@@ -1,6 +1,7 @@
 import { RateLimitError, Worker } from "@notionhq/workers";
 import * as Schema from "@notionhq/workers/schema";
 import * as Builder from "@notionhq/workers/builder";
+import type { SelectColor } from "@notionhq/workers/types";
 
 const worker = new Worker();
 export default worker;
@@ -28,6 +29,16 @@ const REGIONS = {
 	national: "National",
 } as const;
 type RegionKey = keyof typeof REGIONS;
+
+// Kept clear of green/yellow/red so a region never reads as a PSI band.
+const REGION_COLORS: Record<RegionKey, SelectColor> = {
+	north: "blue",
+	south: "pink",
+	east: "orange",
+	west: "purple",
+	central: "brown",
+	national: "gray",
+};
 
 // NEA's PSI descriptor bands for the 24-hour PSI.
 const BANDS = [
@@ -64,7 +75,10 @@ const psiReadings = worker.database("psiReadings", {
 			Reading: Schema.title(),
 			"Reading ID": Schema.richText(),
 			Region: Schema.select(
-				Object.values(REGIONS).map((name) => ({ name })),
+				(Object.keys(REGIONS) as RegionKey[]).map((r) => ({
+					name: REGIONS[r],
+					color: REGION_COLORS[r],
+				})),
 			),
 			Timestamp: Schema.date(),
 			Band: Schema.select(
