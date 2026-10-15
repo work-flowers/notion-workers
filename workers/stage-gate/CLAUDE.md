@@ -16,6 +16,7 @@ This file records only what's specific to this block.
   step: read it from a Checklist Definition database with per-language labels.
 - `gate.ts`: all gate arithmetic, pure; covered by `test/gate.test.ts`.
 - `rows.ts`: Notion values ↔ domain types, write shapes, binding checks.
+- `i18n.ts`: English/Vietnamese strings and label translation; covered by `test/i18n.test.ts`.
 - `store.ts` / `mock.ts`: the persistence interface and its in-memory `?mock`
   implementation (`?mock`, `&theme=dark`, `&project=a|b|c` to tag one as "This page").
 
@@ -43,6 +44,16 @@ This file records only what's specific to this block.
   can't have its link removed. The rule applies to edits only: rows completed
   before it existed keep counting toward the gate and carry a *No file link*
   tag. Links are shown as text, not anchors, because the sandbox can't open them.
+- **English / Vietnamese toggle (display only).** `i18n.ts` holds the UI
+  strings and Vietnamese labels for the phases, the 16 items, formats and
+  statuses. Everything written to Notion stays English, because option names
+  must match the bound properties; translation is applied at render time by
+  option name or `Item key`. A title or description someone edited in Notion is
+  shown as written rather than replaced by the stock translation. The choice is
+  per viewer (localStorage, falling back to the browser language) so two people
+  can use different languages on one page. **The Vietnamese is an unreviewed
+  first draft**; have it checked by a native speaker at the client. Database
+  views and the rows themselves remain English.
 - **The gate is computed in the block**, not read from the `Gate ready` formula,
   because statuses update optimistically and the formula lags a round trip.
 - **Seeding is automatic and conservative.** Rows are created only when the

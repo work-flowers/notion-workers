@@ -15,6 +15,7 @@ current phase is done. Neutral styling (Notion's own design tokens), no branding
   (e.g. 13/16).
 - Requires a file link before an item can be marked Complete.
 - Advances the project's Phase, ending at "Handed over".
+- Switches the interface between English and Vietnamese (EN / VI, top right). Data in Notion stays English.
 
 ## Use it
 

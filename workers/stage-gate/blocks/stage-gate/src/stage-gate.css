@@ -783,3 +783,46 @@ body {
 	border-radius: var(--radius-4);
 	background: var(--error-bg);
 }
+
+/* Language toggle */
+
+.sg-topbar {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.sg-lang {
+	display: inline-flex;
+	border: 1px solid var(--border-control);
+	border-radius: var(--radius-6);
+	overflow: hidden;
+}
+
+.sg-lang-btn {
+	all: unset;
+	padding: var(--spacing-2) var(--spacing-8);
+	font-size: 11px;
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: 0.04em;
+	color: var(--content-secondary);
+	background: var(--bg-control);
+	cursor: pointer;
+}
+
+.sg-lang-btn + .sg-lang-btn {
+	border-left: 1px solid var(--border-control);
+}
+
+.sg-lang-btn:hover {
+	background: var(--bg-control-hover);
+}
+
+.sg-lang-btn:focus-visible {
+	outline: 2px solid var(--border-interactive-primary);
+	outline-offset: -2px;
+}
+
+.sg-lang-btn[aria-pressed="true"] {
+	color: var(--content-on-interactive-strong);
+	background: var(--bg-interactive-strong);
+}
