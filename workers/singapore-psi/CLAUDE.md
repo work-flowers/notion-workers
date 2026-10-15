@@ -42,12 +42,14 @@ managed **Singapore PSI** database: one row per hourly reading × region.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATA_GOV_SG_API_KEY` | No | Sent as `x-api-key` for a higher rate limit. |
+| `DATA_GOV_SG_API_KEY` | No | Sent as `x-api-key` for a higher rate limit. Stored in 1Password: `op://Employee/nea/credential`. |
 
 Keys are created at https://data.gov.sg (log in → API dashboard → Create API
 Key). **They expire.** data.gov.sg emails the owner 3 months, 1 month, 3 weeks
-and 1 week before. What the API does with an expired key (reject it, or fall
-back to keyless limits) has not been checked. Rotate it with
+and 1 week before. An invalid key is not rejected: a made-up `x-api-key` still
+returned `code: 0` (checked 2026-10-15). So an expired key most likely
+degrades silently to keyless limits, which the pacer already respects, rather
+than failing the sync. Rotate it with
 `ntn workers env set DATA_GOV_SG_API_KEY=…`, or unset it to run keyless.
 
 No `NOTION_API_TOKEN`: the worker only writes through the managed sync.
