@@ -11,7 +11,24 @@ import { useMemo, useRef, useState } from "react"
 
 import { CHECKLIST, PHASES, STATUS } from "./checklist.ts"
 import type { Deliverable, Project } from "./gate.ts"
-import type { Store } from "./store.ts"
+import type { Person, Store } from "./store.ts"
+
+/** Fictional people — the mock is what gets screen-recorded. */
+const PEOPLE: Person[] = [
+	{ id: "u-an", name: "An Nguyen", email: "an@example.com" },
+	{ id: "u-bao", name: "Bao Tran", email: "bao@example.com" },
+	{ id: "u-chris", name: "Chris Walker", email: "chris@example.com" },
+	{ id: "u-linh", name: "Linh Pham", email: "linh@example.com" },
+	{ id: "u-sam", name: "Sam Taylor", email: "sam@example.com" },
+]
+
+/** Who owns which item in the fixtures, by phase category. */
+const OWNER_BY_CATEGORY: Record<string, string> = {
+	Intake: "u-sam",
+	Teardown: "u-an",
+	Digital: "u-linh",
+	Design: "u-chris",
+}
 
 export const MOCK_PROJECT_IDS = { a: "mock-a", b: "mock-b", c: "mock-c" } as const
 
@@ -30,12 +47,18 @@ function rows(projectId: string, completed: Record<string, string>): Deliverable
 		phase: c.phase,
 		category: c.category,
 		description: c.description,
+		// One row carries a stored translation that differs from the built-in one,
+		// to show the Notion property winning; the rest fall back.
+		itemVi: c.key === "3d_scan_data" ? "Dữ liệu quét 3D (đã hiệu đính)" : null,
+		descriptionVi: null,
 		format: c.format,
 		mandatory: c.mandatory,
 		status: c.key in completed ? STATUS.complete : STATUS.pending,
 		completedDate: completed[c.key] ?? null,
 		// Sample evidence on every completed item, so the demo starts compliant.
 		fileLink: c.key in completed ? `https://example.sharepoint.com/sites/rnd/${projectId}/${c.key}` : null,
+		// Leave the later phases unassigned so the demo has something to allocate.
+		ownerIds: OWNER_BY_CATEGORY[c.category] ? [OWNER_BY_CATEGORY[c.category]] : [],
 		order: c.order,
 	}))
 }
@@ -78,6 +101,8 @@ export function useMockStore(): Store {
 			loading: false,
 			truncated: false,
 			bindingProblems: [],
+			people: PEOPLE,
+			ownerBound: true,
 			async updateItem(item, next) {
 				await delay(250)
 				setDeliverables((all) => all.map((d) => (d.id === item.id ? next : d)))
@@ -108,11 +133,14 @@ export function useMockStore(): Store {
 							phase: c.phase,
 							category: c.category,
 							description: c.description,
+							itemVi: null,
+							descriptionVi: null,
 							format: c.format,
 							mandatory: c.mandatory,
 							status: STATUS.pending,
 							completedDate: null,
 							fileLink: null,
+							ownerIds: [],
 							order: c.order,
 						},
 					])

@@ -24,11 +24,14 @@ function rows(projectId: string, done: string[], na: string[] = []): Deliverable
 		phase: c.phase,
 		category: c.category,
 		description: c.description,
+		itemVi: null,
+		descriptionVi: null,
 		format: c.format,
 		mandatory: c.mandatory,
 		status: done.includes(c.key) ? STATUS.complete : na.includes(c.key) ? STATUS.na : STATUS.pending,
 		completedDate: null,
 		fileLink: done.includes(c.key) ? "https://example.com/file" : null,
+		ownerIds: [],
 		order: c.order,
 	}))
 }

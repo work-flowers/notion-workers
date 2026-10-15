@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
 
-import { FINAL_PHASE, PHASES, PROJECT_NOUN, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
+import { FINAL_PHASE, PHASES, STATUS, STATUS_ORDER, type ItemStatus } from "./checklist.ts"
 import {
 	applyChange,
 	buildPhases,
@@ -11,15 +11,44 @@ import {
 	normaliseLink,
 	phaseIndex,
 	sameId,
+	sameIds,
 	shouldSeed,
 	type Deliverable,
 	type ItemChange,
 	type PhaseView,
 	type Project,
 } from "./gate.ts"
-import { today, type ProjectDetails, type Store } from "./store.ts"
+import { initialLang, labels, LANGS, saveLang, STRINGS, type Labels, type Lang, type Strings } from "./i18n.ts"
+import { today, type Person, type ProjectDetails, type Store } from "./store.ts"
 
-type ItemOverride = Pick<Deliverable, "status" | "completedDate" | "fileLink">
+/** The owner picker's choices; `bound` is false when Owner isn't mapped, which hides the picker. */
+const People = createContext<{ people: Person[]; bound: boolean }>({ people: [], bound: false })
+
+/** UI strings (`t`) and data-label translator (`l`) for the viewer's language. */
+const I18n = createContext<{ lang: Lang; t: Strings; l: Labels }>({ lang: "en", t: STRINGS.en, l: labels("en") })
+const useI18n = () => useContext(I18n)
+
+function LangToggle({ lang, onChange }: { lang: Lang; onChange: (lang: Lang) => void }) {
+	return (
+		<div className="sg-lang" role="group" aria-label={STRINGS[lang].language}>
+			{LANGS.map((code) => (
+				<button
+					key={code}
+					type="button"
+					className="sg-lang-btn"
+					aria-pressed={lang === code}
+					lang={code}
+					title={STRINGS[code].langName}
+					onClick={() => onChange(code)}
+				>
+					{code.toUpperCase()}
+				</button>
+			))}
+		</div>
+	)
+}
+
+type ItemOverride = Pick<Deliverable, "status" | "completedDate" | "fileLink" | "ownerIds">
 
 type Seed =
 	| { projectId: string; state: "running"; created: number; total: number }
@@ -27,6 +56,14 @@ type Seed =
 	| { projectId: string; state: "error"; message: string }
 
 export function App({ store, contextProjectId }: { store: Store; contextProjectId: string | null }) {
+	const [lang, setLangState] = useState<Lang>(initialLang)
+	const i18n = useMemo(() => ({ lang, t: STRINGS[lang], l: labels(lang) }), [lang])
+	const { t, l } = i18n
+	const peopleCtx = useMemo(() => ({ people: store.people, bound: store.ownerBound }), [store.people, store.ownerBound])
+	function setLang(next: Lang) {
+		setLangState(next)
+		saveLang(next)
+	}
 	// The overview comes first; a project opens only when picked from it.
 	const [selectedId, setSelectedId] = useState<string | null>(null)
 	const baseProject = store.projects.find((p) => sameId(p.id, selectedId ?? "")) ?? null
@@ -62,7 +99,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 			let changed = false
 			for (const [id, o] of Object.entries(ov)) {
 				const row = store.deliverables.find((d) => d.id === id)
-				if (row && row.status === o.status && row.fileLink === o.fileLink) {
+				if (row && row.status === o.status && row.fileLink === o.fileLink && sameIds(row.ownerIds, o.ownerIds)) {
 					delete next[id]
 					changed = true
 				}
@@ -128,13 +165,20 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 	/** Returns an error message, or null once saved. */
 	async function updateItem(item: Deliverable, change: ItemChange): Promise<string | null> {
 		const applied = applyChange(item, change, today())
-		if (!applied.ok) return applied.message
+		if (!applied.ok) return t.needsLink
 		const { next } = applied
-		if (next.status === item.status && next.fileLink === item.fileLink) return null
+		if (next.status === item.status && next.fileLink === item.fileLink && sameIds(next.ownerIds, item.ownerIds)) {
+			return null
+		}
 		setError(null)
 		setStatusOv((ov) => ({
 			...ov,
-			[item.id]: { status: next.status, completedDate: next.completedDate, fileLink: next.fileLink },
+			[item.id]: {
+				status: next.status,
+				completedDate: next.completedDate,
+				fileLink: next.fileLink,
+				ownerIds: next.ownerIds,
+			},
 		}))
 		setSaving((s) => new Set(s).add(item.id))
 		const result = await store.updateItem(item, next)
@@ -145,7 +189,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		})
 		if (!result.ok) {
 			setStatusOv(({ [item.id]: _dropped, ...rest }) => rest)
-			setError(`Couldn't update “${item.item}”: ${result.message}`)
+			setError(t.couldntUpdate(l.item(item.key, item.item, item.itemVi), result.message))
 			return result.message
 		}
 		return null
@@ -159,12 +203,12 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		setAdvancing(false)
 		if (!result.ok) {
 			setPhaseOv(({ [p.id]: _dropped, ...rest }) => rest)
-			setError(`Couldn't move the project to ${to}: ${result.message}`)
+			setError(t.couldntMove(l.phase(to), result.message))
 		}
 	}
 
 	if (store.loading && store.projects.length === 0) {
-		return <div className="sg-empty">Loading…</div>
+		return <div className="sg-empty">{t.loading}</div>
 	}
 
 	// Overview rows reflect optimistic edits too, so going back shows what was just done.
@@ -172,10 +216,15 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 	const overviewItems = store.deliverables.map((d) => (statusOv[d.id] ? { ...d, ...statusOv[d.id] } : d))
 
 	return (
-		<div className="sg">
+		<I18n.Provider value={i18n}>
+		<People.Provider value={peopleCtx}>
+		<div className="sg" lang={lang}>
+			<div className="sg-topbar">
+				<LangToggle lang={lang} onChange={setLang} />
+			</div>
 			{store.bindingProblems.length > 0 && (
 				<div className="sg-banner sg-banner--warn" role="status">
-					<strong>Finish setting up this block.</strong>
+					<strong>{t.setupTitle}</strong>
 					<ul>
 						{store.bindingProblems.map((p) => (
 							<li key={p}>{p}</li>
@@ -185,15 +234,14 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 			)}
 			{store.truncated && (
 				<div className="sg-banner sg-banner--warn" role="status">
-					Deliverables has more than 999 rows; some items may not show and new checklists won't be created
-					automatically.
+					{t.truncated}
 				</div>
 			)}
 			{error && (
 				<div className="sg-banner sg-banner--error" role="alert">
 					{error}
 					<button type="button" className="sg-link" onClick={() => setError(null)}>
-						Dismiss
+						{t.dismiss}
 					</button>
 				</div>
 			)}
@@ -220,6 +268,8 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 				/>
 			)}
 		</div>
+		</People.Provider>
+		</I18n.Provider>
 	)
 }
 
@@ -231,6 +281,7 @@ function Overview(props: {
 	onCreate: (name: string, details: ProjectDetails) => Promise<string | null>
 	waitingForNew: boolean
 }) {
+	const { t, l } = useI18n()
 	const cards = props.projects
 		.map((p) => {
 			const items = deliverablesFor(p.id, props.deliverables)
@@ -241,30 +292,34 @@ function Overview(props: {
 	// One column per phase plus Handed over; projects whose phase the checklist
 	// doesn't know get an extra column rather than disappearing.
 	const columns = [
-		...PHASES.map((p, i) => ({ key: p.name, title: `${i + 1} · ${p.short}`, cards: cards.filter((c) => c.index === i) })),
-		{ key: FINAL_PHASE, title: FINAL_PHASE, cards: cards.filter((c) => c.index === PHASES.length) },
+		...PHASES.map((p, i) => ({
+			key: p.name,
+			title: `${i + 1} · ${l.phaseShort(p.name)}`,
+			cards: cards.filter((c) => c.index === i),
+		})),
+		{ key: FINAL_PHASE, title: l.phaseShort(FINAL_PHASE), cards: cards.filter((c) => c.index === PHASES.length) },
 	]
 	const unknown = cards.filter((c) => c.index === null)
-	if (unknown.length > 0) columns.push({ key: "__none", title: "No phase", cards: unknown })
+	if (unknown.length > 0) columns.push({ key: "__none", title: t.noPhase, cards: unknown })
 	const ready = cards.filter((c) => c.gate.canAdvance).length
 
 	return (
 		<section className="sg-card">
 			<header className="sg-head">
 				<div>
-					<div className="sg-eyebrow">Stage gate</div>
-					<h2 className="sg-title">All projects</h2>
+					<div className="sg-eyebrow">{t.stageGate}</div>
+					<h2 className="sg-title">{t.allProjects}</h2>
 					<div className="sg-phase-now">
-						{cards.length} {cards.length === 1 ? "project" : "projects"}
-						{ready > 0 && ` · ${ready} ready to advance`}
+						{t.projectCount(cards.length)}
+						{ready > 0 && ` · ${t.readyCount(ready)}`}
 					</div>
 				</div>
 				<NewProject onCreate={props.onCreate} waiting={props.waitingForNew} />
 			</header>
 			{cards.length === 0 && (
-				<div className="sg-empty">No {PROJECT_NOUN}s yet. Create the first one above.</div>
+				<div className="sg-empty">{t.noProjectsYet}</div>
 			)}
-			<div className="sg-board" role="list" aria-label="Projects by phase">
+			<div className="sg-board" role="list" aria-label={t.projectsByPhase}>
 				{columns.map((col) => (
 					<section key={col.key} className="sg-col" role="listitem" aria-label={col.title}>
 						<header className="sg-col-head">
@@ -280,38 +335,38 @@ function Overview(props: {
 										key={project.id}
 										type="button"
 										className="sg-kcard"
-										aria-label={`Open ${project.name}, ${project.phase ?? "no phase"}`}
+										aria-label={t.openProject(project.name, l.phase(project.phase))}
 										onClick={() => props.onOpen(project.id)}
 									>
 										<span className="sg-kcard-name">{project.name}</span>
 										{items.length === 0 ? (
-											<span className="sg-ov-note">No checklist yet</span>
+											<span className="sg-ov-note">{t.noChecklistYet}</span>
 										) : (
 											<>
 												{g.current && (
 													<span className="sg-kcard-gate">
 														<span className={g.current.ready ? "sg-ov-good" : undefined}>
-															Gate {g.current.mandatoryDone}/{g.current.mandatoryTotal}
+															{t.gateShort(g.current.mandatoryDone, g.current.mandatoryTotal)}
 														</span>
 														<Meter done={g.current.mandatoryDone} total={g.current.mandatoryTotal} />
 													</span>
 												)}
 												<span className="sg-kcard-pack">
-													Handover pack {g.handover.done}/{g.handover.total}
+													{t.handoverShort(g.handover.done, g.handover.total)}
 												</span>
 											</>
 										)}
 										{(here || g.canAdvance || handedOver) && (
 											<span className="sg-kcard-tags">
-												{g.canAdvance && <span className="sg-tag sg-tag--good">Ready to advance</span>}
-												{handedOver && <span className="sg-tag sg-tag--good">✓ Complete</span>}
-												{here && <span className="sg-tag">This page</span>}
+												{g.canAdvance && <span className="sg-tag sg-tag--good">{t.readyToAdvance}</span>}
+												{handedOver && <span className="sg-tag sg-tag--good">{t.completeTag}</span>}
+												{here && <span className="sg-tag">{t.thisPage}</span>}
 											</span>
 										)}
 									</button>
 								)
 							})}
-							{col.cards.length === 0 && <div className="sg-col-empty">None</div>}
+							{col.cards.length === 0 && <div className="sg-col-empty">{t.none}</div>}
 						</div>
 					</section>
 				))}
@@ -331,9 +386,10 @@ function NewProject(props: {
 	const [details, setDetails] = useState<ProjectDetails>(NO_DETAILS)
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const label = `New ${PROJECT_NOUN}`
+	const { t, l } = useI18n()
+	const label = t.newProject
 
-	if (props.waiting) return <span className="sg-hint">Creating… it opens when it's ready.</span>
+	if (props.waiting) return <span className="sg-hint">{t.creatingOpens}</span>
 
 	if (!open) {
 		return (
@@ -352,7 +408,7 @@ function NewProject(props: {
 		const message = await props.onCreate(trimmed, details)
 		setBusy(false)
 		if (message) {
-			setError(`Couldn't create it: ${message}`)
+			setError(t.couldntCreate(message))
 			return
 		}
 		setName("")
@@ -382,25 +438,25 @@ function NewProject(props: {
 			<input
 				className="sg-input"
 				autoFocus
-				placeholder={`${PROJECT_NOUN[0].toUpperCase()}${PROJECT_NOUN.slice(1)} name`}
-				aria-label={`${label} name`}
+				placeholder={t.projectName}
+				aria-label={t.projectName}
 				value={name}
 				disabled={busy}
 				onChange={(e) => setName(e.target.value)}
 			/>
 			<div className="sg-new-details">
-				{field("make", "Make", "Make")}
-				{field("model", "Model", "Model")}
-				{field("variant", "Variant", "Variant, e.g. Dual cab · 4x4")}
+				{field("make", t.make, t.make)}
+				{field("model", t.model, t.model)}
+				{field("variant", t.variant, t.variantPlaceholder)}
 			</div>
 			<button type="submit" className="sg-button" disabled={busy || name.trim() === ""}>
-				{busy ? "Creating…" : "Create"}
+				{busy ? t.creating : t.create}
 			</button>
 			<button type="button" className="sg-link" onClick={() => setOpen(false)} disabled={busy}>
-				Cancel
+				{t.cancel}
 			</button>
 			{error && <span className="sg-new-error">{error}</span>}
-			<span className="sg-new-note">Starts in {PHASES[0].name}; its checklist is created when you open it.</span>
+			<span className="sg-new-note">{t.startsIn(l.phase(PHASES[0].name))}</span>
 		</form>
 	)
 }
@@ -426,6 +482,7 @@ function GateView(props: {
 	onSeed: () => void
 }) {
 	const { project, items, seed } = props
+	const { t, l } = useI18n()
 	const { phases, unphased } = buildPhases(project.phase, items)
 	const g = gate(project.phase, items)
 	const index = phaseIndex(project.phase)
@@ -433,7 +490,7 @@ function GateView(props: {
 
 	const back = (
 		<button type="button" className="sg-back" onClick={props.onBack}>
-			‹ All projects
+			{t.back}
 		</button>
 	)
 
@@ -456,13 +513,13 @@ function GateView(props: {
 				<div className="sg-stats">
 					{g.current && (
 						<Stat
-							label={`${g.current.phase.short} gate`}
+							label={t.gateLabel(l.phaseShort(g.current.phase.name))}
 							value={`${g.current.mandatoryDone}/${g.current.mandatoryTotal}`}
 							good={g.current.ready}
 						/>
 					)}
 					<Stat
-						label="Handover pack"
+						label={t.handoverPack}
 						value={`${g.handover.done}/${g.handover.total}`}
 						good={g.handover.done === g.handover.total}
 					/>
@@ -474,8 +531,8 @@ function GateView(props: {
 			{index === null && (
 				<div className="sg-banner sg-banner--warn">
 					{project.phase
-						? `“${project.phase}” isn't one of this checklist's phases, so no gate applies.`
-						: "This project has no phase set."}
+						? t.unknownPhase(project.phase)
+						: t.noPhaseSet}
 				</div>
 			)}
 
@@ -491,7 +548,7 @@ function GateView(props: {
 				{unphased.length > 0 && (
 					<div className="sg-phase sg-phase--future">
 						<div className="sg-phase-head">
-							<span className="sg-phase-title">Other items</span>
+							<span className="sg-phase-title">{t.otherItems}</span>
 						</div>
 						<ul className="sg-items">
 							{unphased.map((d) => (
@@ -504,15 +561,15 @@ function GateView(props: {
 
 			<footer className="sg-footer">
 				{handedOver ? (
-					<span className="sg-done-note">✓ Handed over</span>
+					<span className="sg-done-note">{t.handedOverNote}</span>
 				) : g.next ? (
 					<>
 						<span className="sg-hint">
 							{g.canAdvance
 								? g.current && g.current.mandatoryTotal > 0
-									? "Every mandatory item in this phase is complete."
-									: "No mandatory items in this phase."
-								: `${open} mandatory ${open === 1 ? "item" : "items"} still open in this phase.`}
+									? t.allDone
+									: t.noMandatory
+								: t.stillOpen(open)}
 						</span>
 						<button
 							type="button"
@@ -520,7 +577,7 @@ function GateView(props: {
 							disabled={!g.canAdvance || props.advancing}
 							onClick={() => g.next && props.onAdvance(g.next)}
 						>
-							{props.advancing ? "Moving…" : g.next === FINAL_PHASE ? "Hand over" : `Advance to ${shortName(g.next)}`}
+							{props.advancing ? t.moving : g.next === FINAL_PHASE ? t.handOver : t.advanceTo(l.phaseShort(g.next))}
 						</button>
 					</>
 				) : null}
@@ -529,17 +586,14 @@ function GateView(props: {
 	)
 }
 
-function shortName(phase: string): string {
-	return PHASES.find((p) => p.name === phase)?.short ?? phase
-}
-
 function Header({ project, children }: { project: Project; children?: React.ReactNode }) {
+	const { t, l } = useI18n()
 	return (
 		<header className="sg-head">
 			<div>
-				<div className="sg-eyebrow">Stage gate</div>
+				<div className="sg-eyebrow">{t.stageGate}</div>
 				<h2 className="sg-title">{project.name}</h2>
-				<div className="sg-phase-now">{project.phase ?? "No phase"}</div>
+				<div className="sg-phase-now">{l.phase(project.phase)}</div>
 			</div>
 			{children}
 		</header>
@@ -556,15 +610,16 @@ function Stat({ label, value, good }: { label: string; value: string; good: bool
 }
 
 function Stepper({ index }: { index: number | null }) {
-	const steps = [...PHASES.map((p) => p.short), FINAL_PHASE]
+	const { t, l } = useI18n()
+	const steps = [...PHASES.map((p) => p.name), FINAL_PHASE]
 	return (
-		<ol className="sg-stepper" aria-label="Phases">
+		<ol className="sg-stepper" aria-label={t.phases}>
 			{steps.map((label, i) => {
 				const state = index === null ? "future" : i < index ? "done" : i === index ? "current" : "future"
 				return (
 					<li key={label} className={`sg-step sg-step--${state}`} aria-current={state === "current" ? "step" : undefined}>
 						<span className="sg-step-dot">{state === "done" ? "✓" : i < PHASES.length ? i + 1 : "★"}</span>
-						<span className="sg-step-label">{label}</span>
+						<span className="sg-step-label">{l.phaseShort(label)}</span>
 					</li>
 				)
 			})}
@@ -578,6 +633,7 @@ function PhaseSection(props: {
 	onUpdate: (item: Deliverable, change: ItemChange) => Promise<string | null>
 }) {
 	const { view } = props
+	const { t, l } = useI18n()
 	const [open, setOpen] = useState(view.state === "current")
 	const reopened = view.state === "done" && !view.ready
 	return (
@@ -594,12 +650,12 @@ function PhaseSection(props: {
 				<span className="sg-phase-mark" aria-hidden>
 					{view.state === "done" && !reopened ? "✓" : ""}
 				</span>
-				<span className="sg-phase-title">{view.phase.name}</span>
-				{view.state === "current" && <span className="sg-tag">Current</span>}
-				{reopened && <span className="sg-tag sg-tag--warn">Reopened</span>}
+				<span className="sg-phase-title">{l.phase(view.phase.name)}</span>
+				{view.state === "current" && <span className="sg-tag">{t.current}</span>}
+				{reopened && <span className="sg-tag sg-tag--warn">{t.reopened}</span>}
 				<span className="sg-phase-count">
 					{view.items.length === 0
-						? "No items"
+						? t.noItems
 						: `${view.mandatoryDone}/${view.mandatoryTotal}`}
 				</span>
 			</button>
@@ -620,6 +676,8 @@ function ItemRow(props: {
 	onUpdate: (item: Deliverable, change: ItemChange) => Promise<string | null>
 }) {
 	const { item } = props
+	const { t, l } = useI18n()
+	const title = l.item(item.key, item.item, item.itemVi)
 	const done = item.status === STATUS.complete || item.status === STATUS.na
 	// "complete": the editor was opened by clicking Complete without a link.
 	const [editing, setEditing] = useState<null | "edit" | "complete">(null)
@@ -641,6 +699,10 @@ function ItemRow(props: {
 		setMessage(error)
 	}
 
+	async function setOwner(ownerIds: string[]) {
+		setMessage(await props.onUpdate(item, { ownerIds }))
+	}
+
 	async function saveLink(e: React.FormEvent) {
 		e.preventDefault()
 		const change: ItemChange =
@@ -649,7 +711,7 @@ function ItemRow(props: {
 		if (error) {
 			setMessage(
 				item.status === STATUS.complete && normaliseLink(draft) === null
-					? "A Complete item needs a file link. Set it back to Pending first to remove the link."
+					? t.cantRemoveLink
 					: error,
 			)
 			return
@@ -662,15 +724,16 @@ function ItemRow(props: {
 		<li className={`sg-item${done ? " sg-item--done" : ""}`}>
 			<div className="sg-item-main">
 				<div className="sg-item-title">
-					{item.item}
-					{!item.mandatory && <span className="sg-tag">Optional</span>}
-					{missingEvidence(item) && <span className="sg-tag sg-tag--warn">No file link</span>}
+					{title}
+					{!item.mandatory && <span className="sg-tag">{t.optional}</span>}
+					{missingEvidence(item) && <span className="sg-tag sg-tag--warn">{t.noFileLink}</span>}
 				</div>
-				{item.description && <div className="sg-item-desc">{item.description}</div>}
+				{item.description && <div className="sg-item-desc">{l.description(item.key, item.description, item.descriptionVi)}</div>}
 				<div className="sg-item-meta">
-					{item.format && <span>{item.format}</span>}
+					<OwnerPicker item={item} saving={props.saving} onChange={(ownerIds) => setOwner(ownerIds)} />
+					{item.format && <span>{l.format(item.format)}</span>}
 					{item.status === STATUS.complete && item.completedDate && (
-						<span>Completed {formatDate(item.completedDate)}</span>
+						<span>{t.completedOn(l.date(item.completedDate))}</span>
 					)}
 				</div>
 				{editing ? (
@@ -678,8 +741,8 @@ function ItemRow(props: {
 						<input
 							className="sg-input sg-input--small"
 							autoFocus
-							placeholder="Paste the file link (SharePoint, server folder, PDM)"
-							aria-label={`File link for ${item.item}`}
+							placeholder={t.linkPlaceholder}
+							aria-label={t.linkFor(title)}
 							value={draft}
 							disabled={props.saving}
 							onChange={(e) => setDraft(e.target.value)}
@@ -692,37 +755,37 @@ function ItemRow(props: {
 							className="sg-button sg-button--small"
 							disabled={props.saving || (editing === "complete" && normaliseLink(draft) === null)}
 						>
-							{editing === "complete" ? "Save & complete" : "Save"}
+							{editing === "complete" ? t.saveAndComplete : t.save}
 						</button>
 						<button type="button" className="sg-link" onClick={() => setEditing(null)}>
-							Cancel
+							{t.cancel}
 						</button>
 						{editing === "complete" && !message && (
-							<span className="sg-link-hint">A file link is required to mark this item Complete.</span>
+							<span className="sg-link-hint">{t.linkRequired}</span>
 						)}
 					</form>
 				) : (
 					<div className="sg-file">
 						{item.fileLink ? (
 							<>
-								<span className="sg-file-label">File</span>
+								<span className="sg-file-label">{t.file}</span>
 								<span className="sg-file-url" title={item.fileLink}>
 									{item.fileLink}
 								</span>
 								<button type="button" className="sg-link" onClick={() => openEditor("edit")}>
-									Edit
+									{t.edit}
 								</button>
 							</>
 						) : (
 							<button type="button" className="sg-link sg-link--muted" onClick={() => openEditor("edit")}>
-								+ Add file link
+								{t.addLink}
 							</button>
 						)}
 					</div>
 				)}
 				{message && <div className="sg-item-error">{message}</div>}
 			</div>
-			<div className="sg-seg" role="group" aria-label={`Status of ${item.item}`}>
+			<div className="sg-seg" role="group" aria-label={t.statusOf(title)}>
 				{STATUS_ORDER.map((s) => (
 					<button
 						key={s}
@@ -730,10 +793,10 @@ function ItemRow(props: {
 						className={`sg-seg-btn sg-seg-btn--${s === STATUS.na ? "na" : s.toLowerCase()}`}
 						aria-pressed={item.status === s}
 						disabled={props.saving}
-						title={s === STATUS.complete && item.fileLink === null ? "Needs a file link" : undefined}
+						title={s === STATUS.complete && item.fileLink === null ? t.needsLinkTitle : undefined}
 						onClick={() => choose(s)}
 					>
-						{s}
+						{l.status(s)}
 					</button>
 				))}
 			</div>
@@ -741,32 +804,72 @@ function ItemRow(props: {
 	)
 }
 
+/**
+ * One owner per item. A row that already holds several people (set in Notion)
+ * shows them all and keeps them until someone picks a single owner here.
+ */
+function OwnerPicker(props: { item: Deliverable; saving: boolean; onChange: (ownerIds: string[]) => void }) {
+	const { people, bound } = useContext(People)
+	const { t, l } = useI18n()
+	if (!bound) return null
+	const { ownerIds } = props.item
+	const known = new Map(people.map((p) => [p.id.replace(/-/g, ""), p]))
+	const nameOf = (id: string) => known.get(id.replace(/-/g, ""))?.name ?? t.unknownPerson
+	const multiple = ownerIds.length > 1
+	const value = multiple ? "__multiple" : (ownerIds[0] ?? "")
+	// Keep an owner the list doesn't include (a guest, or names still loading) selectable as-is.
+	const extra = ownerIds.length === 1 && !known.has(ownerIds[0].replace(/-/g, "")) ? ownerIds[0] : null
+
+	return (
+		<label className={`sg-owner${ownerIds.length === 0 ? " sg-owner--empty" : ""}`}>
+			<span className="sg-owner-label">{t.owner}</span>
+			<select
+				value={value}
+				disabled={props.saving}
+				aria-label={t.ownerOf(l.item(props.item.key, props.item.item, props.item.itemVi))}
+				onChange={(e) => {
+					const id = e.target.value
+					if (id === "__multiple") return
+					props.onChange(id ? [id] : [])
+				}}
+			>
+				<option value="">{t.unassigned}</option>
+				{multiple && (
+					<option value="__multiple" disabled>
+						{ownerIds.map(nameOf).join(", ")}
+					</option>
+				)}
+				{extra && <option value={extra}>{nameOf(extra)}</option>}
+				{people.map((p) => (
+					<option key={p.id} value={p.id}>
+						{p.name}
+					</option>
+				))}
+			</select>
+		</label>
+	)
+}
+
 function SeedState({ seed, onSeed }: { seed: Seed | null; onSeed: () => void }) {
+	const { t } = useI18n()
 	if (seed?.state === "running") {
 		return (
 			<div className="sg-seed">
-				<div>
-					Creating the checklist… {seed.created}/{seed.total}
-				</div>
+				<div>{t.creatingChecklist(seed.created, seed.total)}</div>
 				<progress max={seed.total} value={seed.created} />
 			</div>
 		)
 	}
 	if (seed?.state === "done") {
-		return <div className="sg-seed">Created {seed.total} checklist items. Loading them…</div>
+		return <div className="sg-seed">{t.createdChecklist(seed.total)}</div>
 	}
 	return (
 		<div className="sg-seed">
 			{seed?.state === "error" && <div className="sg-banner sg-banner--error">{seed.message}</div>}
-			<div>This project has no deliverables yet.</div>
+			<div>{t.noDeliverables}</div>
 			<button type="button" className="sg-button" onClick={onSeed}>
-				Create checklist
+				{t.createChecklist}
 			</button>
 		</div>
 	)
-}
-
-function formatDate(day: string): string {
-	const [y, m, d] = day.split("-").map(Number)
-	return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
 }

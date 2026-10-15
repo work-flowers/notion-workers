@@ -1,5 +1,5 @@
 import "@notionhq/custom-blocks/nds.css"
-import { pages, type NotionDataSourcePage } from "@notionhq/custom-blocks"
+import { pages, users, type NotionDataSourcePage } from "@notionhq/custom-blocks"
 import {
 	NotionCustomBlock,
 	NotionTokenScope,
@@ -7,7 +7,7 @@ import {
 	usePage,
 	useTheme,
 } from "@notionhq/custom-blocks/react"
-import { StrictMode, useMemo } from "react"
+import { StrictMode, useEffect, useMemo, useState } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
@@ -22,7 +22,7 @@ import {
 	toDeliverable,
 	toProject,
 } from "./rows.ts"
-import type { Store } from "./store.ts"
+import type { Person, Store } from "./store.ts"
 import "./stage-gate.css"
 
 /** The per-subscription cap. Plenty for projects; the banner covers deliverables past it. */
@@ -43,9 +43,44 @@ function failed(message: string): { ok: false; message: string } {
 	return { ok: false, message }
 }
 
+/**
+ * Workspace members, read once. Paged, capped, and time-limited: the bridge has
+ * no timeout of its own, and a picker with no names is better than a block that
+ * never finishes loading.
+ */
+function usePeople(): Person[] {
+	const [people, setPeople] = useState<Person[]>([])
+	useEffect(() => {
+		let cancelled = false
+		async function load() {
+			const found: Person[] = []
+			let cursor: string | undefined
+			for (let page = 0; page < 10; page++) {
+				const result = await Promise.race([
+					users.list({ pageSize: 100, ...(cursor ? { startCursor: cursor } : {}) }),
+					new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+				])
+				if (!result || result.status === "error") break
+				for (const u of result.list.results) {
+					found.push({ id: u.id, name: u.name ?? u.person.email, email: u.person.email ?? null })
+				}
+				if (!result.list.has_more || !result.list.next_cursor) break
+				cursor = result.list.next_cursor
+			}
+			if (!cancelled) setPeople(found.sort((a, b) => a.name.localeCompare(b.name)))
+		}
+		void load()
+		return () => {
+			cancelled = true
+		}
+	}, [])
+	return people
+}
+
 function useNotionStore(): Store {
 	const projects = useDataSource("projects", QUERY)
 	const deliverables = useDataSource("deliverables", QUERY)
+	const people = usePeople()
 
 	return useMemo<Store>(() => {
 		const projectRows = new Map<string, NotionDataSourcePage>(projects.items.map((r) => [r.id, r]))
@@ -66,6 +101,8 @@ function useNotionStore(): Store {
 			deliverables: deliverables.items.map(toDeliverable),
 			loading: projects.isLoading || deliverables.isLoading,
 			truncated: deliverables.hasMore,
+			people,
+			ownerBound: deliverables.propertyIdsByKey.owner !== undefined,
 			// Only meaningful once the bindings have resolved.
 			bindingProblems: projects.isLoading || deliverables.isLoading ? [] : problems,
 
@@ -73,7 +110,7 @@ function useNotionStore(): Store {
 				const row = deliverableRows.get(item.id)
 				if (!row) return failed("row not loaded")
 				const result = await row.update({
-					properties: onlyBound(itemProperties(next), deliverables.propertyIdsByKey),
+					properties: onlyBound(itemProperties(next, item), deliverables.propertyIdsByKey),
 				})
 				return result.status === "success" ? { ok: true } : failed(result.error.message)
 			},
@@ -110,7 +147,7 @@ function useNotionStore(): Store {
 				return { ok: true }
 			},
 		}
-	}, [projects, deliverables])
+	}, [projects, deliverables, people])
 }
 
 function NotionGate() {

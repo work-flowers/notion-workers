@@ -31,16 +31,21 @@ export type Deliverable = {
 	phase: string | null
 	category: string | null
 	description: string | null
+	/** Vietnamese labels stored on the row (AI autofill or hand-corrected); null when empty or unmapped. */
+	itemVi: string | null
+	descriptionVi: string | null
 	format: string | null
 	mandatory: boolean
 	status: string | null
 	completedDate: string | null
 	fileLink: string | null
+	/** User ids from the Owner property. The picker sets one; more set in Notion are kept until changed. */
+	ownerIds: string[]
 	order: number | null
 }
 
 /** What an item edit may change. Omitted fields are left as they are. */
-export type ItemChange = { status?: string; fileLink?: string | null }
+export type ItemChange = { status?: string; fileLink?: string | null; ownerIds?: string[] }
 
 /**
  * Applies a change and checks the one rule edits must obey: **a Complete item
@@ -59,7 +64,12 @@ export function applyChange(
 		return { ok: false, message: "Add a file link before marking this item Complete." }
 	}
 	const completedDate = status === STATUS.complete ? (item.completedDate ?? today) : null
-	return { ok: true, next: { ...item, status, fileLink, completedDate } }
+	const ownerIds = change.ownerIds ?? item.ownerIds
+	return { ok: true, next: { ...item, status, fileLink, completedDate, ownerIds } }
+}
+
+export function sameIds(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((id, i) => sameId(id, b[i]))
 }
 
 export function normaliseLink(link: string | null): string | null {

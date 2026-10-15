@@ -14,7 +14,9 @@ current phase is done. Neutral styling (Notion's own design tokens), no branding
   phases greyed out; plus the current gate (e.g. 2/3) and the handover pack
   (e.g. 13/16).
 - Requires a file link before an item can be marked Complete.
+- Allocates each item to an owner from a picker of workspace members.
 - Advances the project's Phase, ending at "Handed over".
+- Switches the interface between English and Vietnamese (EN / VI, top right). Data in Notion stays English.
 
 ## Use it
 
