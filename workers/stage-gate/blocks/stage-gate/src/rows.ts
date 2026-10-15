@@ -11,7 +11,7 @@ import type {
 } from "@notionhq/custom-blocks"
 
 import { CHECKLIST, FINAL_PHASE, PHASES, STATUS, type ChecklistItem } from "./checklist.ts"
-import type { Deliverable, Project } from "./gate.ts"
+import { sameIds, type Deliverable, type Project } from "./gate.ts"
 
 function asText(value: NotionDataSourceValue | undefined): string | null {
 	if (typeof value !== "string") return null
@@ -63,6 +63,7 @@ export function toDeliverable(row: NotionDataSourcePage): Deliverable {
 		status: asText(p.status),
 		completedDate: asDate(p.completedDate),
 		fileLink: asText(p.fileLink),
+		ownerIds: asIds(p.owner),
 		order: asNumber(p.order),
 	}
 }
@@ -72,13 +73,22 @@ const richText = (text: string) => ({
 	rich_text: [{ type: "text" as const, text: { content: text } }],
 })
 
-/** The fields an item edit owns, all written every time (see `applyChange`). */
-export function itemProperties(next: Deliverable): NotionPagePropertyInputMap {
-	return {
+/**
+ * The fields an item edit owns. Status, Completed date and File link are
+ * written every time (see `applyChange`). Owner is written **only when it
+ * changed**: the property can also hold groups or several people set in
+ * Notion, and rewriting it on every status click would flatten those.
+ */
+export function itemProperties(next: Deliverable, prev: Deliverable): NotionPagePropertyInputMap {
+	const properties: NotionPagePropertyInputMap = {
 		status: { type: "status", status: { name: next.status ?? STATUS.pending } },
 		completedDate: { type: "date", date: next.completedDate === null ? null : { start: next.completedDate } },
 		fileLink: { type: "url", url: next.fileLink },
 	}
+	if (!sameIds(next.ownerIds, prev.ownerIds)) {
+		properties.owner = { type: "people", people: next.ownerIds.map((id) => ({ object: "user" as const, id })) }
+	}
+	return properties
 }
 
 export function newProjectProperties(

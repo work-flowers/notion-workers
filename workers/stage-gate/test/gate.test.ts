@@ -29,6 +29,7 @@ function rows(projectId: string, done: string[], na: string[] = []): Deliverable
 		status: done.includes(c.key) ? STATUS.complete : na.includes(c.key) ? STATUS.na : STATUS.pending,
 		completedDate: null,
 		fileLink: done.includes(c.key) ? "https://example.com/file" : null,
+		ownerIds: [],
 		order: c.order,
 	}))
 }

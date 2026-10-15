@@ -11,6 +11,9 @@ export type SaveResult = { ok: true } | { ok: false; message: string }
 /** Optional descriptive fields on a new project; blank ones are left unset. */
 export type ProjectDetails = { make: string; model: string; variant: string }
 
+/** A workspace member the owner picker can offer. */
+export type Person = { id: string; name: string; email: string | null }
+
 export type CreateResult = { ok: true; id: string } | { ok: false; message: string }
 
 export type Store = {
@@ -21,6 +24,10 @@ export type Store = {
 	truncated: boolean
 	/** Human-readable binding gaps, shown as a banner. Empty when healthy. */
 	bindingProblems: string[]
+	/** Workspace members for the owner picker, sorted by name. */
+	people: Person[]
+	/** False when the Owner key isn't mapped; the picker is hidden rather than offered and ignored. */
+	ownerBound: boolean
 
 	/** Writes `next`'s status, completed date and file link (already validated by `applyChange`). */
 	updateItem: (item: Deliverable, next: Deliverable) => Promise<SaveResult>

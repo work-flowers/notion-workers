@@ -44,6 +44,12 @@ This file records only what's specific to this block.
   can't have its link removed. The rule applies to edits only: rows completed
   before it existed keep counting toward the gate and carry a *No file link*
   tag. Links are shown as text, not anchors, because the sandbox can't open them.
+- **Owner picker.** Each item has an owner dropdown fed by `users.list`
+  (paged, capped at 10 pages, 10 s timeout per page). Optional binding: with
+  Owner unmapped the picker is hidden. It sets one owner; a row holding several
+  people from Notion shows them all and keeps them until someone picks here.
+  Owner is written **only when it changed**, so status clicks never flatten
+  groups or multi-person values set in Notion.
 - **English / Vietnamese toggle (display only).** `i18n.ts` holds the UI
   strings and Vietnamese labels for the phases, the 16 items, formats and
   statuses. Everything written to Notion stays English, because option names

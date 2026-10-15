@@ -179,6 +179,10 @@ const en = {
 	noDeliverables: "This project has no deliverables yet.",
 	createChecklist: "Create checklist",
 	language: "Language",
+	owner: "Owner",
+	ownerOf: (item: string) => `Owner of ${item}`,
+	unassigned: "Unassigned",
+	unknownPerson: "Unknown person",
 }
 
 export type Strings = typeof en
@@ -257,6 +261,10 @@ const vi: Strings = {
 	noDeliverables: "Dự án này chưa có hạng mục nào.",
 	createChecklist: "Tạo danh mục",
 	language: "Ngôn ngữ",
+	owner: "Phụ trách",
+	ownerOf: (item: string) => `Người phụ trách ${item}`,
+	unassigned: "Chưa phân công",
+	unknownPerson: "Người dùng không xác định",
 }
 
 export const STRINGS: Record<Lang, Strings> = { en, vi }

@@ -126,6 +126,12 @@ worker.customBlock("stageGate", {
 						"URL. Where the file lives (workbook tab, server folder, PDM). Required before an item can be marked Complete.",
 					type: "url",
 				},
+				owner: {
+					name: "Owner",
+					description:
+						"Person. Optional. Who the item is allocated to; set from the owner picker on each item.",
+					type: "people",
+				},
 				order: {
 					name: "Order",
 					description: "Number. Position in the checklist.",

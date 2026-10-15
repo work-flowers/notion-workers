@@ -11,6 +11,7 @@ import {
 	normaliseLink,
 	phaseIndex,
 	sameId,
+	sameIds,
 	shouldSeed,
 	type Deliverable,
 	type ItemChange,
@@ -18,7 +19,10 @@ import {
 	type Project,
 } from "./gate.ts"
 import { initialLang, labels, LANGS, saveLang, STRINGS, type Labels, type Lang, type Strings } from "./i18n.ts"
-import { today, type ProjectDetails, type Store } from "./store.ts"
+import { today, type Person, type ProjectDetails, type Store } from "./store.ts"
+
+/** The owner picker's choices; `bound` is false when Owner isn't mapped, which hides the picker. */
+const People = createContext<{ people: Person[]; bound: boolean }>({ people: [], bound: false })
 
 /** UI strings (`t`) and data-label translator (`l`) for the viewer's language. */
 const I18n = createContext<{ lang: Lang; t: Strings; l: Labels }>({ lang: "en", t: STRINGS.en, l: labels("en") })
@@ -44,7 +48,7 @@ function LangToggle({ lang, onChange }: { lang: Lang; onChange: (lang: Lang) => 
 	)
 }
 
-type ItemOverride = Pick<Deliverable, "status" | "completedDate" | "fileLink">
+type ItemOverride = Pick<Deliverable, "status" | "completedDate" | "fileLink" | "ownerIds">
 
 type Seed =
 	| { projectId: string; state: "running"; created: number; total: number }
@@ -55,6 +59,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 	const [lang, setLangState] = useState<Lang>(initialLang)
 	const i18n = useMemo(() => ({ lang, t: STRINGS[lang], l: labels(lang) }), [lang])
 	const { t, l } = i18n
+	const peopleCtx = useMemo(() => ({ people: store.people, bound: store.ownerBound }), [store.people, store.ownerBound])
 	function setLang(next: Lang) {
 		setLangState(next)
 		saveLang(next)
@@ -94,7 +99,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 			let changed = false
 			for (const [id, o] of Object.entries(ov)) {
 				const row = store.deliverables.find((d) => d.id === id)
-				if (row && row.status === o.status && row.fileLink === o.fileLink) {
+				if (row && row.status === o.status && row.fileLink === o.fileLink && sameIds(row.ownerIds, o.ownerIds)) {
 					delete next[id]
 					changed = true
 				}
@@ -162,11 +167,18 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		const applied = applyChange(item, change, today())
 		if (!applied.ok) return t.needsLink
 		const { next } = applied
-		if (next.status === item.status && next.fileLink === item.fileLink) return null
+		if (next.status === item.status && next.fileLink === item.fileLink && sameIds(next.ownerIds, item.ownerIds)) {
+			return null
+		}
 		setError(null)
 		setStatusOv((ov) => ({
 			...ov,
-			[item.id]: { status: next.status, completedDate: next.completedDate, fileLink: next.fileLink },
+			[item.id]: {
+				status: next.status,
+				completedDate: next.completedDate,
+				fileLink: next.fileLink,
+				ownerIds: next.ownerIds,
+			},
 		}))
 		setSaving((s) => new Set(s).add(item.id))
 		const result = await store.updateItem(item, next)
@@ -205,6 +217,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 
 	return (
 		<I18n.Provider value={i18n}>
+		<People.Provider value={peopleCtx}>
 		<div className="sg" lang={lang}>
 			<div className="sg-topbar">
 				<LangToggle lang={lang} onChange={setLang} />
@@ -255,6 +268,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 				/>
 			)}
 		</div>
+		</People.Provider>
 		</I18n.Provider>
 	)
 }
@@ -685,6 +699,10 @@ function ItemRow(props: {
 		setMessage(error)
 	}
 
+	async function setOwner(ownerIds: string[]) {
+		setMessage(await props.onUpdate(item, { ownerIds }))
+	}
+
 	async function saveLink(e: React.FormEvent) {
 		e.preventDefault()
 		const change: ItemChange =
@@ -712,6 +730,7 @@ function ItemRow(props: {
 				</div>
 				{item.description && <div className="sg-item-desc">{l.description(item.key, item.description)}</div>}
 				<div className="sg-item-meta">
+					<OwnerPicker item={item} saving={props.saving} onChange={(ownerIds) => setOwner(ownerIds)} />
 					{item.format && <span>{l.format(item.format)}</span>}
 					{item.status === STATUS.complete && item.completedDate && (
 						<span>{t.completedOn(l.date(item.completedDate))}</span>
@@ -782,6 +801,52 @@ function ItemRow(props: {
 				))}
 			</div>
 		</li>
+	)
+}
+
+/**
+ * One owner per item. A row that already holds several people (set in Notion)
+ * shows them all and keeps them until someone picks a single owner here.
+ */
+function OwnerPicker(props: { item: Deliverable; saving: boolean; onChange: (ownerIds: string[]) => void }) {
+	const { people, bound } = useContext(People)
+	const { t, l } = useI18n()
+	if (!bound) return null
+	const { ownerIds } = props.item
+	const known = new Map(people.map((p) => [p.id.replace(/-/g, ""), p]))
+	const nameOf = (id: string) => known.get(id.replace(/-/g, ""))?.name ?? t.unknownPerson
+	const multiple = ownerIds.length > 1
+	const value = multiple ? "__multiple" : (ownerIds[0] ?? "")
+	// Keep an owner the list doesn't include (a guest, or names still loading) selectable as-is.
+	const extra = ownerIds.length === 1 && !known.has(ownerIds[0].replace(/-/g, "")) ? ownerIds[0] : null
+
+	return (
+		<label className={`sg-owner${ownerIds.length === 0 ? " sg-owner--empty" : ""}`}>
+			<span className="sg-owner-label">{t.owner}</span>
+			<select
+				value={value}
+				disabled={props.saving}
+				aria-label={t.ownerOf(l.item(props.item.key, props.item.item))}
+				onChange={(e) => {
+					const id = e.target.value
+					if (id === "__multiple") return
+					props.onChange(id ? [id] : [])
+				}}
+			>
+				<option value="">{t.unassigned}</option>
+				{multiple && (
+					<option value="__multiple" disabled>
+						{ownerIds.map(nameOf).join(", ")}
+					</option>
+				)}
+				{extra && <option value={extra}>{nameOf(extra)}</option>}
+				{people.map((p) => (
+					<option key={p.id} value={p.id}>
+						{p.name}
+					</option>
+				))}
+			</select>
+		</label>
 	)
 }
 
