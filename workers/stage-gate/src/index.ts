@@ -120,6 +120,18 @@ worker.customBlock("stageGate", {
 					description: "Date. Set when an item is marked Complete, cleared otherwise.",
 					type: "date",
 				},
+				itemVi: {
+					name: "Item (VI)",
+					description:
+						"Text. Optional. Vietnamese item name, typically an AI autofill property. Shown in Vietnamese mode; falls back to the built-in translation, then English.",
+					type: "rich_text",
+				},
+				descriptionVi: {
+					name: "Description (VI)",
+					description:
+						"Text. Optional. Vietnamese description, typically an AI autofill property. Same fallback as Item (VI).",
+					type: "rich_text",
+				},
 				fileLink: {
 					name: "File link",
 					description:

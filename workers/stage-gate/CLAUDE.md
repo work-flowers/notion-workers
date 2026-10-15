@@ -51,8 +51,14 @@ This file records only what's specific to this block.
   Owner is written **only when it changed**, so status clicks never flatten
   groups or multi-person values set in Notion.
 - **English / Vietnamese toggle (display only).** `i18n.ts` holds the UI
-  strings and Vietnamese labels for the phases, the 16 items, formats and
-  statuses. Everything written to Notion stays English, because option names
+  strings and Vietnamese labels for the phases, formats and statuses. Item
+  titles and descriptions come from the Deliverables **Item (VI)** /
+  **Description (VI)** properties (optional bindings `itemVi` /
+  `descriptionVi`), meant to be AI autofill properties so novel items get
+  translated too and people can correct a row in place. Order: stored property
+  → built-in translation (16 stock items only, a fallback until autofill has
+  run) → English. The API can't configure AI autofill; it was switched on in
+  the Notion UI. Everything written to Notion stays English, because option names
   must match the bound properties; translation is applied at render time by
   option name or `Item key`. A title or description someone edited in Notion is
   shown as written rather than replaced by the stock translation. The choice is

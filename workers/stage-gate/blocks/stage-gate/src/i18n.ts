@@ -1,6 +1,14 @@
 /**
  * English / Vietnamese display strings.
  *
+ * Record labels resolve in this order in Vietnamese mode:
+ *   1. the row's own `Item (VI)` / `Description (VI)` property (AI autofill,
+ *      or a person's correction),
+ *   2. the built-in translation below, for the 16 stock items only,
+ *   3. the English text as written.
+ * So novel items and edited titles are covered by the Notion properties, and
+ * the dictionary is only a fallback while autofill hasn't run yet.
+ *
  * **Display only.** Everything written to Notion stays in English — status,
  * select and phase option names must match the bound properties exactly, and
  * seeded item titles are the canonical English names. Translation happens at
@@ -293,13 +301,17 @@ export function labels(lang: Lang) {
 		 * carries the checklist's own English title, so a title someone edited in
 		 * Notion is shown as they wrote it rather than overwritten by the stock one.
 		 */
-		item(key: string | null, title: string): string {
-			if (lang === "en" || key === null) return title
+		item(key: string | null, title: string, stored: string | null = null): string {
+			if (lang === "en") return title
+			if (stored) return stored
+			if (key === null) return title
 			const stock = CHECKLIST.find((c) => c.key === key)
 			return stock && stock.item === title ? (ITEMS_VI[key]?.item ?? title) : title
 		},
-		description(key: string | null, text: string): string {
-			if (lang === "en" || key === null) return text
+		description(key: string | null, text: string, stored: string | null = null): string {
+			if (lang === "en") return text
+			if (stored) return stored
+			if (key === null) return text
 			const stock = CHECKLIST.find((c) => c.key === key)
 			return stock && stock.description === text ? (ITEMS_VI[key]?.description ?? text) : text
 		},

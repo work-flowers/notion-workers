@@ -35,3 +35,14 @@ test("phases, statuses and formats translate; unknown values pass through", () =
 test("both languages define every UI string", () => {
 	assert.deepEqual(Object.keys(STRINGS.vi).sort(), Object.keys(STRINGS.en).sort())
 })
+
+test("a stored Vietnamese label wins over the built-in one and covers novel items", () => {
+	assert.equal(vi.item("baseline_weights", "Baseline Weights", "Cân xe ban đầu"), "Cân xe ban đầu")
+	assert.equal(vi.item(null, "Exhaust heat shield check", "Kiểm tra tấm chắn nhiệt ống xả"), "Kiểm tra tấm chắn nhiệt ống xả")
+	assert.equal(vi.description("baseline_weights", "anything", "Mô tả"), "Mô tả")
+	// Autofill hasn't run yet: built-in for stock items, English for the rest.
+	assert.equal(vi.item("baseline_weights", "Baseline Weights", null), "Trọng lượng ban đầu")
+	assert.equal(vi.item(null, "Exhaust heat shield check", null), "Exhaust heat shield check")
+	// English mode ignores stored Vietnamese.
+	assert.equal(en.item("baseline_weights", "Baseline Weights", "Cân xe ban đầu"), "Baseline Weights")
+})

@@ -31,6 +31,9 @@ export type Deliverable = {
 	phase: string | null
 	category: string | null
 	description: string | null
+	/** Vietnamese labels stored on the row (AI autofill or hand-corrected); null when empty or unmapped. */
+	itemVi: string | null
+	descriptionVi: string | null
 	format: string | null
 	mandatory: boolean
 	status: string | null

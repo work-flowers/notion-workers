@@ -58,6 +58,8 @@ export function toDeliverable(row: NotionDataSourcePage): Deliverable {
 		phase: asText(p.phase),
 		category: asText(p.category),
 		description: asText(p.description),
+		itemVi: asText(p.itemVi),
+		descriptionVi: asText(p.descriptionVi),
 		format: asText(p.format),
 		mandatory: p.mandatory === true,
 		status: asText(p.status),

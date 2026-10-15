@@ -29,6 +29,8 @@ const item: Deliverable = {
 	phase: null,
 	category: null,
 	description: null,
+	itemVi: null,
+	descriptionVi: null,
 	format: null,
 	mandatory: true,
 	status: STATUS.pending,

@@ -189,7 +189,7 @@ export function App({ store, contextProjectId }: { store: Store; contextProjectI
 		})
 		if (!result.ok) {
 			setStatusOv(({ [item.id]: _dropped, ...rest }) => rest)
-			setError(t.couldntUpdate(l.item(item.key, item.item), result.message))
+			setError(t.couldntUpdate(l.item(item.key, item.item, item.itemVi), result.message))
 			return result.message
 		}
 		return null
@@ -677,7 +677,7 @@ function ItemRow(props: {
 }) {
 	const { item } = props
 	const { t, l } = useI18n()
-	const title = l.item(item.key, item.item)
+	const title = l.item(item.key, item.item, item.itemVi)
 	const done = item.status === STATUS.complete || item.status === STATUS.na
 	// "complete": the editor was opened by clicking Complete without a link.
 	const [editing, setEditing] = useState<null | "edit" | "complete">(null)
@@ -728,7 +728,7 @@ function ItemRow(props: {
 					{!item.mandatory && <span className="sg-tag">{t.optional}</span>}
 					{missingEvidence(item) && <span className="sg-tag sg-tag--warn">{t.noFileLink}</span>}
 				</div>
-				{item.description && <div className="sg-item-desc">{l.description(item.key, item.description)}</div>}
+				{item.description && <div className="sg-item-desc">{l.description(item.key, item.description, item.descriptionVi)}</div>}
 				<div className="sg-item-meta">
 					<OwnerPicker item={item} saving={props.saving} onChange={(ownerIds) => setOwner(ownerIds)} />
 					{item.format && <span>{l.format(item.format)}</span>}
@@ -826,7 +826,7 @@ function OwnerPicker(props: { item: Deliverable; saving: boolean; onChange: (own
 			<select
 				value={value}
 				disabled={props.saving}
-				aria-label={t.ownerOf(l.item(props.item.key, props.item.item))}
+				aria-label={t.ownerOf(l.item(props.item.key, props.item.item, props.item.itemVi))}
 				onChange={(e) => {
 					const id = e.target.value
 					if (id === "__multiple") return
