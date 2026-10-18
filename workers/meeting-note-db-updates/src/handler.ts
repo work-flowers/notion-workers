@@ -225,8 +225,7 @@ async function resolveAttendees(
  * Copy each Contact's `Related Company` and `Deals` relations so they can be
  * written onto the Meeting Note's own `Companies` / `Deals` properties. The
  * native "link Deals/Companies from Contacts" DB automation doesn't fire on
- * this worker's API-driven update (same reason the icon sync below is an
- * explicit webhook call), so the worker does the linking itself.
+ * this worker's API-driven update, so the worker does the linking itself.
  *
  * Deals are filtered to open stages only — see filterOpenDeals.
  *
@@ -442,6 +441,10 @@ export async function handlePageCreated(
 		...eventCandidates,
 	]);
 
+	// Internal Attendees and Date are bound to the meeting note by the typed
+	// Meetings database (since 2026-10-18), but the bound Date carries only the
+	// start time. Write Date again so it also has the end time; Internal
+	// Attendees is left to the binding.
 	const properties: Record<string, any> = {
 		Date: { date: { start: start_time, end: end_time ?? null } },
 	};
@@ -487,13 +490,7 @@ export async function handlePageCreated(
 			`Contact relations: ${companyIds.length} company(ies), ${dealIds.length} deal(s)`,
 		);
 	}
-	if (internalUserIds.length > 0) {
-		properties["Internal Attendees"] = {
-			people: internalUserIds.map((id) => ({ id })),
-		};
-	}
-
-	// Silent: setting Internal Attendees would otherwise notify every attendee.
+	// Silent, so the worker's edits don't notify anyone.
 	await updatePage(pageId, { properties });
 	console.log(
 		`Updated ${pageId}: event=${event?.id ?? "none"}, contacts=${contactPageIds.length}, internal=${internalUserIds.length}`,
@@ -539,30 +536,6 @@ export async function handlePageCreated(
 		}
 	} else if (page?.type) {
 		console.log(`Type already set to "${page.type}"; not classifying.`);
-	}
-
-	// Notion DB automations don't reliably fire on API-driven property updates,
-	// and the native "set Companies from Contacts" automation can't cascade-trigger
-	// other automations. Explicitly POST to the icon-sync worker so it can copy
-	// the related Company's icon onto this Meeting Note.
-	const iconSyncUrl = process.env.ICON_SYNC_WEBHOOK_URL;
-	if (iconSyncUrl) {
-		try {
-			const res = await fetch(iconSyncUrl, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ page_id: pageId }),
-			});
-			if (!res.ok) {
-				console.log(
-					`Icon sync webhook returned ${res.status} for ${pageId}`,
-				);
-			}
-		} catch (err) {
-			console.log(
-				`Icon sync webhook failed for ${pageId}: ${(err as Error)?.message ?? err}`,
-			);
-		}
 	}
 
 	// Keyed on the occurrence id (`event.id`), never the iCalUID — the iCalUID is
