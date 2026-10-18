@@ -72,8 +72,24 @@ export async function updatePage(
 	pageId: string,
 	body: Record<string, unknown>,
 ): Promise<any> {
-	return await call("PATCH", `pages/${pageId}`, {
-		notifications: SILENT_NOTIFICATIONS,
-		...body,
-	});
+	try {
+		return await call("PATCH", `pages/${pageId}`, {
+			notifications: SILENT_NOTIFICATIONS,
+			...body,
+		});
+	} catch (err) {
+		// Pages in a typed Meetings database are full-page meeting notes, and the
+		// API rejects `notifications` on them ("Full-page meeting notes cannot be
+		// changed with generic page update fields") while accepting the same
+		// `properties` without it. Retry without it — such a write may notify.
+		// (Learned 2026-10-18.)
+		if (!String((err as Error)?.message).includes(FULL_PAGE_MEETING_NOTE_ERROR)) {
+			throw err;
+		}
+		const { notifications: _omit, ...rest } = body;
+		return await call("PATCH", `pages/${pageId}`, rest);
+	}
 }
+
+const FULL_PAGE_MEETING_NOTE_ERROR =
+	"Full-page meeting notes cannot be changed with generic page update fields";
