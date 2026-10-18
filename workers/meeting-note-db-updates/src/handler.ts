@@ -356,7 +356,7 @@ export async function handlePageCreated(
 		return;
 	}
 
-	const { start_time, attendees = [] } =
+	const { start_time, end_time, attendees = [] } =
 		meetingNotesBlock.calendar_event;
 	console.log(
 		`meeting_notes block found: title="${meetingNotesBlock.title}", start=${start_time}, attendees=${attendees.length}`,
@@ -441,9 +441,13 @@ export async function handlePageCreated(
 		...eventCandidates,
 	]);
 
-	// Date and Internal Attendees are bound to the meeting note by the typed
-	// Meetings database (since 2026-10-18), so the worker no longer writes them.
-	const properties: Record<string, any> = {};
+	// Internal Attendees and Date are bound to the meeting note by the typed
+	// Meetings database (since 2026-10-18), but the bound Date carries only the
+	// start time. Write Date again so it also has the end time; Internal
+	// Attendees is left to the binding.
+	const properties: Record<string, any> = {
+		Date: { date: { start: start_time, end: end_time ?? null } },
+	};
 	if (event) {
 		properties["Google Calendar Event ID"] = {
 			rich_text: [{ type: "text", text: { content: event.id } }],
