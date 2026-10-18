@@ -43,6 +43,23 @@ async function findMeetingNotesBlock(
 	const token = process.env.NOTION_API_TOKEN;
 	if (!token) throw new Error("NOTION_API_TOKEN is not configured");
 
+	// In a typed Meetings database the page itself is the meeting note: the
+	// page id is a `meeting_note_page` block id, and its children are only the
+	// note's contents.
+	const pageRes = await fetch(`https://api.notion.com/v1/blocks/${pageId}`, {
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"Notion-Version": "2026-03-11",
+		},
+	});
+	if (!pageRes.ok) {
+		throw new Error(`Notion blocks.retrieve failed: ${pageRes.status} ${await pageRes.text()}`);
+	}
+	const pageBlock = (await pageRes.json()) as any;
+	if (isMeetingNotePage(pageBlock)) {
+		return toMeetingNotesBlock(await queryMeetingNoteBlock(token, pageBlock));
+	}
+
 	let cursor: string | undefined;
 	do {
 		const query = new URLSearchParams({ page_size: "100" });
@@ -60,17 +77,22 @@ async function findMeetingNotesBlock(
 		}
 		const resp = (await res.json()) as any;
 		for (const raw of resp.results ?? []) {
-			const block =
-				raw.type === "unsupported" &&
-				raw.unsupported?.block_type === "meeting_note_page"
-					? await queryMeetingNoteBlock(token, raw)
-					: raw;
+			const block = isMeetingNotePage(raw)
+				? await queryMeetingNoteBlock(token, raw)
+				: raw;
 			const found = toMeetingNotesBlock(block);
 			if (found) return found;
 		}
 		cursor = resp.has_more ? resp.next_cursor : undefined;
 	} while (cursor);
 	return null;
+}
+
+function isMeetingNotePage(block: any): boolean {
+	return (
+		block?.type === "unsupported" &&
+		block.unsupported?.block_type === "meeting_note_page"
+	);
 }
 
 function toMeetingNotesBlock(block: any): MeetingNotesBlock | null {
@@ -89,7 +111,9 @@ function toMeetingNotesBlock(block: any): MeetingNotesBlock | null {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Some meeting notes are stored as a `meeting_note_page` block, which
+ * Meeting notes in a typed Meetings database are stored as a
+ * `meeting_note_page` block (the page itself; also seen once as a child block
+ * just before the database was converted), which
  * `GET /v1/blocks/{id}/children` and `GET /v1/blocks/{id}` return as
  * `unsupported` with no calendar data — even though the note is linked to a
  * calendar event in the app. `POST /v1/blocks/meeting_notes/query` returns the

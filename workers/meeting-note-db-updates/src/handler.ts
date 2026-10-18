@@ -357,7 +357,7 @@ export async function handlePageCreated(
 		return;
 	}
 
-	const { start_time, end_time, attendees = [] } =
+	const { start_time, attendees = [] } =
 		meetingNotesBlock.calendar_event;
 	console.log(
 		`meeting_notes block found: title="${meetingNotesBlock.title}", start=${start_time}, attendees=${attendees.length}`,
@@ -442,9 +442,9 @@ export async function handlePageCreated(
 		...eventCandidates,
 	]);
 
-	const properties: Record<string, any> = {
-		Date: { date: { start: start_time, end: end_time ?? null } },
-	};
+	// Date and Internal Attendees are bound to the meeting note by the typed
+	// Meetings database (since 2026-10-18), so the worker no longer writes them.
+	const properties: Record<string, any> = {};
 	if (event) {
 		properties["Google Calendar Event ID"] = {
 			rich_text: [{ type: "text", text: { content: event.id } }],
@@ -487,13 +487,7 @@ export async function handlePageCreated(
 			`Contact relations: ${companyIds.length} company(ies), ${dealIds.length} deal(s)`,
 		);
 	}
-	if (internalUserIds.length > 0) {
-		properties["Internal Attendees"] = {
-			people: internalUserIds.map((id) => ({ id })),
-		};
-	}
-
-	// Silent: setting Internal Attendees would otherwise notify every attendee.
+	// Silent, so the worker's edits don't notify anyone.
 	await updatePage(pageId, { properties });
 	console.log(
 		`Updated ${pageId}: event=${event?.id ?? "none"}, contacts=${contactPageIds.length}, internal=${internalUserIds.length}`,
