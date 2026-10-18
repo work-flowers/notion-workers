@@ -16,5 +16,3 @@ ZAPIER_CLIENT_SECRET=op://Shared/zapier-workflowers/client secret
 #   https://www.notion.so/profile/integrations/internal
 # NOTION_API_TOKEN=
 
-# Optional: icon-sync webhook the handler POSTs to after updating a Meeting Note.
-# ICON_SYNC_WEBHOOK_URL=

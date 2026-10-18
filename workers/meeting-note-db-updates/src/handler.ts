@@ -225,8 +225,7 @@ async function resolveAttendees(
  * Copy each Contact's `Related Company` and `Deals` relations so they can be
  * written onto the Meeting Note's own `Companies` / `Deals` properties. The
  * native "link Deals/Companies from Contacts" DB automation doesn't fire on
- * this worker's API-driven update (same reason the icon sync below is an
- * explicit webhook call), so the worker does the linking itself.
+ * this worker's API-driven update, so the worker does the linking itself.
  *
  * Deals are filtered to open stages only — see filterOpenDeals.
  *
@@ -533,30 +532,6 @@ export async function handlePageCreated(
 		}
 	} else if (page?.type) {
 		console.log(`Type already set to "${page.type}"; not classifying.`);
-	}
-
-	// Notion DB automations don't reliably fire on API-driven property updates,
-	// and the native "set Companies from Contacts" automation can't cascade-trigger
-	// other automations. Explicitly POST to the icon-sync worker so it can copy
-	// the related Company's icon onto this Meeting Note.
-	const iconSyncUrl = process.env.ICON_SYNC_WEBHOOK_URL;
-	if (iconSyncUrl) {
-		try {
-			const res = await fetch(iconSyncUrl, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ page_id: pageId }),
-			});
-			if (!res.ok) {
-				console.log(
-					`Icon sync webhook returned ${res.status} for ${pageId}`,
-				);
-			}
-		} catch (err) {
-			console.log(
-				`Icon sync webhook failed for ${pageId}: ${(err as Error)?.message ?? err}`,
-			);
-		}
 	}
 
 	// Keyed on the occurrence id (`event.id`), never the iCalUID — the iCalUID is
