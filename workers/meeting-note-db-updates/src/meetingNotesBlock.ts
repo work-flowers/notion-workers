@@ -59,23 +59,86 @@ async function findMeetingNotesBlock(
 			throw new Error(`Notion blocks.children.list failed: ${res.status} ${await res.text()}`);
 		}
 		const resp = (await res.json()) as any;
-		for (const block of resp.results ?? []) {
-			if (block.type === "meeting_notes") {
-				const calendarEvent = block.meeting_notes?.calendar_event;
-				if (calendarEvent?.start_time) {
-					return {
-						id: block.id,
-						title: (block.meeting_notes?.title ?? [])
-							.map((t: any) => t.plain_text ?? "")
-							.join(""),
-						calendar_event: calendarEvent,
-					};
-				}
-			}
+		for (const raw of resp.results ?? []) {
+			const block =
+				raw.type === "unsupported" &&
+				raw.unsupported?.block_type === "meeting_note_page"
+					? await queryMeetingNoteBlock(token, raw)
+					: raw;
+			const found = toMeetingNotesBlock(block);
+			if (found) return found;
 		}
 		cursor = resp.has_more ? resp.next_cursor : undefined;
 	} while (cursor);
 	return null;
+}
+
+function toMeetingNotesBlock(block: any): MeetingNotesBlock | null {
+	if (block?.type !== "meeting_notes") return null;
+	const calendarEvent = block.meeting_notes?.calendar_event;
+	if (!calendarEvent?.start_time) return null;
+	return {
+		id: block.id,
+		title: (block.meeting_notes?.title ?? [])
+			.map((t: any) => t.plain_text ?? "")
+			.join(""),
+		calendar_event: calendarEvent,
+	};
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Some meeting notes are stored as a `meeting_note_page` block, which
+ * `GET /v1/blocks/{id}/children` and `GET /v1/blocks/{id}` return as
+ * `unsupported` with no calendar data — even though the note is linked to a
+ * calendar event in the app. `POST /v1/blocks/meeting_notes/query` returns the
+ * same block as a full `meeting_notes` block, calendar_event included. That
+ * endpoint has no id filter, so narrow to the block's creation date (±1 day,
+ * since the filter takes a bare date) and match on id. It only returns notes
+ * the integration can see; the worker's token can. (Seen first 2026-10-18.)
+ */
+async function queryMeetingNoteBlock(token: string, block: any): Promise<any> {
+	const created = new Date(block.created_time).getTime();
+	const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+	const dateFilter = (operator: string, ms: number) => ({
+		property: "created_time",
+		filter: {
+			operator,
+			value: { type: "exact", value: { type: "date", start_date: day(ms) } },
+		},
+	});
+	const res = await fetch("https://api.notion.com/v1/blocks/meeting_notes/query", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"Notion-Version": "2026-03-11",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			// A single property filter at the root is rejected (400 "filter.operator
+			// should be defined"), despite the docs; wrap it in a combinator.
+			filter: {
+				operator: "and",
+				filters: [
+					dateFilter("date_is_on_or_after", created - DAY_MS),
+					dateFilter("date_is_on_or_before", created + DAY_MS),
+				],
+			},
+			limit: 50,
+		}),
+	});
+	if (!res.ok) {
+		throw new Error(`Notion meeting_notes query failed: ${res.status} ${await res.text()}`);
+	}
+	const resp = (await res.json()) as any;
+	const match = (resp.results ?? []).find((b: any) => b.id === block.id);
+	if (!match) {
+		console.log(
+			`meeting_note_page block ${block.id} not returned by meeting_notes query`,
+		);
+	}
+	return match ?? block;
 }
 
 function sleep(ms: number): Promise<void> {
