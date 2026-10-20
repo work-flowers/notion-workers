@@ -370,14 +370,18 @@ async function createNotionContact(
 	const properties: Record<string, any> = {
 		[PRIMARY_EMAIL_PROPERTY]: { email },
 	};
-	// Without this the Contact's title stays empty and the row reads as its own
-	// email address in every view and relation. Values passed here are merged
-	// into whatever the template sets.
-	if (name) {
-		properties[NAME_PROPERTY] = {
-			title: [{ type: "text", text: { content: name.slice(0, 2000) } }],
-		};
-	}
+	// Always set the title; values passed here are merged into whatever the
+	// template sets. With no name it is the address itself: left empty, the
+	// template's own title ("New Contact") shows through, and the zapier-sdk
+	// enrich-contact-records durable reads that as a person's name. On
+	// 2026-09-28 it asked BetterContact for "New Contact" at du.edu and wrote
+	// back a guessed new.contact@du.edu. An address title is the convention
+	// enrichment already reads as "no name". (Four attendees of one meeting
+	// note were created as "New Contact" on 2026-10-20.)
+	const title = name?.trim() || email;
+	properties[NAME_PROPERTY] = {
+		title: [{ type: "text", text: { content: title.slice(0, 2000) } }],
+	};
 	const page = await createPage({
 		parent: { data_source_id: dataSourceId },
 		properties,
