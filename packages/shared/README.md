@@ -8,7 +8,7 @@ Shared TypeScript helpers for work.flowers [Notion Workers](https://developers.n
   1. Drop internal-domain and blocklisted addresses (Zapier table blocklist, exact + substring).
   2. Match remaining addresses against existing Contacts on **Primary Email** (email property) *or* **Secondary Email** (multi-select).
   3. Any address that matched **no** existing Contact is run through the AI-by-Zapier classifier (individual vs. service account). This gates *every* contact creation.
-  4. Create Contact pages only for addresses classified as individuals (capped per run, default 10).
+  4. Create Contact pages only for addresses classified as individuals (capped per run, default 10). The title is the person's name when one is known, otherwise the email address — never left empty, because the Contacts template's own title ("New Contact") would show through and be read as a name by the `enrich-contact-records` durable.
 - **`internalUsers`** — `buildInternalUserMap(notion)` (workspace email → user-id map via `users.list`) and `resolveInternalUserIds(emails, map)`.
 - **`notionRaw`** — raw `fetch` helpers for endpoints the SDK doesn't cover at `Notion-Version: 2026-03-11`: `queryDataSource(dataSourceId, body)` and `createPage(body)`. Requires `NOTION_API_TOKEN` in the environment.
 
