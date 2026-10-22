@@ -148,6 +148,31 @@ Known limits, none fixable from calendar data alone:
 - **A contractor on a work.flowers address is a teammate to Jev** (Seth Lee, labelled Vendor: 1:1 0.98).
 - **The labels themselves disagree.** The same Knoxx stand-up is labelled Event, Team and Client on different days; Jev now calls it Client. Treat agreement figures as a floor.
 
+## The Meetings-typed database
+
+Meeting Notes is now a **Meetings-typed** database. Each row *is* the meeting note: the page is no longer a wrapper around a `meeting_notes` child block. The API exposes this shape differently, and the calendar link sits mostly out of reach. Checked against a live note on 2026-10-22 with `Notion-Version: 2026-03-11`:
+
+| What | How the API exposes it | Read | Write |
+| --- | --- | --- | --- |
+| **Event** property (the linked calendar event shown in the app) | Absent from `GET /v1/pages/{id}`, `GET /v1/data_sources/{id}` and the Notion MCP `fetch` schema | No | No |
+| The page as a block | `GET /v1/blocks/{page_id}` returns `type: "unsupported"` with `unsupported.block_type: "meeting_note_page"` and no event data | — | — |
+| Event times and attendees | `POST /v1/blocks/meeting_notes/query` returns the same id as a full `meeting_notes` block: `calendar_event { start_time, end_time, attendees[] }` (Notion user IDs), `status`, `title`, `children.notes_block_id` | Yes | No |
+| `Date` | An ordinary date property. On the sampled note it equalled `calendar_event`'s start and end | Yes | Yes |
+
+- **The link to a calendar event can only be changed in the app.** The request schema for `PATCH /v1/blocks/{id}` has no `meeting_notes` or `calendar_event`. `PATCH /v1/pages/{id}` can't name a property the API never returns. `POST /v1/blocks/meeting_notes` accepts a `calendar_event` when it *creates* a note, but whether that links to a real calendar event is untested.
+- **The API returns no event identifier.** That's why step 3 matches the Google event by start time and title, and why this Worker writes `Google Calendar Event ID` itself.
+- **The query endpoint has no id filter.** [`meetingNotesBlock.ts`](src/meetingNotesBlock.ts) narrows by creation date and matches on id. A single property filter at the root of the query returns 400 (`filter.operator should be defined`), so wrap it in an `and`.
+- **Notion MCP** shows the note as `<meeting-notes attendees="…">`: attendees only, with no times and no event.
+- The **Type** select also has an `Event` option. It's a meeting category and has nothing to do with the Event property.
+
+To inspect a note yourself (`ntn api` uses your `ntn login`):
+
+```bash
+ntn api /v1/pages/<page-id>
+ntn api /v1/blocks/<page-id>
+ntn api /v1/blocks/meeting_notes/query -X POST -d '{"filter":{"operator":"and","filters":[{"property":"created_time","filter":{"operator":"date_is_on_or_after","value":{"type":"exact","value":{"type":"date","start_date":"<YYYY-MM-DD>"}}}}]},"limit":50}'
+```
+
 ## Operating notes
 
 - The Worker waits up to ~90s for the `meeting_notes` block to appear (Notion populates it asynchronously after page creation). If the block never appears, the run is a no-op — same behaviour as the Zap's "Only continue if found" filter.
