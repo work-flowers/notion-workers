@@ -32,6 +32,17 @@ const EMAIL_ANALYTICS_DATA_SOURCE = "c039fc57-f1f5-45d9-9c89-79dd7720eeed";
 const NEWSLETTER_ISSUES_DATA_SOURCE = "0c691b07-11ac-82fa-bc1b-07d0186a095d";
 const ISSUE_RELATION_PROPERTY = "Newsletter Issue";
 
+/**
+ * The engagement database gets the same treatment: a hand-added `Newsletter
+ * Issue` relation (joined on `Email ID`) and a hand-added `Contact` relation to
+ * the CRM's Contacts, joined on the subscriber's address against Contacts'
+ * Primary/Secondary Email. Empty until the database exists — pin its data source
+ * id after the first deploy creates it; linking is skipped until then.
+ */
+const ENGAGEMENT_DATA_SOURCE = "";
+const CONTACTS_DATA_SOURCE = "21991b07-11ac-81a6-a894-000be4a09a67";
+const CONTACT_RELATION_PROPERTY = "Contact";
+
 /** Data-source endpoints need this version; 2022-06-28 only knows databases. */
 const NOTION_VERSION = "2026-03-11";
 
@@ -81,32 +92,9 @@ function plainText(property: any): string {
 		.trim();
 }
 
-/**
- * Point every analytics row at its newsletter issue.
- *
- * Only rows whose relation is missing or wrong are written, so this is cheap to
- * repeat and self-healing: if a row is ever deleted and re-created by a replace
- * cycle, losing its relation, the next pass restores it.
- */
-async function linkIssueRelations(): Promise<void> {
-	const schema = await notion(`/data_sources/${EMAIL_ANALYTICS_DATA_SOURCE}`);
-	const property = schema.properties?.[ISSUE_RELATION_PROPERTY];
-	if (property?.type !== "relation") {
-		// The property is hand-added, so treat its absence as "not set up" rather
-		// than an error — the analytics sync itself is unaffected either way.
-		console.log(
-			`Skipping issue linking: "${ISSUE_RELATION_PROPERTY}" is ${
-				property ? `a ${property.type}` : "missing"
-			}.`,
-		);
-		return;
-	}
-
-	const [analytics, issues] = await Promise.all([
-		queryDataSource(EMAIL_ANALYTICS_DATA_SOURCE),
-		queryDataSource(NEWSLETTER_ISSUES_DATA_SOURCE),
-	]);
-
+/** Buttondown email id → Newsletter Issues page id. */
+async function issuePagesByButtondownId(): Promise<Map<string, string>> {
+	const issues = await queryDataSource(NEWSLETTER_ISSUES_DATA_SOURCE);
 	const issueByButtondownId = new Map<string, string>();
 	for (const issue of issues) {
 		const buttondownId = plainText(issue.properties["Buttondown ID"]);
@@ -116,6 +104,75 @@ async function linkIssueRelations(): Promise<void> {
 			issueByButtondownId.set(buttondownId, issue.id);
 		}
 	}
+	return issueByButtondownId;
+}
+
+/**
+ * Names of the hand-added relation properties among `wanted` that actually exist
+ * on the data source. A missing one is "not set up" rather than an error — the
+ * sync itself is unaffected either way.
+ */
+async function existingRelations(
+	dataSourceId: string,
+	wanted: string[],
+): Promise<string[]> {
+	const schema = await notion(`/data_sources/${dataSourceId}`);
+	return wanted.filter((name) => {
+		const property = schema.properties?.[name];
+		if (property?.type === "relation") return true;
+		console.log(
+			`Skipping "${name}" linking: it is ${
+				property ? `a ${property.type}` : "missing"
+			}.`,
+		);
+		return false;
+	});
+}
+
+/**
+ * Write the given single-page relations on a row, skipping any already correct.
+ * Returns how many properties changed.
+ */
+async function setRelations(
+	row: any,
+	targets: Record<string, string | undefined>,
+): Promise<number> {
+	const properties: Record<string, unknown> = {};
+	for (const [name, pageId] of Object.entries(targets)) {
+		if (!pageId) continue;
+		if (row.properties[name]?.relation?.[0]?.id === pageId) continue;
+		properties[name] = { relation: [{ id: pageId }] };
+	}
+	const changed = Object.keys(properties).length;
+	if (changed === 0) return 0;
+	await notion(`/pages/${row.id}`, {
+		method: "PATCH",
+		body: JSON.stringify({
+			properties,
+			// Silent: suppresses page-update notifications for the change.
+			notifications: { mode: "silent" },
+		}),
+	});
+	return changed;
+}
+
+/**
+ * Point every analytics row at its newsletter issue.
+ *
+ * Only rows whose relation is missing or wrong are written, so this is cheap to
+ * repeat and self-healing: if a row is ever deleted and re-created by a replace
+ * cycle, losing its relation, the next pass restores it.
+ */
+async function linkIssueRelations(): Promise<void> {
+	const relations = await existingRelations(EMAIL_ANALYTICS_DATA_SOURCE, [
+		ISSUE_RELATION_PROPERTY,
+	]);
+	if (relations.length === 0) return;
+
+	const [analytics, issueByButtondownId] = await Promise.all([
+		queryDataSource(EMAIL_ANALYTICS_DATA_SOURCE),
+		issuePagesByButtondownId(),
+	]);
 
 	let linked = 0;
 	let unmatched = 0;
@@ -129,24 +186,102 @@ async function linkIssueRelations(): Promise<void> {
 			unmatched += 1;
 			continue;
 		}
-		const current = row.properties[ISSUE_RELATION_PROPERTY]?.relation?.[0]?.id;
-		if (current === issuePageId) continue;
-		await notion(`/pages/${row.id}`, {
-			method: "PATCH",
-			body: JSON.stringify({
-				properties: {
-					[ISSUE_RELATION_PROPERTY]: { relation: [{ id: issuePageId }] },
-				},
-				// Silent: suppresses page-update notifications for the change.
-				notifications: { mode: "silent" },
-			}),
-		});
-		linked += 1;
+		if (await setRelations(row, { [ISSUE_RELATION_PROPERTY]: issuePageId })) {
+			linked += 1;
+		}
 	}
 
 	if (linked > 0 || unmatched > 0) {
 		console.log(
 			`Issue linking: ${linked} linked, ${unmatched} with no matching issue page.`,
+		);
+	}
+}
+
+/** Lower-cased addresses on a Contacts page: Primary Email, then Secondary Email. */
+function contactEmails(page: any): string[] {
+	const props = page.properties ?? {};
+	const emails: string[] = [];
+	const primary = props["Primary Email"]?.email;
+	if (typeof primary === "string" && primary.trim()) {
+		emails.push(primary.trim().toLowerCase());
+	}
+	// Secondary Email is a multi_select whose option names are addresses.
+	for (const option of props["Secondary Email"]?.multi_select ?? []) {
+		if (typeof option?.name === "string" && option.name.includes("@")) {
+			emails.push(option.name.trim().toLowerCase());
+		}
+	}
+	return emails;
+}
+
+/**
+ * Email address → Contacts page id. An address on more than one contact maps to
+ * `null`: linking either would be a guess, so those rows are left unlinked.
+ */
+async function contactPagesByEmail(): Promise<Map<string, string | null>> {
+	const contacts = await queryDataSource(CONTACTS_DATA_SOURCE);
+	const byEmail = new Map<string, string | null>();
+	for (const contact of contacts) {
+		for (const email of new Set(contactEmails(contact))) {
+			byEmail.set(email, byEmail.has(email) ? null : contact.id);
+		}
+	}
+	return byEmail;
+}
+
+/**
+ * Point every engagement row at its newsletter issue and its contact. Same
+ * contract as `linkIssueRelations`: only missing or wrong relations are written.
+ */
+async function linkEngagementRelations(): Promise<void> {
+	if (!ENGAGEMENT_DATA_SOURCE) {
+		console.log(
+			"Skipping engagement linking: ENGAGEMENT_DATA_SOURCE is not pinned yet.",
+		);
+		return;
+	}
+	const relations = await existingRelations(ENGAGEMENT_DATA_SOURCE, [
+		ISSUE_RELATION_PROPERTY,
+		CONTACT_RELATION_PROPERTY,
+	]);
+	if (relations.length === 0) return;
+
+	const [rows, issueByButtondownId, contactByEmail] = await Promise.all([
+		queryDataSource(ENGAGEMENT_DATA_SOURCE),
+		relations.includes(ISSUE_RELATION_PROPERTY)
+			? issuePagesByButtondownId()
+			: new Map<string, string>(),
+		relations.includes(CONTACT_RELATION_PROPERTY)
+			? contactPagesByEmail()
+			: new Map<string, string | null>(),
+	]);
+
+	let written = 0;
+	let noContact = 0;
+	let ambiguousContact = 0;
+	for (const row of rows) {
+		const targets: Record<string, string | undefined> = {};
+		if (relations.includes(ISSUE_RELATION_PROPERTY)) {
+			targets[ISSUE_RELATION_PROPERTY] = issueByButtondownId.get(
+				plainText(row.properties["Email ID"]),
+			);
+		}
+		if (relations.includes(CONTACT_RELATION_PROPERTY)) {
+			const email = (row.properties["Subscriber Email"]?.email ?? "")
+				.trim()
+				.toLowerCase();
+			const contactId = email ? contactByEmail.get(email) : undefined;
+			if (contactId === null) ambiguousContact += 1;
+			else if (contactId === undefined) noContact += 1;
+			targets[CONTACT_RELATION_PROPERTY] = contactId ?? undefined;
+		}
+		written += await setRelations(row, targets);
+	}
+
+	if (written > 0 || noContact > 0 || ambiguousContact > 0) {
+		console.log(
+			`Engagement linking: ${written} relations written, ${noContact} rows with no matching contact, ${ambiguousContact} matching more than one contact.`,
 		);
 	}
 }
@@ -375,6 +510,235 @@ worker.sync("emailAnalyticsSync", {
 			changes,
 			hasMore,
 			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+
+/**
+ * One row per (sent email, subscriber): when the email reached them and whether
+ * they opened or clicked it. Built from Buttondown's per-subscriber `/events`,
+ * aggregated here rather than stored raw so a subscriber's clicks on one email
+ * stay one row.
+ *
+ * `Newsletter Issue` and `Contact` are hand-added relations, set through the API
+ * by `linkEngagementRelations` for the same reason as on the analytics database.
+ */
+const engagement = worker.database("buttondownSubscriberEngagement", {
+	type: "managed",
+	initialTitle: "Buttondown subscriber engagement",
+	primaryKeyProperty: "Engagement ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"Engagement ID": Schema.richText(),
+			"Email ID": Schema.richText(),
+			Subject: Schema.richText(),
+			"Subscriber ID": Schema.richText(),
+			"Subscriber Email": Schema.email(),
+			Sent: Schema.date(),
+			Delivered: Schema.date(),
+			"First Opened": Schema.date(),
+			"First Clicked": Schema.date(),
+			Opens: Schema.number(),
+			Clicks: Schema.number(),
+		},
+	},
+});
+
+/** Event types folded into a row; anything else Buttondown reports is ignored. */
+const ENGAGEMENT_EVENT_TYPES = ["sent", "delivered", "opened", "clicked"] as const;
+type EngagementEventType = (typeof ENGAGEMENT_EVENT_TYPES)[number];
+
+type Engagement = {
+	subscriberId: string;
+	/** Earliest timestamp seen per event type. */
+	first: Partial<Record<EngagementEventType, string>>;
+	opens: number;
+	clicks: number;
+};
+
+type EngagementRow = {
+	key: string;
+	properties: Record<string, ReturnType<typeof Builder.richText>> & {
+		"Engagement ID": ReturnType<typeof Builder.richText>;
+	};
+};
+
+type EngagementState = {
+	/** Page of `/emails?status=sent` being walked. */
+	emailPage: number;
+	/** Position of the next email to process on that page. */
+	emailIndex: number;
+	/** Rows built for the current email but not yet returned (batches of 100). */
+	pending: EngagementRow[];
+	/** Subscriber id → address, cached across the cycle to spare the API. */
+	subscriberEmails: Record<string, string>;
+};
+
+const ENGAGEMENT_BATCH = 100;
+
+/**
+ * The subscriber id on an event. Buttondown documents `subscriber_id`; an
+ * expanded `subscriber` (id string or object) is accepted too.
+ */
+function eventSubscriberId(event: any): string | undefined {
+	const id =
+		event.subscriber_id ??
+		(typeof event.subscriber === "string"
+			? event.subscriber
+			: event.subscriber?.id);
+	return id ? String(id) : undefined;
+}
+
+/** Every per-subscriber engagement for one email, keyed by subscriber id. */
+async function emailEngagement(emailId: string): Promise<Map<string, Engagement>> {
+	const bySubscriber = new Map<string, Engagement>();
+	let page = 1;
+	let next = true;
+	while (next) {
+		const list = await bd(
+			`/events?email_id=${encodeURIComponent(emailId)}&page=${page}&page_size=100`,
+		);
+		for (const event of list.results ?? []) {
+			// Guards against the filter being silently ignored, which would
+			// otherwise attribute every email's events to this one.
+			if (event.email_id && String(event.email_id) !== emailId) continue;
+			const type = event.event_type as EngagementEventType;
+			if (!ENGAGEMENT_EVENT_TYPES.includes(type)) continue;
+			const subscriberId = eventSubscriberId(event);
+			if (!subscriberId) continue;
+
+			let row = bySubscriber.get(subscriberId);
+			if (!row) {
+				row = { subscriberId, first: {}, opens: 0, clicks: 0 };
+				bySubscriber.set(subscriberId, row);
+			}
+			const at = event.creation_date ?? event.timestamp;
+			if (at && (!row.first[type] || at < row.first[type]!)) {
+				row.first[type] = at;
+			}
+			if (type === "opened") row.opens += 1;
+			if (type === "clicked") row.clicks += 1;
+		}
+		next = Boolean(list.next);
+		page += 1;
+	}
+	return bySubscriber;
+}
+
+/** Subscriber id → address, fetching only ids not already in `cache`. */
+async function resolveSubscriberEmails(
+	ids: Iterable<string>,
+	cache: Record<string, string>,
+): Promise<void> {
+	for (const id of ids) {
+		if (id in cache) continue;
+		try {
+			const subscriber = await bd(`/subscribers/${encodeURIComponent(id)}`);
+			cache[id] = String(subscriber.email_address ?? subscriber.email ?? "");
+		} catch (error) {
+			// A deleted subscriber still has events; keep the row, minus the address.
+			console.log(
+				`Subscriber ${id} not resolved: ${error instanceof Error ? error.message : error}`,
+			);
+			cache[id] = "";
+		}
+	}
+}
+
+function engagementRows(
+	email: any,
+	engagements: Map<string, Engagement>,
+	subscriberEmails: Record<string, string>,
+): EngagementRow[] {
+	const emailId = String(email.id);
+	const subject = email.subject ?? "(no subject)";
+	return [...engagements.values()].map((e) => {
+		const address = subscriberEmails[e.subscriberId] ?? "";
+		const key = `${emailId}:${e.subscriberId}`;
+		const properties: EngagementRow["properties"] = {
+			Name: Builder.title(`${address || e.subscriberId} · ${subject}`),
+			"Engagement ID": Builder.richText(key),
+			"Email ID": Builder.richText(emailId),
+			Subject: Builder.richText(subject),
+			"Subscriber ID": Builder.richText(e.subscriberId),
+			Opens: Builder.number(e.opens),
+			Clicks: Builder.number(e.clicks),
+		};
+		if (address) properties["Subscriber Email"] = Builder.email(address);
+		const dates: [string, EngagementEventType][] = [
+			["Sent", "sent"],
+			["Delivered", "delivered"],
+			["First Opened", "opened"],
+			["First Clicked", "clicked"],
+		];
+		for (const [name, type] of dates) {
+			const at = e.first[type];
+			if (at) properties[name] = Builder.dateTime(at);
+		}
+		// `key` is byte-identical to the `Engagement ID` value — see root CLAUDE.md.
+		return { key, properties };
+	});
+}
+
+/**
+ * Replace mode: each daily cycle walks every sent email and rebuilds its rows,
+ * so a row whose subscriber was deleted upstream is swept. One email per call,
+ * its rows released in batches of 100 through `pending`.
+ */
+worker.sync("subscriberEngagementSync", {
+	database: engagement,
+	mode: "replace",
+	schedule: "1d",
+	execute: async (state: EngagementState | undefined) => {
+		const s: EngagementState = state ?? {
+			emailPage: 1,
+			emailIndex: 0,
+			pending: [],
+			subscriberEmails: {},
+		};
+
+		// Once per cycle, at the start — see the note in `emailAnalyticsSync`.
+		if (!state) {
+			try {
+				await linkEngagementRelations();
+			} catch (error) {
+				console.error(
+					`Engagement linking failed: ${error instanceof Error ? error.message : error}`,
+				);
+			}
+		}
+
+		if (s.pending.length === 0) {
+			const list = await bd(`/emails?status=sent&page=${s.emailPage}`);
+			const emailsOnPage: any[] = list.results ?? [];
+			const email = emailsOnPage[s.emailIndex];
+			if (!email) {
+				// Page exhausted: move on, or finish the cycle.
+				if (!list.next) return { changes: [], hasMore: false };
+				return {
+					changes: [],
+					hasMore: true,
+					nextState: { ...s, emailPage: s.emailPage + 1, emailIndex: 0 },
+				};
+			}
+			const engagements = await emailEngagement(String(email.id));
+			await resolveSubscriberEmails(engagements.keys(), s.subscriberEmails);
+			s.pending = engagementRows(email, engagements, s.subscriberEmails);
+			s.emailIndex += 1;
+		}
+
+		const batch = s.pending.slice(0, ENGAGEMENT_BATCH);
+		const nextState: EngagementState = {
+			...s,
+			pending: s.pending.slice(ENGAGEMENT_BATCH),
+		};
+		return {
+			changes: batch.map((row) => ({ type: "upsert" as const, ...row })),
+			// Always continue: the next call either drains `pending` or advances to
+			// the next email, and returns `hasMore: false` once the list runs out.
+			hasMore: true,
+			nextState,
 		};
 	},
 });

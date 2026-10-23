@@ -4,14 +4,42 @@ A [Notion Worker](https://developers.notion.com/workers) that syncs newsletter d
 
 ## What it does
 
-Two managed databases, two syncs:
+Three managed databases, three syncs:
 
 | Database | Sync | Schedule | Mode | Description |
 |---|---|---|---|---|
 | **Buttondown email analytics** | `emailAnalyticsSync` | `6h` | `replace` | One row per sent email with recipients, deliveries, opens, clicks, open/click rate, failures, unsubscriptions, complaints, replies. |
 | **Buttondown subscriber counts** | `subscriberCountsSync` | `6h` | `incremental` | One row per day with total, active, and per-status subscriber counts (regular, premium, churned, etc.). |
 
+| **Buttondown subscriber engagement** | `subscriberEngagementSync` | `1d` | `replace` | One row per (sent email, subscriber): Sent / Delivered / First Opened / First Clicked timestamps plus open and click counts, aggregated from Buttondown's `/events`. |
+
 Plus a standalone script for historical subscriber counts — see below.
+
+### Subscriber engagement
+
+Rows are keyed `"{email id}:{subscriber id}"` (the `Engagement ID` property).
+Each cycle walks every sent email, pages through `/events?email_id=…`, folds
+`sent`/`delivered`/`opened`/`clicked` events per subscriber, and resolves each
+subscriber's address with `/subscribers/{id}` (cached for the cycle). Opens are
+inflated by Apple Mail Privacy Protection — trust Delivered and Clicked.
+
+Open/click tracking must be on in Buttondown, or `/events` returns nothing.
+
+It carries two **hand-added** relations, set through the API exactly like the
+analytics database's (see below), at the start of each cycle:
+
+- **Newsletter Issue** → *Newsletter Issues*, joined on `Email ID` = `Buttondown ID`.
+- **Contact** → CRM *Contacts*, joined on `Subscriber Email` = the contact's
+  Primary Email or any Secondary Email (case-insensitive). An address on more
+  than one contact is left unlinked rather than guessed.
+
+One-time setup after the first deploy creates the database:
+
+1. Add both relation properties to it by hand (one-way is fine; two-way gives
+   contacts and issues an "engagement" list).
+2. Pin its data source id in `ENGAGEMENT_DATA_SOURCE` in `src/index.ts` and
+   redeploy — linking is skipped, with a log line, until then.
+3. Share *Contacts* with the `NOTION_API_TOKEN` connection.
 
 ### Newsletter issue linking
 
