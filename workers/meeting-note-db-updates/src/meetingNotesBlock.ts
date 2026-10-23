@@ -43,9 +43,11 @@ async function findMeetingNotesBlock(
 	const token = process.env.NOTION_API_TOKEN;
 	if (!token) throw new Error("NOTION_API_TOKEN is not configured");
 
-	// In a typed Meetings database the page itself is the meeting note: the
-	// page id is a `meeting_note_page` block id, and its children are only the
-	// note's contents.
+	// In a typed Meetings database the page itself is the meeting note, and its
+	// children are only the note's contents. Since 2026-10-22 the API returns
+	// the page block as a full `meeting_notes` block, calendar_event included;
+	// before that it came back as `unsupported` (`meeting_note_page`) and had to
+	// be re-read through the meeting_notes query. Handle both.
 	const pageRes = await fetch(`https://api.notion.com/v1/blocks/${pageId}`, {
 		headers: {
 			Authorization: `Bearer ${token}`,
@@ -56,6 +58,8 @@ async function findMeetingNotesBlock(
 		throw new Error(`Notion blocks.retrieve failed: ${pageRes.status} ${await pageRes.text()}`);
 	}
 	const pageBlock = (await pageRes.json()) as any;
+	const direct = toMeetingNotesBlock(pageBlock);
+	if (direct) return direct;
 	if (isMeetingNotePage(pageBlock)) {
 		return toMeetingNotesBlock(await queryMeetingNoteBlock(token, pageBlock));
 	}

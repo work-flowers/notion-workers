@@ -150,13 +150,13 @@ Known limits, none fixable from calendar data alone:
 
 ## The Meetings-typed database
 
-Meeting Notes is now a **Meetings-typed** database. Each row *is* the meeting note: the page is no longer a wrapper around a `meeting_notes` child block. The API exposes this shape differently, and the calendar link sits mostly out of reach. Checked against a live note on 2026-10-22 with `Notion-Version: 2026-03-11`:
+Meeting Notes is now a **Meetings-typed** database. Each row *is* the meeting note: the page is no longer a wrapper around a `meeting_notes` child block. The API exposes this shape differently, and the calendar link sits mostly out of reach. Checked against a live note on 2026-10-22 with `Notion-Version: 2026-03-11`, and again on 2026-10-23 after the page-block change:
 
 | What | How the API exposes it | Read | Write |
 | --- | --- | --- | --- |
 | **Event** property (the linked calendar event shown in the app) | Absent from `GET /v1/pages/{id}`, `GET /v1/data_sources/{id}` and the Notion MCP `fetch` schema | No | No |
-| The page as a block | `GET /v1/blocks/{page_id}` returns `type: "unsupported"` with `unsupported.block_type: "meeting_note_page"` and no event data | — | — |
-| Event times and attendees | `POST /v1/blocks/meeting_notes/query` returns the same id as a full `meeting_notes` block: `calendar_event { start_time, end_time, attendees[] }` (Notion user IDs), `status`, `title`, `children.notes_block_id` | Yes | No |
+| The page as a block | `GET /v1/blocks/{page_id}` returns a full `meeting_notes` block: `calendar_event { start_time, end_time, attendees[] }` (Notion user IDs), `status`, `title`, `children.notes_block_id`. Until 2026-10-22 it returned `type: "unsupported"` (`unsupported.block_type: "meeting_note_page"`) with no event data | Yes | No |
+| Event times and attendees (fallback) | `POST /v1/blocks/meeting_notes/query` returns the same id as a full `meeting_notes` block. The Worker still uses it when the page block comes back `unsupported` | Yes | No |
 | `Date` | An ordinary date property. On the sampled note it equalled `calendar_event`'s start and end | Yes | Yes |
 
 - **The link to a calendar event can only be changed in the app.** The request schema for `PATCH /v1/blocks/{id}` has no `meeting_notes` or `calendar_event`. `PATCH /v1/pages/{id}` can't name a property the API never returns. `POST /v1/blocks/meeting_notes` accepts a `calendar_event` when it *creates* a note, but whether that links to a real calendar event is untested.
@@ -175,7 +175,7 @@ ntn api /v1/blocks/meeting_notes/query -X POST -d '{"filter":{"operator":"and","
 
 ## Operating notes
 
-- The Worker waits up to ~90s for the `meeting_notes` block to appear (Notion populates it asynchronously after page creation). If the block never appears, the run is a no-op — same behaviour as the Zap's "Only continue if found" filter.
+- The Worker waits up to ~90s for the `meeting_notes` block to appear (Notion populates it asynchronously after page creation). If the block never appears, the run is a no-op — same behaviour as the Zap's "Only continue if found" filter. **A no-op still reports success**, so a change in how the API shapes the block shows up only as runs that take the full ~95s and log `No meeting_notes block with start_time found`. That happened on 2026-10-22, when the page block switched from `unsupported` to `meeting_notes`, and every note went unenriched until 2026-10-23.
 - The `meeting_notes` block's attendee user IDs are **global** Notion user IDs; `users.retrieve` only dereferences workspace members and guests (this is Notion policy — it prevents email harvesting). The service-account calendar lookup is what makes non-guest external attendees resolvable.
 - The event match is by **exact start time, with the block title as a tiebreak**, on the impersonated attendee's primary calendar. The API is queried on a 60-second window around the start (which catches overlapping and all-day events) and filtering happens locally on the returned array — one request, no `q` search. `q` is deliberately avoided: it is a fuzzy AND across summary, description, location and attendees, so it guarantees neither exactness nor uniqueness.
 
