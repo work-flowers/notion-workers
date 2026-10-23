@@ -535,25 +535,40 @@ const engagement = worker.database("buttondownSubscriberEngagement", {
 			Subject: Schema.richText(),
 			"Subscriber ID": Schema.richText(),
 			"Subscriber Email": Schema.email(),
-			Sent: Schema.date(),
 			Delivered: Schema.date(),
 			"First Opened": Schema.date(),
 			"First Clicked": Schema.date(),
+			Bounced: Schema.date(),
+			Unsubscribed: Schema.date(),
 			Opens: Schema.number(),
 			Clicks: Schema.number(),
 		},
 	},
 });
 
-/** Event types folded into a row; anything else Buttondown reports is ignored. */
-const ENGAGEMENT_EVENT_TYPES = ["sent", "delivered", "opened", "clicked"] as const;
-type EngagementEventType = (typeof ENGAGEMENT_EVENT_TYPES)[number];
+/**
+ * Event type → the date column holding its earliest occurrence. Buttondown's
+ * types (checked 2026-10-23): bounced, clicked, complained, delivered, opened,
+ * rejected, replied, unsubscribed. There is no `sent` event; `rejected` (refused
+ * before sending) is folded into Bounced. Anything unlisted is ignored.
+ */
+const ENGAGEMENT_DATE_COLUMNS: Record<string, string> = {
+	delivered: "Delivered",
+	opened: "First Opened",
+	clicked: "First Clicked",
+	bounced: "Bounced",
+	rejected: "Bounced",
+	unsubscribed: "Unsubscribed",
+};
 
 type Engagement = {
 	subscriberId: string;
-	/** Earliest timestamp seen per event type. */
-	first: Partial<Record<EngagementEventType, string>>;
+	/** Empty when the subscriber has since been deleted from Buttondown. */
+	address: string;
+	/** Earliest timestamp per date column. */
+	first: Record<string, string>;
 	opens: number;
+	/** Raw click events, not unique — analytics' `clicks` counts differently. */
 	clicks: number;
 };
 
@@ -571,54 +586,42 @@ type EngagementState = {
 	emailIndex: number;
 	/** Rows built for the current email but not yet returned (batches of 100). */
 	pending: EngagementRow[];
-	/** Subscriber id → address, cached across the cycle to spare the API. */
-	subscriberEmails: Record<string, string>;
 };
 
 const ENGAGEMENT_BATCH = 100;
 
 /**
- * The subscriber id on an event. Buttondown documents `subscriber_id`; an
- * expanded `subscriber` (id string or object) is accepted too.
+ * Every per-subscriber engagement for one email, keyed by subscriber id.
+ * `expand=subscriber` inlines the subscriber, which is where the address comes
+ * from; it is `null` for a subscriber deleted since.
  */
-function eventSubscriberId(event: any): string | undefined {
-	const id =
-		event.subscriber_id ??
-		(typeof event.subscriber === "string"
-			? event.subscriber
-			: event.subscriber?.id);
-	return id ? String(id) : undefined;
-}
-
-/** Every per-subscriber engagement for one email, keyed by subscriber id. */
 async function emailEngagement(emailId: string): Promise<Map<string, Engagement>> {
 	const bySubscriber = new Map<string, Engagement>();
 	let page = 1;
 	let next = true;
 	while (next) {
 		const list = await bd(
-			`/events?email_id=${encodeURIComponent(emailId)}&page=${page}&page_size=100`,
+			`/events?email_id=${encodeURIComponent(emailId)}&expand=subscriber&page=${page}&page_size=100`,
 		);
 		for (const event of list.results ?? []) {
-			// Guards against the filter being silently ignored, which would
-			// otherwise attribute every email's events to this one.
-			if (event.email_id && String(event.email_id) !== emailId) continue;
-			const type = event.event_type as EngagementEventType;
-			if (!ENGAGEMENT_EVENT_TYPES.includes(type)) continue;
-			const subscriberId = eventSubscriberId(event);
-			if (!subscriberId) continue;
+			const column = ENGAGEMENT_DATE_COLUMNS[event.event_type];
+			if (!column || !event.subscriber_id) continue;
+			const subscriberId = String(event.subscriber_id);
 
 			let row = bySubscriber.get(subscriberId);
 			if (!row) {
-				row = { subscriberId, first: {}, opens: 0, clicks: 0 };
+				row = { subscriberId, address: "", first: {}, opens: 0, clicks: 0 };
 				bySubscriber.set(subscriberId, row);
 			}
-			const at = event.creation_date ?? event.timestamp;
-			if (at && (!row.first[type] || at < row.first[type]!)) {
-				row.first[type] = at;
+			if (!row.address && event.subscriber?.email_address) {
+				row.address = String(event.subscriber.email_address);
 			}
-			if (type === "opened") row.opens += 1;
-			if (type === "clicked") row.clicks += 1;
+			const at = event.creation_date;
+			if (at && (!row.first[column] || at < row.first[column])) {
+				row.first[column] = at;
+			}
+			if (event.event_type === "opened") row.opens += 1;
+			if (event.event_type === "clicked") row.clicks += 1;
 		}
 		next = Boolean(list.next);
 		page += 1;
@@ -626,38 +629,16 @@ async function emailEngagement(emailId: string): Promise<Map<string, Engagement>
 	return bySubscriber;
 }
 
-/** Subscriber id → address, fetching only ids not already in `cache`. */
-async function resolveSubscriberEmails(
-	ids: Iterable<string>,
-	cache: Record<string, string>,
-): Promise<void> {
-	for (const id of ids) {
-		if (id in cache) continue;
-		try {
-			const subscriber = await bd(`/subscribers/${encodeURIComponent(id)}`);
-			cache[id] = String(subscriber.email_address ?? subscriber.email ?? "");
-		} catch (error) {
-			// A deleted subscriber still has events; keep the row, minus the address.
-			console.log(
-				`Subscriber ${id} not resolved: ${error instanceof Error ? error.message : error}`,
-			);
-			cache[id] = "";
-		}
-	}
-}
-
 function engagementRows(
 	email: any,
 	engagements: Map<string, Engagement>,
-	subscriberEmails: Record<string, string>,
 ): EngagementRow[] {
 	const emailId = String(email.id);
 	const subject = email.subject ?? "(no subject)";
 	return [...engagements.values()].map((e) => {
-		const address = subscriberEmails[e.subscriberId] ?? "";
 		const key = `${emailId}:${e.subscriberId}`;
 		const properties: EngagementRow["properties"] = {
-			Name: Builder.title(`${address || e.subscriberId} · ${subject}`),
+			Name: Builder.title(`${e.address || e.subscriberId} · ${subject}`),
 			"Engagement ID": Builder.richText(key),
 			"Email ID": Builder.richText(emailId),
 			Subject: Builder.richText(subject),
@@ -665,16 +646,9 @@ function engagementRows(
 			Opens: Builder.number(e.opens),
 			Clicks: Builder.number(e.clicks),
 		};
-		if (address) properties["Subscriber Email"] = Builder.email(address);
-		const dates: [string, EngagementEventType][] = [
-			["Sent", "sent"],
-			["Delivered", "delivered"],
-			["First Opened", "opened"],
-			["First Clicked", "clicked"],
-		];
-		for (const [name, type] of dates) {
-			const at = e.first[type];
-			if (at) properties[name] = Builder.dateTime(at);
+		if (e.address) properties["Subscriber Email"] = Builder.email(e.address);
+		for (const [column, at] of Object.entries(e.first)) {
+			properties[column] = Builder.dateTime(at);
 		}
 		// `key` is byte-identical to the `Engagement ID` value — see root CLAUDE.md.
 		return { key, properties };
@@ -695,7 +669,6 @@ worker.sync("subscriberEngagementSync", {
 			emailPage: 1,
 			emailIndex: 0,
 			pending: [],
-			subscriberEmails: {},
 		};
 
 		// Once per cycle, at the start — see the note in `emailAnalyticsSync`.
@@ -723,8 +696,7 @@ worker.sync("subscriberEngagementSync", {
 				};
 			}
 			const engagements = await emailEngagement(String(email.id));
-			await resolveSubscriberEmails(engagements.keys(), s.subscriberEmails);
-			s.pending = engagementRows(email, engagements, s.subscriberEmails);
+			s.pending = engagementRows(email, engagements);
 			s.emailIndex += 1;
 		}
 

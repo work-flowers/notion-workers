@@ -11,17 +11,20 @@ Three managed databases, three syncs:
 | **Buttondown email analytics** | `emailAnalyticsSync` | `6h` | `replace` | One row per sent email with recipients, deliveries, opens, clicks, open/click rate, failures, unsubscriptions, complaints, replies. |
 | **Buttondown subscriber counts** | `subscriberCountsSync` | `6h` | `incremental` | One row per day with total, active, and per-status subscriber counts (regular, premium, churned, etc.). |
 
-| **Buttondown subscriber engagement** | `subscriberEngagementSync` | `1d` | `replace` | One row per (sent email, subscriber): Sent / Delivered / First Opened / First Clicked timestamps plus open and click counts, aggregated from Buttondown's `/events`. |
+| **Buttondown subscriber engagement** | `subscriberEngagementSync` | `1d` | `replace` | One row per (sent email, subscriber): Delivered / First Opened / First Clicked / Bounced / Unsubscribed timestamps plus open and click counts, aggregated from Buttondown's `/events`. |
 
 Plus a standalone script for historical subscriber counts — see below.
 
 ### Subscriber engagement
 
 Rows are keyed `"{email id}:{subscriber id}"` (the `Engagement ID` property).
-Each cycle walks every sent email, pages through `/events?email_id=…`, folds
-`sent`/`delivered`/`opened`/`clicked` events per subscriber, and resolves each
-subscriber's address with `/subscribers/{id}` (cached for the cycle). Opens are
-inflated by Apple Mail Privacy Protection — trust Delivered and Clicked.
+Each cycle walks every sent email, pages through
+`/events?email_id=…&expand=subscriber`, and folds the events per subscriber; the
+expanded subscriber supplies the address (blank if the subscriber was deleted
+since). Buttondown has no `sent` event, so a recipient whose delivery event is
+missing has no row. `rejected` is folded into Bounced. Clicks counts raw click
+events, so it won't match the analytics database's (deduplicated) Clicks. Opens
+are inflated by Apple Mail Privacy Protection — trust Delivered and Clicked.
 
 Open/click tracking must be on in Buttondown, or `/events` returns nothing.
 
