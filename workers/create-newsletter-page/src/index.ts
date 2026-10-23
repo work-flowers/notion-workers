@@ -7,14 +7,15 @@
  *
  *   1. Retrieves the blog page's full content as enhanced (Notion-flavored)
  *      Markdown via `GET /v1/pages/{id}/markdown`.
- *   2. Creates a page in the Newsletter Issues data source, sets its content
- *      from that Markdown, and relates it back to the triggering blog page.
- *   3. Copies the blog page's cover onto the new Newsletter page (re-hosting
- *      Notion-hosted file covers so the URL doesn't expire).
+ *   2. Creates a page in the Newsletter Issues data source from that data
+ *      source's default template (icon, property defaults, footer blocks),
+ *      relates it back to the triggering blog page, and copies the blog page's
+ *      cover onto it (re-hosting Notion-hosted file covers so the URL doesn't
+ *      expire).
+ *   3. Waits for the template's blocks to land, then prepends the blog
+ *      Markdown so the content sits above the template's footer.
  *   4. Re-hosts the body images (Markdown import drops them) and patches each
  *      onto the matching image block on the new page.
- *   5. Appends the Newsletter data source's default template blocks after the
- *      blog content (the API does not run data-source templates on create).
  *
  * All calls use the latest data APIs at Notion-Version 2026-03-11 via raw
  * fetch, because the bundled SDK defaults to an older version that doesn't
@@ -42,13 +43,15 @@ const NEWSLETTER_TITLE_PROP = "Name";
 /** Relation (Newsletter Issues -> Blog) used to link the two pages. */
 const BLOG_RELATION_PROP = "Blog post";
 
+/** Resolves `@now` / `@today` in the template (UTC otherwise). */
+const TEMPLATE_TIMEZONE = "Asia/Singapore";
 /**
- * Default page template for the Newsletter Issues data source. The Notion API
- * does not run data-source templates on create, so we copy this template's
- * blocks onto the new page (after the blog content). Update this id if the data
- * source's default template changes.
+ * Notion applies a template asynchronously after the create responds. Poll
+ * this long for its blocks before prepending the blog content anyway — the
+ * template appends, so a late template still lands below the content.
  */
-const NEWSLETTER_TEMPLATE_PAGE_ID = "33791b07-11ac-809f-be48-f78827e4f8ca";
+const TEMPLATE_WAIT_MS = 20_000;
+const TEMPLATE_POLL_MS = 1_000;
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
@@ -426,108 +429,42 @@ async function copyBodyImages(
 // ---------------------------------------------------------------------------
 // Template
 //
-// The Notion API does not run data-source page templates on create, so we copy
-// the default template's blocks onto the new page after the blog content. This
-// is a generic block clone: it strips read-only fields, re-hosts Notion-hosted
-// media, and preserves nesting (e.g. column layouts).
+// The page is created from the Newsletter Issues default template, which Notion
+// applies asynchronously and which forbids sending content on the same request.
+// So the blog content goes in afterwards, prepended above the template blocks.
 // ---------------------------------------------------------------------------
 
-/** Block types we can't faithfully recreate via the API — skipped on copy. */
-const UNSUPPORTED_BLOCKS = new Set([
-	"child_page",
-	"child_database",
-	"unsupported",
-	"ai_block",
-	"link_to_page",
-	"synced_block",
-	"template",
-]);
-
-/** File-backed block types whose Notion-hosted media must be re-hosted. */
-const MEDIA_BLOCKS = new Set(["image", "file", "video", "pdf"]);
-
-/** Drop read-only fields (`plain_text`, `href`) from a rich_text array. */
-function stripReadOnlyRichText(value: unknown): unknown {
-	if (!Array.isArray(value)) return value;
-	return value.map((item) => {
-		if (item && typeof item === "object") {
-			const { plain_text, href, ...rest } = item as Record<string, unknown>;
-			return rest;
-		}
-		return item;
-	});
+/** True for the create error Notion returns when no default template exists. */
+export function isNoDefaultTemplateError(err: unknown): boolean {
+	const msg = String(err);
+	return / -> 400 /.test(msg) && /default template/i.test(msg);
 }
 
-/**
- * Turn a fetched block into a create payload: keep the type-specific data, strip
- * read-only fields, re-host Notion-hosted media, and recurse into children.
- * Returns null for block types we skip.
- */
-async function cloneBlock(
-	token: string,
-	block: NotionBlock,
-): Promise<Record<string, unknown> | null> {
-	const type = block.type;
-	if (UNSUPPORTED_BLOCKS.has(type)) return null;
-
-	const data: Record<string, unknown> = {
-		...((block[type] as Record<string, unknown> | undefined) ?? {}),
-	};
-	if ("rich_text" in data) data.rich_text = stripReadOnlyRichText(data.rich_text);
-	if ("caption" in data) data.caption = stripReadOnlyRichText(data.caption);
-
-	// Re-host Notion-hosted media so the copy doesn't point at an expiring URL.
-	if (MEDIA_BLOCKS.has(type) && data.type === "file") {
-		const url = (data.file as { url?: string } | undefined)?.url;
-		if (url) {
-			try {
-				const id = await rehostFile(token, url);
-				delete data.file;
-				data.type = "file_upload";
-				data.file_upload = { id };
-			} catch (err) {
-				console.warn(`Template media re-host failed: ${String(err)}`);
-				delete data.file;
-				data.type = "external";
-				data.external = { url };
-			}
-		}
+/** Wait until the page has at least one block (the template has landed). */
+async function waitForTemplate(token: string, pageId: string): Promise<boolean> {
+	const deadline = Date.now() + TEMPLATE_WAIT_MS;
+	while (Date.now() < deadline) {
+		const res = await notionRequest<{ results: unknown[] }>(
+			token,
+			"GET",
+			`/blocks/${pageId}/children?page_size=1`,
+		);
+		if (res.results.length > 0) return true;
+		await new Promise((resolve) => setTimeout(resolve, TEMPLATE_POLL_MS));
 	}
-
-	if (block.has_children) {
-		const cloned: Record<string, unknown>[] = [];
-		for (const child of await listChildren(token, block.id)) {
-			const c = await cloneBlock(token, child);
-			if (c) cloned.push(c);
-		}
-		if (cloned.length > 0) data.children = cloned;
-	}
-
-	return { object: "block", type, [type]: data };
+	return false;
 }
 
-/**
- * Copy the template page's blocks onto the new page. Appends at the end, so the
- * blog content (already the page body) stays before the template blocks.
- */
-async function applyTemplate(
+/** Prepend Markdown to the start of a page. */
+async function prependMarkdown(
 	token: string,
-	templatePageId: string,
-	newPageId: string,
+	pageId: string,
+	markdown: string,
 ): Promise<void> {
-	const children: Record<string, unknown>[] = [];
-	for (const block of await listChildren(token, templatePageId)) {
-		const c = await cloneBlock(token, block);
-		if (c) children.push(c);
-	}
-	if (children.length === 0) return;
-
-	for (let i = 0; i < children.length; i += 100) {
-		await notionRequest(token, "PATCH", `/blocks/${newPageId}/children`, {
-			children: children.slice(i, i + 100),
-			notifications: { mode: "silent" },
-		});
-	}
+	await notionRequest(token, "PATCH", `/pages/${pageId}/markdown`, {
+		type: "insert_content",
+		insert_content: { content: markdown, position: { type: "start" } },
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +540,9 @@ worker.webhook("onCreateNewsletter", {
 			// 3. Mirror the cover (re-hosting Notion-hosted files).
 			const cover = await buildCover(token, page.cover ?? null);
 
-			// 4. Create the linked Newsletter Issues page with the Markdown content.
+			// 4. Create the linked Newsletter Issues page from the default
+			//    template. Content can't ride on a templated create, so it is
+			//    prepended once the template has landed (step 5).
 			const title = plainTitle(page, BLOG_TITLE_PROP) || "Untitled";
 			const createBody: Record<string, unknown> = {
 				parent: {
@@ -622,21 +561,44 @@ worker.webhook("onCreateNewsletter", {
 				notifications: { mode: "silent" },
 			};
 			if (cover) createBody.cover = cover;
-			if (md.markdown && md.markdown.trim().length > 0) {
-				createBody.markdown = md.markdown;
-			}
 
-			const created = await notionRequest<NotionPage>(
-				token,
-				"POST",
-				"/pages",
-				createBody,
-			);
+			let templated = true;
+			let created: NotionPage;
+			try {
+				created = await notionRequest<NotionPage>(token, "POST", "/pages", {
+					...createBody,
+					template: { type: "default", timezone: TEMPLATE_TIMEZONE },
+				});
+			} catch (err) {
+				// The default template was removed in Notion: create blank
+				// rather than fail. Any other error still throws.
+				if (!isNoDefaultTemplateError(err)) throw err;
+				console.warn(
+					"Newsletter Issues has no default template; creating a blank page.",
+				);
+				templated = false;
+				created = await notionRequest<NotionPage>(
+					token,
+					"POST",
+					"/pages",
+					createBody,
+				);
+			}
 			console.log(
 				`Created Newsletter page ${created.id} for blog ${blogPageId} ("${title}").`,
 			);
 
-			// 5. Copy body images. The Markdown import drops them, so re-host
+			// 5. Prepend the blog content above the template's blocks.
+			if (md.markdown && md.markdown.trim().length > 0) {
+				if (templated && !(await waitForTemplate(token, created.id))) {
+					console.warn(
+						`Template not applied to ${created.id} after ${TEMPLATE_WAIT_MS}ms; prepending content anyway.`,
+					);
+				}
+				await prependMarkdown(token, created.id, md.markdown);
+			}
+
+			// 6. Copy body images. The Markdown import drops them, so re-host
 			//    each source image and patch it onto the matching image block.
 			//    Best-effort: never fail the run over images (the page exists,
 			//    and a retry would be skipped by the idempotency guard).
@@ -645,16 +607,6 @@ worker.webhook("onCreateNewsletter", {
 			} catch (err) {
 				console.warn(
 					`Body image copy failed for ${created.id}: ${String(err)}`,
-				);
-			}
-
-			// 6. Append the Newsletter template's blocks after the blog content.
-			//    The API can't run data-source templates, so we copy them in.
-			try {
-				await applyTemplate(token, NEWSLETTER_TEMPLATE_PAGE_ID, created.id);
-			} catch (err) {
-				console.warn(
-					`Applying template to ${created.id} failed: ${String(err)}`,
 				);
 			}
 		}

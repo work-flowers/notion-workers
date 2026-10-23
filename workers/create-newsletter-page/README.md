@@ -11,25 +11,26 @@ For each incoming webhook event (payload must carry the triggering blog
 
 1. **Reads** the blog page's full content as enhanced (Notion-flavored)
    Markdown — `GET /v1/pages/{id}/markdown`.
-2. **Creates** a page in the Newsletter Issues data source with that Markdown as
-   its body — `POST /v1/pages` with a `data_source_id` parent and a `markdown`
-   field.
-3. **Relates** the new page back to the blog page via the `Blog post` relation.
-4. **Copies** the blog page's cover onto the new page. Notion-hosted file covers
-   are re-uploaded via the File Upload API so the new cover doesn't point at an
-   expiring signed URL; external covers are copied as-is.
-5. **Restores body images.** The Markdown import drops images (Notion won't store
+2. **Creates** a page in the Newsletter Issues data source from that data
+   source's **default template** — `POST /v1/pages` with a `data_source_id`
+   parent and `template: { type: "default" }` — so it gets the template's icon,
+   property defaults (e.g. Status) and footer blocks, like a hand-made page. It
+   also sets the title, the `Blog post` relation back to the blog page, and the
+   blog page's cover. Notion-hosted file covers are re-uploaded via the File
+   Upload API so the new cover doesn't point at an expiring signed URL; external
+   covers are copied as-is. If the data source ever loses its default template,
+   the worker logs a warning and creates a blank page instead.
+3. **Inserts the blog content above the template.** A templated create can't
+   carry content, and Notion applies the template asynchronously, so the worker
+   polls (up to 20s) until the template's blocks appear, then prepends the blog
+   Markdown — `PATCH /v1/pages/{id}/markdown` with `insert_content` at
+   `position: { type: "start" }`. If the template is slow it prepends anyway;
+   the template appends, so it still lands below the content.
+4. **Restores body images.** The Markdown import drops images (Notion won't store
    the source's expiring S3 URLs, leaving empty image blocks). The worker walks
    the source and new pages' block trees in parallel, re-hosts each image via the
    File Upload API, and patches it onto the matching image block — preserving
    position, including inside columns.
-6. **Applies the default template.** The Notion API does not run data-source page
-   templates on create, so the worker copies the Newsletter Issues default
-   template's blocks onto the new page, appended **after** the blog content
-   (generic block clone: strips read-only fields, re-hosts media, preserves
-   nesting). The template page id is `NEWSLETTER_TEMPLATE_PAGE_ID` in
-   `src/index.ts` — update it if the data source's default template changes. Only
-   the template's **blocks** are copied, not its preset properties (e.g. Status).
 
 All calls use Notion data API version **`2026-03-11`** via raw `fetch` (the
 bundled SDK pins an older version that lacks the Markdown/data-source endpoints).
