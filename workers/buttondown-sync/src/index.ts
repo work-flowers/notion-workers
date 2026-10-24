@@ -36,10 +36,10 @@ const ISSUE_RELATION_PROPERTY = "Newsletter Issue";
  * The engagement database gets the same treatment: a hand-added `Newsletter
  * Issue` relation (joined on `Email ID`) and a hand-added `Contact` relation to
  * the CRM's Contacts, joined on the subscriber's address against Contacts'
- * Primary/Secondary Email. Empty until the database exists — pin its data source
- * id after the first deploy creates it; linking is skipped until then.
+ * Primary/Secondary Email. Pinned like the ids above; linking is skipped while
+ * this is empty.
  */
-const ENGAGEMENT_DATA_SOURCE = "";
+const ENGAGEMENT_DATA_SOURCE = "b35d950b-0b48-4a6d-b527-1a239021ac13";
 const CONTACTS_DATA_SOURCE = "21991b07-11ac-81a6-a894-000be4a09a67";
 const CONTACT_RELATION_PROPERTY = "Contact";
 

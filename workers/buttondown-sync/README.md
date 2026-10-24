@@ -41,7 +41,8 @@ One-time setup after the first deploy creates the database:
 1. Add both relation properties to it by hand (one-way is fine; two-way gives
    contacts and issues an "engagement" list).
 2. Pin its data source id in `ENGAGEMENT_DATA_SOURCE` in `src/index.ts` and
-   redeploy — linking is skipped, with a log line, until then.
+   redeploy — linking is skipped, with a log line, until then. (Done:
+   `b35d950b-0b48-4a6d-b527-1a239021ac13`.)
 3. Share *Contacts* with the `NOTION_API_TOKEN` connection.
 
 ### Newsletter issue linking
