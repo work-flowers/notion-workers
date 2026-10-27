@@ -35,8 +35,8 @@ Capability `onBlogPublished` (`worker.webhook`). A Notion database automation on
 - Missing `Post Title`, `Description`, `Date` or `Slug` → logged and skipped (no throw; the automation re-fires on the next edit that matches).
 - Date logic lives in `src/schedule.ts`; `npm test --workspace=notion-worker-blog-social-reshare`.
 
-## Setup
+## Deployment
 
-1. `./scripts/deploy.sh blog-social-reshare` from the repo root. The first deploy needs `--name blog-social-reshare` to create the worker and its `workers.json`.
-2. `ntn workers env set NOTION_API_TOKEN=ntn_...` (from this directory) — needs read on Blog Content and insert on Social Content.
-3. Add the Blog Content automation pointing at the webhook URL.
+- Worker id `01a17ce8-3727-7a61-9200-5c61c96e1f2d`, first deployed 2026-10-27.
+- `NOTION_API_TOKEN` comes from 1Password item `notion-worker-automations` (`op://Private/notion-worker-automations/credential`, work-flowers account). That integration can read both data sources.
+- Deploy updates with `./scripts/deploy.sh blog-social-reshare`. If the CLI's default workspace is a client's, run the script from this directory instead. The `workers.json` here then resolves work.flowers, and the script's workspace guard passes without a global `ntn logout`/`login`.
