@@ -28,14 +28,21 @@ function apiKey(): string {
 	return key;
 }
 
-/** Apollo list (label) IDs whose contacts belong in Outbound Leads. */
-export function listIds(): string[] {
-	const ids = (process.env.APOLLO_LIST_IDS ?? "")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
-	if (ids.length === 0) throw new Error("APOLLO_LIST_IDS must list at least one Apollo list ID");
-	return ids;
+/**
+ * Every Apollo contact list (label). Any contact on any list belongs in
+ * Outbound Leads; contacts on no list (saved ad hoc, or added by Apollo
+ * itself) stay out. Looked up each cycle, so a new list needs no config.
+ */
+export async function contactListIds(): Promise<string[]> {
+	const res = await fetch("https://api.apollo.io/api/v1/labels", {
+		headers: { "X-Api-Key": apiKey(), Accept: "application/json", "Cache-Control": "no-cache" },
+	});
+	if (!res.ok) {
+		const body = await res.text().catch(() => "");
+		throw new Error(`Apollo labels failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
+	}
+	const labels = (await res.json()) as { id: string; modality?: string }[];
+	return labels.filter((l) => l.modality === "contacts").map((l) => l.id);
 }
 
 /** One page of contacts on the given lists, most recently updated first. */
