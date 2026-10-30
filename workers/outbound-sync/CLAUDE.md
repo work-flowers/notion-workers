@@ -30,6 +30,8 @@ While attached:
 - Pages through `POST /api/v1/contacts/search` filtered by `contact_label_ids` (the lists in `APOLLO_LIST_IDS`), newest-updated first, and stops at the first contact not newer than the cursor. Apollo has no updated-since filter. The cursor trails the high-water mark by 5 minutes, so late-indexed contacts aren't skipped.
 - Adding a list to `APOLLO_LIST_IDS` only picks up contacts updated after the cursor. To pull a new list in full, run `ntn workers sync state reset apolloLeads`.
 - `key` is the Apollo contact ID, byte-identical to the `Apollo ID` value (see the root CLAUDE.md on why this matters).
+- **No `upstreamUpdatedAt` on upserts.** With it, Notion skipped every upsert whose Apollo `updated_at` hadn't moved, so a Location fix never reached the existing rows (see the root CLAUDE.md). It would also hide Smartlead state in Stage 2, since a reply doesn't change the Apollo contact. To re-apply a mapping change to every row: `ntn workers sync state reset apolloLeads && ntn workers sync trigger apolloLeads`. Rows are matched on Apollo ID, so this updates them in place without duplicating.
+- Location drops repeated parts: Apollo gives Singapore as city, state and country.
 - Unrevealed emails arrive as `email_not_unlocked@…` and are written as empty.
 - Status isn't declared, so the sync can't set it. New rows get **Backlog** from the Status property's default option, which is set by hand in Notion.
 

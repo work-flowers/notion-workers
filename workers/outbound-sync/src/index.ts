@@ -65,7 +65,10 @@ function toUpsert(c: ApolloContact) {
 		type: "upsert" as const,
 		// Must be byte-identical to the "Apollo ID" value, or every run inserts a new row.
 		key: c.id,
-		upstreamUpdatedAt: c.updated_at ?? undefined,
+		// No upstreamUpdatedAt: Notion skips an upsert whose timestamp isn't newer
+		// than the last one applied, so a mapping fix (or Smartlead state, which
+		// this sync will also write) never lands on a contact unchanged in Apollo.
+		// It only arbitrates between syncs, and this database has one.
 		properties: {
 			Lead: Builder.title(name),
 			"Apollo ID": Builder.richText(c.id),
