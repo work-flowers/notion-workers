@@ -59,7 +59,8 @@ function later(a: string | undefined, b: string | null | undefined): string | un
 
 function toUpsert(c: ApolloContact) {
 	const name = c.name || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.id;
-	const location = [c.city, c.state, c.country].filter(Boolean).join(", ");
+	// Apollo repeats a city-state like Singapore or Tokyo as its state or country.
+	const location = [...new Set([c.city, c.state, c.country].filter(Boolean))].join(", ");
 	return {
 		type: "upsert" as const,
 		// Must be byte-identical to the "Apollo ID" value, or every run inserts a new row.

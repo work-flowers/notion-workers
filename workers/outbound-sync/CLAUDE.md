@@ -13,7 +13,9 @@ Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage
 
 ## Attached, not managed
 
-`outboundLeads` is `type: "attached"`, which needs `@notionhq/workers` ≥ 0.8.5 (the repo bumped to 0.8.12 for this). After the first deploy, bind it with `ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (it takes the data source ID or a database link), then run `ntn workers sync trigger apolloLeads --preview` before any real run, because attaching lets the sync overwrite rows.
+`outboundLeads` is `type: "attached"`, which needs `@notionhq/workers` ≥ 0.8.5 (the repo bumped to 0.8.12 for this). Bound on 2026-10-30 with `ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (it takes the data source ID or a database link).
+
+**Attaching runs a real sync immediately, not on the next scheduled run.** A `--preview` after attaching is not a safeguard: on 2026-10-30 the first real cycle wrote the three test contacts about 5 seconds after the attach, before the preview ran. Get everything right *before* attaching: the env vars, especially `APOLLO_LIST_IDS`, and the mapping. The same applies to re-attaching after a detach.
 
 While attached:
 

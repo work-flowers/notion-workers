@@ -16,6 +16,5 @@ Detaching removes the read-only locks and keeps every row. Deleting the worker o
 
 1. Deploy from the repo root: `./scripts/deploy.sh outbound-sync`
 2. From `workers/outbound-sync`, set `APOLLO_API_KEY` (from the 1Password item `apollo-api`; see `CLAUDE.md`) and `APOLLO_LIST_IDS=<id>[,<id>…]` with `ntn workers env set`.
-3. Attach: `cd workers/outbound-sync && ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (the data source ID)
-4. Preview without writing: `ntn workers sync trigger apolloLeads --preview`
-5. First real run: `ntn workers sync trigger apolloLeads`
+3. Attach: `cd workers/outbound-sync && ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (the data source ID). **This starts a real sync straight away**, so step 2 must be complete and correct first.
+4. Check the result: `ntn workers sync status apolloLeads --no-watch`. `ntn workers sync trigger apolloLeads --preview` shows what the next cycle would write without writing it.
