@@ -2,14 +2,19 @@
 
 Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage 2, Smartlead (what has happened to them). Spec: TKT-1051, "Set up Apollo and connect the Outbound Leads database". Outbound Leads stays the system of record; Dennis decides who gets contacted and who moves into the CRM.
 
-**Stage 1 (built):** sync `apolloLeads`. **Stage 2 (not built):** Smartlead state columns, `smartlead-campaigns` sync, `push-to-smartlead` and `promote-to-contact` webhooks.
+**Stage 1:** sync `apolloLeads`. **Stage 2:** syncs `smartleadLeads` and `smartleadCampaignsSync`, and webhooks `pushToSmartlead` and `promoteToContact`.
 
 ## Data sources
 
 | | id |
 |---|---|
-| Outbound Leads | data source `61a01f87-741b-4dbd-a98e-ada01e07eb3b` (database `92d79468-07fa-4aee-8d54-99e60b3dbd5e`) |
-| Contacts (Stage 2 pre-flight) | data source `21991b07-11ac-81a6-a894-000be4a09a67` |
+| Outbound Leads | data source `61a01f87-741b-4dbd-a98e-ada01e07eb3b` (database `92d79468-07fa-4aee-8d54-99e60b3dbd5e`), attached |
+| Smartlead Campaigns | data source `5484e931-dbc6-45a5-84bb-3622ed5bab0e`, managed (created by this worker, moved under CRM > Databases by hand) |
+| Contacts (webhooks) | data source `21991b07-11ac-81a6-a894-000be4a09a67` |
+
+## Two syncs share Outbound Leads rows
+
+`apolloLeads` writes only the Apollo columns and `smartleadLeads` writes only the Smartlead columns, on the same rows. **An upsert that omits declared columns leaves them untouched.** This was verified live on 2026-10-30 in both directions: a Smartlead-only upsert kept the Apollo columns, and a full `apolloLeads` re-run kept the Smartlead Status. The SDK's types still demand every declared column, so the cast lives in one place, `partial()` in `src/index.ts`. If a future SDK version starts clearing omitted columns, the Smartlead columns will blank out on every Apollo run; that's the tell.
 
 ## Attached, not managed
 
@@ -19,7 +24,7 @@ Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage
 
 While attached:
 
-- **Declared properties are read-only in Notion.** Declared: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location. Everything a human edits stays undeclared: Status, Campaign, Subject Line, Message, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
+- **Declared properties are read-only in Notion.** Declared from Apollo: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location. Declared from Smartlead: Smartlead Status, Sequence Step, Last Event, Latest Reply, Smartlead Lead ID, Smartlead Campaign. Everything a human edits stays undeclared: Status, Campaign (a relation to Smartlead Campaigns, set by hand; it's what the push webhook reads), Subject Line, Message, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
 - **Rows can't be added or deleted by hand** or by other integrations. Every lead enters through an Apollo list. Deleting is blocked both in the UI and through the API (the Notion connector's trash call failed with a bare validation error, 2026-10-30). **Archiving a row does work in the UI.** For a hand-made row with no Apollo ID, that's permanent. For a synced row, the next upsert of that contact un-archives it: a change in Apollo, or a state reset and re-run. To drop a synced lead for good, remove it from the Apollo list first. To trash rows, detach, trash them, then re-attach (re-attaching runs a sync immediately).
 - **Detach before decommissioning.** Run `ntn workers databases detach outboundLeads` first. That releases the read-only locks and leaves every row. Deleting the worker or removing the declaration does *not* release the database; it stays locked with nothing able to release it.
 - Rows from before the worker have no Apollo ID. Incremental mode leaves them alone, but their titles become read-only.
@@ -54,9 +59,28 @@ ntn workers env set "APOLLO_API_KEY=$(op read --account work-flowers.1password.c
 
 If the relay is ever reinstated, **don't use the Apollo.io app connection** (`02be390b…`). Its auth template injects `name = "Zapier Master Key"` into every contact search, so every search returns zero contacts with a 200, and the request can't override it. The API by Zapier connection `apollo-api` (`02b3ee04…`, `X-Api-Key` header) works.
 
-## Smartlead notes for Stage 2 (verified 2026-10-30)
+## `smartleadLeads` sync
 
-- `GET /campaigns/{id}/leads` (limit ≤ 100, `offset`, `event_time_gt`) returns status, `lead_category_id`, lead fields and `custom_fields` only: no sequence step, no reply text.
-- Sequence step and replied/bounced/unsubscribed flags come from `GET /campaigns/{id}/statistics` (per-email rows, limit ≤ 1000).
-- Latest reply text needs a per-lead message-history call, which isn't in Smartlead's current API index. Confirm it against a real campaign.
-- Add leads: `POST /campaigns/{id}/leads` (≤ 400 per call, `custom_fields`). Stop a lead: `PATCH /campaigns/{id}/leads/{lead_id}/status`.
+- **Incremental, hourly.** Each cycle lists campaigns, then walks each campaign's leads with activity (sent or reply) after the cursor (`GET /campaigns/{id}/leads?event_time_gt=`, 25 per page), plus that campaign's bounced leads. It reads each lead's `GET /campaigns/{id}/leads/{lead_id}/message-history`. The first run has no cursor and walks every lead.
+- Rows are keyed by the lead's **`apollo_id` custom field**, which the push webhook sets. Leads added in Smartlead directly have none and are skipped.
+- Smartlead Status precedence: Unsubscribed > Bounced > Replied (any inbound message) > Completed (lead status COMPLETED or STOPPED) > In sequence. A **paused** lead (including one stopped by `promoteToContact`'s fallback) still reads In sequence.
+- Sequence Step = outbound messages in the history; Latest Reply = the last inbound body as plain text with the quoted thread dropped, capped at 1,900 characters; Last Event = the newest message time.
+- **Unverified until real sends:** message history was `{"history": []}` on the draft test campaign, so the per-message field names are read defensively (`type: SENT/REPLY` or `direction`; `time` / `sent_at` / `received_at`; `email_body` / `body`). Check one Replied lead after the first real campaign. The response key is `history`; the docs say `messages`.
+- Rate limits (Standard plan): 60/min and 1,000/hour per key across everything; the shared `smartlead` pacer takes 40/min.
+
+## `smartleadCampaignsSync`
+
+Replace mode, hourly: one row per campaign with Campaign Status, Leads, Sent, Opened, Replies, Bounces, Unsubscribes and Created, from `GET /campaigns/` and `GET /campaigns/{id}/analytics`. Replace mode only removes campaigns deleted in Smartlead. Human columns (Segment, Notes) go on by hand, outside the schema.
+
+`Schema.relation()` takes the **database key** (`smartleadCampaigns`), not the sync key; the scaffold's sync-guide is wrong on this, and the deploy rejects the sync key.
+
+## Webhooks
+
+Both are fired by Notion database automations on Outbound Leads ("Send webhook" with the default body; get the URLs with `ntn workers webhooks list`, which are secrets). Each re-reads the page and acts only if Status still has the triggering value, so late or retried deliveries are harmless. Each leaves a `Done:` or `Blocked:` page comment. Unexpected errors also become a `Blocked:` comment, with the message.
+
+- **`pushToSmartlead`, Status → Sequenced.** Pre-flight checks Email, Lead name, Company, Apollo ID and Campaign, and that the email isn't already a Contact (Primary or Secondary Email). Any failure sets Status back to Backlog with a `Blocked:` reason. On success it adds the lead to the Campaign's Smartlead campaign with `notion_page_id`, `apollo_id`, `subject_line` (Subject Line) and `opener` (Message). Smartlead returns 200 even when it skips a lead, so its counters decide; already being in the campaign counts as success.
+- **`promoteToContact`, Status → Interested.** Finds the Contact by email or creates one: Name, First/Last Name, Primary Email, Job Title, Location, Linkedin, Lead Source = **Outbound** (the option was created on first use). It links the Contact and stops the lead in every Smartlead campaign: `manual-complete`, falling back to `pause` because manual-complete 404s ("No sequences found for campaign") on a campaign with no sequences. `link-contact-to-company` then links the company.
+- **Automations don't fire on a net-zero change.** Flipping Status away and back within a few seconds produced no delivery. Leave a gap when re-triggering by hand.
+- Comments posted by the API on a page that already has a discussion are appended to that discussion, not started as a new thread.
+
+Tested live on 2026-10-30 against draft campaign 4276123 ("Outbound Sync Test (draft, do not start)"): a lead with no Campaign was blocked and reset; Alan was added with all four custom fields; Ada was promoted to a new Contact, re-promoted to the same Contact, and paused. The test Contact was trashed afterwards.
