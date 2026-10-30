@@ -43,7 +43,8 @@ The worker calls Apollo and Smartlead directly with their API keys, **not** thro
 |---|---|
 | `APOLLO_API_KEY` | Apollo **master** API key, sent as `X-Api-Key`. 1Password item `apollo-api`. A non-master key can't search contacts. |
 | `APOLLO_LIST_IDS` | Comma-separated Apollo list (label) IDs for this programme. Not a secret. |
-| `SMARTLEAD_API_KEY` (Stage 2) | Smartlead API key, sent as the `api_key` query parameter. 1Password item `smartlead-api`. |
+| `SMARTLEAD_API_KEY` | Smartlead API key, sent as the `api_key` query parameter. 1Password item `smartlead-api`. |
+| `NOTION_API_TOKEN` | Used by the webhooks only (comments, Status, Contacts). The repo-default `notion-worker-automations` integration, which needs access to Outbound Leads, Contacts and Smartlead Campaigns. |
 
 Set secrets straight from 1Password so the value never lands in the shell history or a file (run from `workers/outbound-sync`):
 

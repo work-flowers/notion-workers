@@ -48,9 +48,11 @@ Two credentials are duplicated widely enough to need a checklist (as of 2026-09-
 | Credential | Workers holding it |
 |---|---|
 | `ZAPIER_CLIENT_ID` + `ZAPIER_CLIENT_SECRET` | `bq-sync`, `buttondown-tools`, `ga4-sync`, `gdrive-tools`, `meeting-note-db-updates`, `xero-invoice-sync`, `zapier-durables-docs` |
-| `NOTION_API_TOKEN` | `blog-social-reshare`, `buttondown-sync`, `create-newsletter-page`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `marketplace-downloads`, `meeting-note-db-updates`, `page-icon-sync`, `set-company-logo`, `supercut-sync` |
+| `NOTION_API_TOKEN` | `blog-social-reshare`, `buttondown-sync`, `create-newsletter-page`, `ga4-sync`, `harvest-sync`, `link-contact-to-company`, `marketplace-downloads`, `meeting-note-db-updates`, `outbound-sync`, `page-icon-sync`, `set-company-logo`, `supercut-sync` |
 
 `NOTION_API_TOKEN` is only needed when worker code reads it (REST calls or `context.notion`) — the platform writes managed-database sync rows without it (`fx-rates` has no env vars and reports healthy; `lovable-changelog-sync` ran its first sync, 528 upserts, with none set). Don't set it on a worker that doesn't read it.
+
+**New workers use the shared `notion-worker-automations` integration for `NOTION_API_TOKEN`** (1Password item `notion-worker-automations`, field `credential`; decided 2026-10-30). Don't create a per-worker integration unless the worker needs narrower access. That integration only sees pages that have been shared with it, so a database a worker *creates* (a managed `worker.database()`) answers `404` to it until someone shares it, for example by moving it under a page the integration already has.
 
 That table is a snapshot and will drift. Regenerate it rather than trusting it — this prints every worker's variable *names* only, never a value:
 
