@@ -97,7 +97,7 @@ export function pushToSmartlead(events: Event[]): Promise<void> {
 		const campaignProps: Props = (await retrievePage(campaignPageId)).properties ?? {};
 		const campaignId = Number(text(campaignProps["Campaign ID"]));
 		const campaignName = text(campaignProps.Name) || String(campaignId);
-		if (!campaignId) return block("the linked Campaign has no Smartlead Campaign ID");
+		if (!campaignId) return block("the Push to campaign page has no Campaign ID");
 
 		const { first, last } = splitName(name);
 		const result = await addLead(campaignId, {

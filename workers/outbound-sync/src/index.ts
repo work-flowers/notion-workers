@@ -94,7 +94,7 @@ const outboundLeads = worker.database("outboundLeads", {
 			// Two-way: each Smartlead Campaigns page gets a read-only "Outbound Leads" list of
 			// Smartlead's actual membership. The human "Push to campaign" relation is
 			// only the push webhook's input; after a push, Smartlead is the source of truth.
-			"Smartlead Campaign": Schema.relation("smartleadCampaigns", { twoWay: true, relatedPropertyName: "Outbound Leads" }),
+			"In campaign": Schema.relation("smartleadCampaigns", { twoWay: true, relatedPropertyName: "Outbound Leads" }),
 		},
 	},
 });
@@ -284,7 +284,7 @@ async function toSmartleadUpsert(campaignId: number, l: CampaignLead, bounced: S
 				plainText(lastReply?.email_body ?? lastReply?.body ?? "").slice(0, 1900),
 			),
 			"Smartlead Lead ID": Builder.richText(String(l.lead.id)),
-			"Smartlead Campaign": [Builder.relation(String(campaignId))],
+			"In campaign": [Builder.relation(String(campaignId))],
 		}),
 	};
 }
