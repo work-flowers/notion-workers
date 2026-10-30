@@ -91,7 +91,10 @@ const outboundLeads = worker.database("outboundLeads", {
 			"Latest Reply": Schema.richText(),
 			"Smartlead Lead ID": Schema.richText(),
 			// The database key, not the sync key (despite the scaffold guide).
-			"Smartlead Campaign": Schema.relation("smartleadCampaigns"),
+			// Two-way: each Smartlead Campaigns page gets a read-only "Outbound Leads" list of
+			// Smartlead's actual membership. The human "Push to campaign" relation is
+			// only the push webhook's input; after a push, Smartlead is the source of truth.
+			"Smartlead Campaign": Schema.relation("smartleadCampaigns", { twoWay: true, relatedPropertyName: "Outbound Leads" }),
 		},
 	},
 });
@@ -242,6 +245,8 @@ type SmartleadState = {
 	campaigns?: number[];
 	index?: number;
 	offset?: number;
+	/** Which listing of the current campaign we're paging: activity since the cursor, or added since it. */
+	pass?: "events" | "created";
 	/** Lead IDs Smartlead reports as bounced in the current campaign. */
 	bounced?: number[];
 };
@@ -319,8 +324,17 @@ worker.sync("smartleadLeads", {
 			);
 		}
 
+		// Two passes per campaign: leads with activity since the cursor, then leads
+		// added since it. A freshly pushed lead has no activity until its first
+		// send, so the activity pass alone would leave it without Smartlead state.
+		// With no cursor (first run) the activity pass already returns every lead.
+		const pass = s.pass ?? "events";
 		await smartlead.wait();
-		const leads = await campaignLeads(campaignId, offset, { eventTimeGt: s.cursor });
+		const leads = await campaignLeads(
+			campaignId,
+			offset,
+			pass === "events" ? { eventTimeGt: s.cursor } : { createdAtGt: s.cursor },
+		);
 		const bouncedSet = new Set(bounced);
 		const changes = [];
 		for (const l of leads) {
@@ -329,10 +343,13 @@ worker.sync("smartleadLeads", {
 		}
 
 		const morePages = leads.length === LEADS_PAGE;
+		const createdPassNext = pass === "events" && s.cursor;
 		const next: SmartleadState = morePages
 			? { ...s, offset: offset + LEADS_PAGE, bounced }
-			: { ...s, index: index + 1, offset: 0, bounced: [] };
-		const done = !morePages && index + 1 >= campaigns.length;
+			: createdPassNext
+				? { ...s, pass: "created", offset: 0, bounced }
+				: { ...s, index: index + 1, offset: 0, pass: "events", bounced: [] };
+		const done = !morePages && !createdPassNext && index + 1 >= campaigns.length;
 		return { changes, hasMore: !done, nextState: done ? finish(next) : next };
 	},
 });

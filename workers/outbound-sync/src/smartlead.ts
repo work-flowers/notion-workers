@@ -67,14 +67,18 @@ export function campaignAnalytics(id: number): Promise<CampaignAnalytics> {
 	return call<CampaignAnalytics>("GET", `campaigns/${id}/analytics`);
 }
 
-/** Leads in a campaign, optionally only those with activity (sent or reply) after `eventTimeGt`. */
+/**
+ * Leads in a campaign, optionally only those with activity (sent or reply)
+ * after `eventTimeGt`, or added after `createdAtGt`.
+ */
 export async function campaignLeads(
 	id: number,
 	offset: number,
-	opts: { eventTimeGt?: string; emailStatus?: string; limit?: number } = {},
+	opts: { eventTimeGt?: string; createdAtGt?: string; emailStatus?: string; limit?: number } = {},
 ): Promise<CampaignLead[]> {
 	const query: Record<string, string> = { offset: String(offset), limit: String(opts.limit ?? LEADS_PAGE) };
 	if (opts.eventTimeGt) query.event_time_gt = opts.eventTimeGt;
+	if (opts.createdAtGt) query.created_at_gt = opts.createdAtGt;
 	if (opts.emailStatus) query.emailStatus = opts.emailStatus;
 	const res = await call<{ data?: CampaignLead[] }>("GET", `campaigns/${id}/leads`, query);
 	return res.data ?? [];

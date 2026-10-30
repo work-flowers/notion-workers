@@ -80,13 +80,14 @@ export function pushToSmartlead(events: Event[]): Promise<void> {
 		const name = text(props.Lead);
 		const company = text(props.Company);
 		const apolloId = text(props["Apollo ID"]);
-		const campaignPageId = relationIds(props.Campaign)[0];
+		// Exact spelling, lowercase "c". It's the push's only input; moves later happen in Smartlead.
+		const campaignPageId = relationIds(props["Push to campaign"])[0];
 		const missing = [
 			!email && "Email",
 			!name && "Lead name",
 			!company && "Company",
 			!apolloId && "Apollo ID (only Apollo-synced leads can be sequenced)",
-			!campaignPageId && "Campaign",
+			!campaignPageId && "Push to campaign",
 		].filter(Boolean);
 		if (missing.length) return block(`missing ${missing.join(", ")}`);
 
