@@ -6,7 +6,7 @@ Webhook worker: records every Notion Marketplace acquisition of our templates (p
 
 Capability `onMarketplaceEvent` (`worker.webhook`). Register the URL from `ntn workers webhooks list` as the **Webhook URL** in the Marketplace creator profile (app.notion.com/profile → Settings). Treat the URL as a secret — the Marketplace does not sign its webhooks, so the URL is the only auth. Webhooks require being a verified seller.
 
-Payload reference: https://www.notion.com/help/selling-on-marketplace#webhooks. Events are `marketplace.purchase` and `marketplace.refund`, both keyed by `acquisitionId`. The docs spell the event field `Event` (capital E); `event` is accepted too.
+Payload reference: https://www.notion.com/help/selling-on-marketplace#webhooks. Events are `marketplace.purchase` and `marketplace.refund`, both keyed by `acquisitionId`. The docs spell the event field `Event` (capital E), but real deliveries send lowercase `event`; both are accepted.
 
 ## Data source
 
@@ -20,7 +20,7 @@ Created by hand (not `worker.database()`), so every column stays editable. Money
 
 - **Purchase**: creates a row (Status `Acquired`) with the raw payload as a JSON code block in the body. A retried purchase with an existing `Acquisition ID` is skipped.
 - **Refund**: sets Status `Refunded`, `Refunded At`, `Refund Reason` (`refundReason: customRefundReason`) on the existing row; if none exists, creates a `Refunded` row.
-- Bodies without an `acquisitionId` or with another event type (e.g. the profile's **Test** button, whose payload is undocumented) are logged and ignored, never thrown — throwing `WebhookVerificationError` five times in a row would short-circuit the webhook until redeploy.
+- Bodies without an `acquisitionId` or with another event type are logged and ignored. The profile's **Test** button sends a full purchase-shaped payload ("Test Template", slug `test`, random `acquisitionId`) with `event: "webhook.test"`, so it lands here (verified 2026-10-30). Unhandled payloads are ignored rather than thrown, never thrown — throwing `WebhookVerificationError` five times in a row would short-circuit the webhook until redeploy.
 - Whether free templates fire `marketplace.purchase` is not stated in the docs ("whenever their templates are sold or refunded"); confirm from the first free download.
 - Mapping logic lives in `src/payload.ts`; `npm test --workspace=notion-worker-marketplace-downloads`.
 
