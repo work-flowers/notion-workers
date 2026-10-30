@@ -6,7 +6,7 @@ import {
 	retrievePage,
 	updatePage,
 } from "@work-flowers/notion-worker-shared";
-import { addLead, completeLeadEverywhere } from "./smartlead.js";
+import { addLead, stopLeadEverywhere } from "./smartlead.js";
 
 type Props = Record<string, any>;
 type Event = { deliveryId: string; body: unknown };
@@ -164,11 +164,14 @@ export function promoteToContact(events: Event[]): Promise<void> {
 			});
 		}
 
-		const stopped = await completeLeadEverywhere(email);
+		const { completed, paused } = await stopLeadEverywhere(email);
+		const plural = (n: number) => `${n} Smartlead campaign${n > 1 ? "s" : ""}`;
+		const smartleadNote = [completed && `marked complete in ${plural(completed)}`, paused && `paused in ${plural(paused)}`]
+			.filter(Boolean)
+			.join(", ");
 		await comment(
 			pageId,
-			`Done: ${created ? "created" : "linked existing"} Contact for ${name || email}` +
-				(stopped > 0 ? `; marked complete in ${stopped} Smartlead campaign${stopped > 1 ? "s" : ""}` : "; not in Smartlead"),
+			`Done: ${created ? "created" : "linked existing"} Contact for ${name || email}; ${smartleadNote || "not in Smartlead"}`,
 		);
 	});
 }

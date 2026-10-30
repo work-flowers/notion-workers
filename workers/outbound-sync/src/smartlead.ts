@@ -163,21 +163,28 @@ export async function addLead(campaignId: number, lead: NewLead): Promise<{ ok: 
 }
 
 /**
- * Marks the lead complete in every campaign it is in, so no further steps
- * send. Returns how many campaigns it was completed in (0 if Smartlead doesn't
- * know the email).
+ * Stops the lead in every campaign it is in, so no further steps send: marks
+ * it complete, or pauses it where Smartlead refuses that (it 404s
+ * manual-complete on a campaign with no sequences). Counts are per campaign;
+ * both are 0 if Smartlead doesn't know the email.
  */
-export async function completeLeadEverywhere(email: string): Promise<number> {
-	let lead: { lead_campaign_data?: { campaign_id: number; campaign_lead_map_id: number }[] };
+export async function stopLeadEverywhere(email: string): Promise<{ completed: number; paused: number }> {
+	let lead: { id?: number | string; lead_campaign_data?: { campaign_id: number; campaign_lead_map_id: number }[] };
 	try {
 		lead = await call("GET", "leads/", { email });
 	} catch (err) {
-		if (String((err as Error).message).includes(" 404 ")) return 0;
+		if (String((err as Error).message).includes(" 404 ")) return { completed: 0, paused: 0 };
 		throw err;
 	}
-	const memberships = lead?.lead_campaign_data ?? [];
-	for (const m of memberships) {
-		await call("POST", `campaigns/${m.campaign_id}/leads/${m.campaign_lead_map_id}/manual-complete`);
+	const result = { completed: 0, paused: 0 };
+	for (const m of lead?.lead_campaign_data ?? []) {
+		try {
+			await call("POST", `campaigns/${m.campaign_id}/leads/${m.campaign_lead_map_id}/manual-complete`);
+			result.completed++;
+		} catch {
+			await call("POST", `campaigns/${m.campaign_id}/leads/${lead.id}/pause`);
+			result.paused++;
+		}
 	}
-	return memberships.length;
+	return result;
 }
