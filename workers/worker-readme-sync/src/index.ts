@@ -199,7 +199,6 @@ worker.sync("readmeSync", {
 				// arrives as a stack of one-line paragraphs. See the header comment
 				// in packages/shared/src/markdown.ts.
 				pageContentMarkdown: readmeContent ? toNotionMarkdown(readmeContent) : undefined,
-				upstreamUpdatedAt: updatedDate || undefined,
 			});
 		}
 
