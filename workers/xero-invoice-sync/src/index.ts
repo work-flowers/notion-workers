@@ -8,7 +8,6 @@ import {
 	fetchInvoicesPage,
 	mapXeroStatus,
 	toIsoDate,
-	toIsoDateTime,
 	toNumber,
 	xeroInvoiceUrl,
 	type XeroContact,
@@ -253,7 +252,6 @@ function toUpsertChange(invoice: XeroInvoice, matchedDomain: string | null) {
 		type: "upsert" as const,
 		key: invoice.InvoiceID,
 		properties: invoiceProperties(invoice, matchedDomain),
-		upstreamUpdatedAt: toIsoDateTime(invoice.UpdatedDateUTC) ?? undefined,
 	};
 }
 
