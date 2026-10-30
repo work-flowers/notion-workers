@@ -24,7 +24,7 @@ While attached:
 
 ## `apolloLeads` sync
 
-- **Incremental, every 15 min. Never replace mode.** Replace mode would delete the row (with its notes and status) of anyone dropped from an Apollo list.
+- **Incremental, hourly. Never replace mode.** Replace mode would delete the row (with its notes and status) of anyone dropped from an Apollo list.
 - Pages through `POST /api/v1/contacts/search` filtered by `contact_label_ids` (the lists in `APOLLO_LIST_IDS`), newest-updated first, and stops at the first contact not newer than the cursor. Apollo has no updated-since filter. The cursor trails the high-water mark by 5 minutes, so late-indexed contacts aren't skipped.
 - Adding a list to `APOLLO_LIST_IDS` only picks up contacts updated after the cursor. To pull a new list in full, run `ntn workers sync state reset apolloLeads`.
 - `key` is the Apollo contact ID, byte-identical to the `Apollo ID` value (see the root CLAUDE.md on why this matters).
@@ -33,14 +33,21 @@ While attached:
 
 ## Environment
 
+The worker calls Apollo and Smartlead directly with their API keys, **not** through the Zapier SDK relay. They're plain REST calls, so the relay adds nothing and could start costing Zapier tasks once the SDK beta ends (decided 2026-10-30, overriding the spec's relay rule).
+
 | Variable | What |
 |---|---|
-| `ZAPIER_CLIENT_ID`, `ZAPIER_CLIENT_SECRET` | Zapier SDK credentials (secrets; `ntn workers env set`) |
-| `APOLLO_CONNECTION_ID` | `02b3ee04-e9e5-88ba-929d-5fc5f76b65b1`, API by Zapier connection `apollo-api` (`X-Api-Key`, Apollo master key, domain filter `api.apollo.io`) |
-| `APOLLO_LIST_IDS` | Comma-separated Apollo list (label) IDs for this programme |
-| `SMARTLEAD_CONNECTION_ID` (Stage 2) | `026b0294-a57f-860d-a074-70574d40aa52`, API by Zapier connection `Smartlead` |
+| `APOLLO_API_KEY` | Apollo **master** API key, sent as `X-Api-Key`. 1Password item `apollo-api`. A non-master key can't search contacts. |
+| `APOLLO_LIST_IDS` | Comma-separated Apollo list (label) IDs for this programme. Not a secret. |
+| `SMARTLEAD_API_KEY` (Stage 2) | Smartlead API key, sent as the `api_key` query parameter. 1Password item `smartlead-api`. |
 
-**Don't use the Apollo.io app connection** (`02be390b…`). Its auth template injects `name = "Zapier Master Key"` into every contact search, so every search returns zero contacts with a 200. The relay call can't override it.
+Set secrets straight from 1Password so the value never lands in the shell history or a file (run from `workers/outbound-sync`):
+
+```shell
+ntn workers env set "APOLLO_API_KEY=$(op read --account work-flowers.1password.com 'op://Private/apollo-api/credential')"
+```
+
+If the relay is ever reinstated, **don't use the Apollo.io app connection** (`02be390b…`). Its auth template injects `name = "Zapier Master Key"` into every contact search, so every search returns zero contacts with a 200, and the request can't override it. The API by Zapier connection `apollo-api` (`02b3ee04…`, `X-Api-Key` header) works.
 
 ## Smartlead notes for Stage 2 (verified 2026-10-30)
 

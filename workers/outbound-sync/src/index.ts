@@ -89,7 +89,7 @@ function toUpsert(c: ApolloContact) {
 worker.sync("apolloLeads", {
 	database: outboundLeads,
 	mode: "incremental",
-	schedule: "15m",
+	schedule: "1h",
 	execute: async (state: State | undefined) => {
 		const cursor = state?.cursor;
 		const page = state?.page ?? 1;
