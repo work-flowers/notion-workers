@@ -4,7 +4,7 @@ Syncs Apollo list contacts into **🎯 Outbound Leads** (and, from Stage 2, Smar
 
 ## ⚠️ Detach before decommissioning
 
-This worker *attaches* to the existing Outbound Leads database. While attached, synced columns are read-only and rows can't be added or deleted by hand. If Apollo or Smartlead is ever dropped, run this first:
+This worker *attaches* to the existing Outbound Leads database. While attached, synced columns are read-only and rows can't be added or deleted by hand (archiving still works; see `CLAUDE.md`). If Apollo or Smartlead is ever dropped, run this first:
 
 ```shell
 cd workers/outbound-sync && ntn workers databases detach outboundLeads

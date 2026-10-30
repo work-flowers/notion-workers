@@ -20,7 +20,7 @@ Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage
 While attached:
 
 - **Declared properties are read-only in Notion.** Declared: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location. Everything a human edits stays undeclared: Status, Campaign, Subject Line, Message, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
-- **Rows can't be added or deleted by hand** or by other integrations. Every lead enters through an Apollo list.
+- **Rows can't be added or deleted by hand** or by other integrations. Every lead enters through an Apollo list. Deleting is blocked both in the UI and through the API (the Notion connector's trash call failed with a bare validation error, 2026-10-30). **Archiving a row does work in the UI.** For a hand-made row with no Apollo ID, that's permanent. For a synced row, the next upsert of that contact un-archives it: a change in Apollo, or a state reset and re-run. To drop a synced lead for good, remove it from the Apollo list first. To trash rows, detach, trash them, then re-attach (re-attaching runs a sync immediately).
 - **Detach before decommissioning.** Run `ntn workers databases detach outboundLeads` first. That releases the read-only locks and leaves every row. Deleting the worker or removing the declaration does *not* release the database; it stays locked with nothing able to release it.
 - Rows from before the worker have no Apollo ID. Incremental mode leaves them alone, but their titles become read-only.
 
