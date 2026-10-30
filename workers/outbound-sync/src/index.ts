@@ -13,6 +13,7 @@ import {
 	messageTime,
 	plainText,
 } from "./smartlead.js";
+import { promoteToContact, pushToSmartlead } from "./webhooks.js";
 
 const worker = new Worker();
 export default worker;
@@ -339,3 +340,20 @@ worker.sync("smartleadLeads", {
 function finish(s: SmartleadState): SmartleadState {
 	return { cursor: s.runStart ? new Date(Date.parse(s.runStart) - OVERLAP_MS).toISOString() : s.cursor };
 }
+
+// ---------------------------------------------------------------- Webhooks
+// Fired by Notion database automations on Outbound Leads (Status → Sequenced,
+// Status → Interested). Both need NOTION_API_TOKEN with access to Outbound
+// Leads, Contacts and Smartlead Campaigns.
+
+worker.webhook("pushToSmartlead", {
+	title: "Push lead to Smartlead",
+	description: "Status set to Sequenced: pre-flight, then add the lead to its Smartlead campaign",
+	execute: (events) => pushToSmartlead(events),
+});
+
+worker.webhook("promoteToContact", {
+	title: "Promote lead to Contact",
+	description: "Status set to Interested: create or link the Contact and stop the lead in Smartlead",
+	execute: (events) => promoteToContact(events),
+});

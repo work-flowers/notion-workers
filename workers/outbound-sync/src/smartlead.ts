@@ -114,3 +114,70 @@ export function plainText(html: string): string {
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
 }
+
+export type NewLead = {
+	email: string;
+	first_name?: string;
+	last_name?: string;
+	company_name?: string;
+	location?: string;
+	linkedin_profile?: string;
+	custom_fields?: Record<string, string>;
+};
+
+type AddLeadsResponse = {
+	upload_count?: number;
+	already_added_to_campaign?: number;
+	skipped_in_other_campaign_count?: number;
+	block_count?: number;
+	bounce_count?: number;
+	invalid_email_count?: number;
+	duplicate_count?: number;
+	unsubscribed_leads?: unknown[];
+	is_lead_limit_exhausted?: boolean;
+};
+
+/**
+ * Adds one lead. Smartlead answers 200 even when it skips the lead, so the
+ * counters decide. Already being in this campaign counts as success, which
+ * makes a retried webhook delivery harmless.
+ */
+export async function addLead(campaignId: number, lead: NewLead): Promise<{ ok: true } | { ok: false; reason: string }> {
+	const r = await call<AddLeadsResponse>("POST", `campaigns/${campaignId}/leads`, {}, { lead_list: [lead] });
+	if ((r.upload_count ?? 0) > 0 || (r.already_added_to_campaign ?? 0) > 0) return { ok: true };
+	const reason =
+		(r.skipped_in_other_campaign_count ?? 0) > 0
+			? "already in another Smartlead campaign"
+			: (r.unsubscribed_leads?.length ?? 0) > 0
+				? "on Smartlead's unsubscribe list"
+				: (r.block_count ?? 0) > 0
+					? "on Smartlead's block list"
+					: (r.bounce_count ?? 0) > 0
+						? "on Smartlead's bounce list"
+						: (r.invalid_email_count ?? 0) > 0
+							? "invalid email"
+							: r.is_lead_limit_exhausted
+								? "Smartlead lead limit reached"
+								: `not uploaded (${JSON.stringify(r).slice(0, 200)})`;
+	return { ok: false, reason };
+}
+
+/**
+ * Marks the lead complete in every campaign it is in, so no further steps
+ * send. Returns how many campaigns it was completed in (0 if Smartlead doesn't
+ * know the email).
+ */
+export async function completeLeadEverywhere(email: string): Promise<number> {
+	let lead: { lead_campaign_data?: { campaign_id: number; campaign_lead_map_id: number }[] };
+	try {
+		lead = await call("GET", "leads/", { email });
+	} catch (err) {
+		if (String((err as Error).message).includes(" 404 ")) return 0;
+		throw err;
+	}
+	const memberships = lead?.lead_campaign_data ?? [];
+	for (const m of memberships) {
+		await call("POST", `campaigns/${m.campaign_id}/leads/${m.campaign_lead_map_id}/manual-complete`);
+	}
+	return memberships.length;
+}
