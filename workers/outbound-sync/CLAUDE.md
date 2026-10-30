@@ -28,7 +28,7 @@ Both point at Smartlead Campaigns, and they mean different things (decided with 
 
 `outboundLeads` is `type: "attached"`, which needs `@notionhq/workers` ≥ 0.8.5 (the repo bumped to 0.8.12 for this). Bound on 2026-10-30 with `ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (it takes the data source ID or a database link).
 
-**Attaching runs a real sync immediately, not on the next scheduled run.** A `--preview` after attaching is not a safeguard: on 2026-10-30 the first real cycle wrote the three test contacts about 5 seconds after the attach, before the preview ran. Get everything right *before* attaching: the env vars, especially `APOLLO_LIST_IDS`, and the mapping. The same applies to re-attaching after a detach.
+**Attaching runs a real sync immediately, not on the next scheduled run.** A `--preview` after attaching is not a safeguard: on 2026-10-30 the first real cycle wrote the three test contacts about 5 seconds after the attach, before the preview ran. Get everything right *before* attaching: the env vars, which Apollo lists exist, and the mapping. The same applies to re-attaching after a detach.
 
 While attached:
 
@@ -40,8 +40,8 @@ While attached:
 ## `apolloLeads` sync
 
 - **Incremental, hourly. Never replace mode.** Replace mode would delete the row (with its notes and status) of anyone dropped from an Apollo list.
-- Pages through `POST /api/v1/contacts/search` filtered by `contact_label_ids` (the lists in `APOLLO_LIST_IDS`), newest-updated first, and stops at the first contact not newer than the cursor. Apollo has no updated-since filter. The cursor trails the high-water mark by 5 minutes, so late-indexed contacts aren't skipped.
-- Adding a list to `APOLLO_LIST_IDS` only picks up contacts updated after the cursor. To pull a new list in full, run `ntn workers sync state reset apolloLeads`.
+- Pages through `POST /api/v1/contacts/search` filtered by `contact_label_ids` (**every** Apollo contact list, from `GET /api/v1/labels` at the start of each cycle), newest-updated first, and stops at the first contact not newer than the cursor. Apollo has no updated-since filter. The cursor trails the high-water mark by 5 minutes, so late-indexed contacts aren't skipped.
+- **Any contact on any Apollo list is a lead**; contacts on no list (saved ad hoc, or added by Apollo itself) stay out. A new list needs no config. Adding a contact to a list bumps its `updated_at` (verified 2026-10-30), so older contacts put on a new list still come through without a state reset. With no lists at all the sync does nothing: an empty `contact_label_ids` filter would match every contact in the account. `APOLLO_LIST_IDS` was removed on 2026-10-30 in favour of this.
 - `key` is the Apollo contact ID, byte-identical to the `Apollo ID` value (see the root CLAUDE.md on why this matters).
 - **No `upstreamUpdatedAt` on upserts.** With it, Notion skipped every upsert whose Apollo `updated_at` hadn't moved, so a Location fix never reached the existing rows (see the root CLAUDE.md). It would also hide Smartlead state in Stage 2, since a reply doesn't change the Apollo contact. To re-apply a mapping change to every row: `ntn workers sync state reset apolloLeads && ntn workers sync trigger apolloLeads`. Rows are matched on Apollo ID, so this updates them in place without duplicating.
 - Location drops repeated parts: Apollo gives Singapore as city, state and country.
@@ -55,7 +55,6 @@ The worker calls Apollo and Smartlead directly with their API keys, **not** thro
 | Variable | What |
 |---|---|
 | `APOLLO_API_KEY` | Apollo **master** API key, sent as `X-Api-Key`. 1Password item `apollo-api`. A non-master key can't search contacts. |
-| `APOLLO_LIST_IDS` | Comma-separated Apollo list (label) IDs for this programme. Not a secret. |
 | `SMARTLEAD_API_KEY` | Smartlead API key, sent as the `api_key` query parameter. 1Password item `smartlead-api`. |
 | `NOTION_API_TOKEN` | Used by the webhooks only (comments, Status, Contacts). The repo-default `notion-worker-automations` integration, which needs access to Outbound Leads, Contacts and Smartlead Campaigns. |
 

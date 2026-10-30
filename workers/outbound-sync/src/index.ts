@@ -1,7 +1,7 @@
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
-import { type ApolloContact, listIds, revealedEmail, searchContacts } from "./apollo.js";
+import { type ApolloContact, contactListIds, revealedEmail, searchContacts } from "./apollo.js";
 import {
 	type CampaignLead,
 	campaignAnalytics,
@@ -133,6 +133,8 @@ type ApolloState = {
 	page?: number;
 	/** Latest `updated_at` seen so far in the current cycle. */
 	runMax?: string;
+	/** Every contact list, looked up at the start of the cycle and kept for its pages. */
+	lists?: string[];
 };
 
 function toApolloUpsert(c: ApolloContact) {
@@ -164,8 +166,9 @@ function toApolloUpsert(c: ApolloContact) {
  * newer than the cursor. Incremental only: replace mode would delete the row
  * (and its notes and status) of anyone dropped from an Apollo list.
  *
- * Adding a list to APOLLO_LIST_IDS only picks up contacts updated after the
- * cursor; run `ntn workers sync state reset apolloLeads` to pull it in full.
+ * Covers every Apollo contact list, so a contact becomes a lead by being put
+ * on any list. Adding a contact to a list bumps its updated_at (verified
+ * 2026-10-30), so even older contacts on a new list come through without a reset.
  */
 worker.sync("apolloLeads", {
 	database: outboundLeads,
@@ -175,8 +178,17 @@ worker.sync("apolloLeads", {
 		const cursor = state?.cursor;
 		const page = state?.page ?? 1;
 
+		let lists = state?.lists;
+		if (!lists) {
+			await apollo.wait();
+			lists = await contactListIds();
+		}
+		// An empty contact_label_ids filter matches every contact in Apollo, so
+		// with no lists there is nothing to sync, not everything.
+		if (lists.length === 0) return { changes: [], hasMore: false, nextState: { cursor } };
+
 		await apollo.wait();
-		const { contacts, totalPages } = await searchContacts(listIds(), page);
+		const { contacts, totalPages } = await searchContacts(lists, page);
 
 		const fresh = cursor
 			? contacts.filter((c) => !c.updated_at || Date.parse(c.updated_at) > Date.parse(cursor))
@@ -190,7 +202,7 @@ worker.sync("apolloLeads", {
 						? new Date(Date.parse(runMax) - OVERLAP_MS).toISOString()
 						: cursor,
 				}
-			: { cursor, page: page + 1, runMax };
+			: { cursor, page: page + 1, runMax, lists };
 
 		return { changes: fresh.map(toApolloUpsert), hasMore: !done, nextState };
 	},
