@@ -233,6 +233,27 @@ which is what makes a block usable as an app rather than a report.
   silently keeps its previous value.
 - `pages.create` cannot set an icon or cover yet — create, then `pages.update`.
 
+### A `created_time` property on a bound database hangs every write
+
+Verified on `order-desk-demo`, 2026-11-03, against 0.1.44. `pages.create` and
+`row.update` resolve with the written page, which the SDK parses against its
+strict `NotionPage` schema — and that schema has no variant for
+`created_time` (nor formula, rollup or unique ID). When the target data source
+carries such a property, the parse fails, the bridge drops the result, and
+**the promise never settles**. The write itself lands: the order existed in
+Notion with every field set, while the block sat on "Saving…" and never ran the
+follow-up line writes that needed its id.
+
+- **Don't add a `created_time` column to a database a block writes to**; sort by
+  the built-in instead (every row carries `propertiesById.created_time`). Dropping
+  the column fixed it immediately.
+- **Wrap every write in your own timeout** (`settle()` in
+  `workers/order-desk-demo/blocks/order-desk/src/index.tsx`) whose message says
+  the write may have landed, so a person reloads instead of retrying into a
+  duplicate.
+- Whether formula, rollup and unique ID properties trip it the same way is
+  untested, but they're missing from the same schema — assume so.
+
 ### Read the property's options rather than hardcoding them
 
 `propertySchemasByKey[key].options` gives a select/status property's option
@@ -346,8 +367,9 @@ Don't cite these as fact:
   from a real number property instead of the `Value (SGD)` formula.
 - **Whether `pages.get` settles for every page.** The bridge has no timeout and
   drops a host result the SDK's strict parse rejects — and the `NotionPage`
-  property schema omits formula, rollup, created_time and unique_id. Whether the
-  host strips those before sending is untested; wrap every `pages.get` /
+  property schema omits formula, rollup, created_time and unique_id. For
+  *writes* this is now confirmed (see "A `created_time` property … hangs every
+  write" above); for `pages.get` it is still untested. Wrap every `pages.get` /
   `users.get` in your own timeout (`linked-loader.ts` in `crm-deal-desk`).
 - **Whether the clipboard APIs work inside the sandbox.** Untested in the host;
   they work in a plain browser with user activation.
@@ -370,7 +392,7 @@ this is purely about deploys and maintenance:
 dashboard is the primary way the synced data gets consumed, in which case shared
 fate is a feature.
 
-## Three reference implementations
+## Reference implementations
 
 - **`workers/newsletter-dashboard`** — the simpler one: a single data source,
   charts, a table view, `?mock` fixtures, unit-tested aggregation.
@@ -388,6 +410,15 @@ fate is a feature.
   per-view filtered subscriptions. Its `?mock` mode runs every flow with writes
   held in memory, which is how to demo a writing block without touching real
   data; `?debug` is its binding-health panel.
+
+- **`workers/order-desk-demo`** — the shareable one: a generic rebuild of the
+  Knoxx order desk over six seeded, entirely fictional databases (Cauldron &
+  Co, a potion-ingredient wholesaler) in the workFlowers workspace. Pickers
+  narrowed by another field's value (sites by customer, ingredients by the
+  customer's price list, greyed with reasons), price auto-fill with provenance,
+  per-field problems, and a forward-only Stage menu whose moves route on
+  payment terms and collect what each gate needs. NDS styling, `?mock` with
+  in-memory writes, pure rules with tests.
 
 ### Making a writing block demo-able
 
