@@ -56,6 +56,20 @@
 				"--strictPort"
 			],
 			"port": 5177
+		},
+		{
+			"name": "order-desk-demo",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-order-desk-demo",
+				"--",
+				"--port",
+				"5178",
+				"--strictPort"
+			],
+			"port": 5178
 		}
 	]
 }
