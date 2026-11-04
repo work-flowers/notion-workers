@@ -145,14 +145,35 @@ worker.sync("timeEntriesDelta", {
 	},
 });
 
+// Fails the sync run on any backfill problem. It used to log a warning and
+// carry on, which hid a lost integration share for ~2.5 months (Aug–Nov 2026)
+// while `sync status` reported healthy. Throwing aborts the batch before the
+// cursor advances, so no time entries are skipped — they land on the first
+// run after the fix.
 async function tryBackfillRelations(): Promise<void> {
-	if (!process.env.TIME_ENTRIES_DS_ID || !process.env.NOTION_API_TOKEN) return;
+	const required = [
+		"NOTION_API_TOKEN",
+		"TIME_ENTRIES_DS_ID",
+		"DEALS_DS_ID",
+		"COMPANIES_DS_ID",
+		"PROJECTS_DS_ID",
+	];
+	const missing = required.filter((name) => !process.env[name]);
+	if (missing.length) {
+		throw new Error(`Relation backfill misconfigured: missing ${missing.join(", ")}`);
+	}
+	let result: Awaited<ReturnType<typeof backfillRelations>>;
 	try {
-		const result = await backfillRelations();
-		console.log(
-			`Relation backfill: scanned=${result.scanned} patched=${result.patched} skipped=${result.skipped} errors=${result.errors}`,
-		);
+		result = await backfillRelations();
 	} catch (err) {
-		console.warn(`Relation backfill failed: ${(err as Error).message}`);
+		throw new Error(`Relation backfill failed: ${(err as Error).message}`);
+	}
+	console.log(
+		`Relation backfill: scanned=${result.scanned} patched=${result.patched} skipped=${result.skipped} errors=${result.errors}`,
+	);
+	if (result.errors > 0) {
+		throw new Error(
+			`Relation backfill: ${result.errors} page update(s) failed — see warnings above`,
+		);
 	}
 }
