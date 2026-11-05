@@ -73,8 +73,8 @@ worker.tool("findDriveFiles", {
 	title: "Find Google Drive Files",
 	description:
 		"Search Google Drive for files and folders by name and return their ids. " +
-		"Use this first when the user names a file to rename but you don't have its Drive id — " +
-		"then pass the chosen fileId to renameDriveFile. " +
+		"Use this first when the user names a file or folder but you don't have its Drive id — " +
+		"then pass the chosen fileId to renameDriveFile or moveDriveFile (folders work as moveDriveFile's folderId). " +
 		"If more than one result comes back, ask the user which one they mean rather than guessing.",
 	schema: j.object({
 		name: j
@@ -210,6 +210,76 @@ worker.tool("renameDriveFile", {
 				name: null,
 				url: null,
 				message: `Failed to rename Google Drive item ${fileId} to "${newName}": ${errorMessage(err)}`,
+			};
+		}
+	},
+});
+
+worker.tool("moveDriveFile", {
+	title: "Move Google Drive File",
+	description:
+		"Move a file into a different Google Drive folder. Requires the Drive id of the file and " +
+		"of the destination folder — use findDriveFiles to look either up by name first (a folder " +
+		"result has isFolder: true). The file keeps its name and id; only its parent folder changes.",
+	schema: j.object({
+		fileId: j
+			.string()
+			.describe("The Google Drive id of the file to move, as returned by findDriveFiles."),
+		folderId: j
+			.string()
+			.describe(
+				"The Google Drive id of the destination folder, as returned by findDriveFiles (isFolder: true).",
+			),
+		driveId: j
+			.string()
+			.describe(
+				"Shared Drive id the file lives in. Omit for the connected account's personal My Drive.",
+			)
+			.nullable(),
+	}),
+	outputSchema: j.object({
+		success: j.boolean().describe("Whether the move succeeded."),
+		fileId: j.string().describe("The Google Drive id of the file that was moved."),
+		folderId: j.string().describe("The Google Drive id of the destination folder."),
+		name: j.string().describe("The file's name, if returned by Google Drive.").nullable(),
+		url: j.string().describe("Link to open the file in Google Drive.").nullable(),
+		message: j.string().describe("Human-readable result or error description."),
+	}),
+	execute: async (input) => {
+		const { fileId, folderId } = input;
+		const inputs: Record<string, unknown> = { file: fileId, folder: folderId };
+		if (input.driveId) inputs.drive = input.driveId;
+
+		try {
+			const zapier = getZapier();
+			const connection = await resolveDriveConnectionId(zapier);
+
+			const { data } = await zapier.runAction({
+				app: GOOGLE_DRIVE_APP,
+				actionType: "write",
+				action: "move_file",
+				connection,
+				inputs,
+			});
+
+			const file = summarise(firstRecord(data) as DriveFile);
+
+			return {
+				success: true,
+				fileId,
+				folderId,
+				name: file.name || null,
+				url: file.url ?? `https://drive.google.com/open?id=${fileId}`,
+				message: `Moved Google Drive file ${file.name ? `"${file.name}" ` : ""}(${fileId}) to folder ${folderId}.`,
+			};
+		} catch (err) {
+			return {
+				success: false,
+				fileId,
+				folderId,
+				name: null,
+				url: null,
+				message: `Failed to move Google Drive file ${fileId} to folder ${folderId}: ${errorMessage(err)}`,
 			};
 		}
 	},

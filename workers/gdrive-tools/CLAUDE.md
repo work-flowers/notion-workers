@@ -1,11 +1,12 @@
 # gdrive-tools
 
-Two tools for Notion Custom Agents, both backed by Zapier's Google Drive integration:
+Three tools for Notion Custom Agents, both backed by Zapier's Google Drive integration:
 
 | Tool | Zapier action | Notes |
 |---|---|---|
 | `findDriveFiles` | `google-drive` / `search` / `find_multiple_files` | Name search, returns ids for the agent to choose from. |
 | `renameDriveFile` | `google-drive` / `write` / `update_file_metadata` | Renames a file **or** folder in place by id. |
+| `moveDriveFile` | `google-drive` / `write` / `move_file` | Moves a file into another folder. Takes `fileId` + `folderId` (both from `findDriveFiles`). |
 
 No syncs, no databases, no webhooks — this worker is tools-only.
 
@@ -77,4 +78,13 @@ op run --env-file=.env.tpl -- ntn workers exec findDriveFiles --local -d '{"name
 op run --env-file=.env.tpl -- ntn workers exec renameDriveFile --local -d '{"fileId":"<id>","newName":"New name"}'
 ```
 
-`renameDriveFile` mutates the real Drive — test it against a throwaway file.
+```shell
+op run --env-file=.env.tpl -- ntn workers exec moveDriveFile --local -d '{"fileId":"<id>","folderId":"<folder id>","driveId":null}'
+```
+
+`move_file`'s Zapier inputs are `file`, `folder` and optional `drive` — Zapier's
+picker fields, but they accept raw Drive ids. Verified live on 2026-11-05: it
+returns the full **v2** file record (`title`, `alternateLink`, and `parents` now
+pointing at the destination folder), so `summarise()` gets a real name and link.
+
+`renameDriveFile` and `moveDriveFile` mutate the real Drive — test it against a throwaway file.
