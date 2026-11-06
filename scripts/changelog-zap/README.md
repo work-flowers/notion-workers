@@ -1,6 +1,6 @@
 # Product Changelogs (RSS → Notion)
 
-Replaces the `api-changelog-sync` and `lovable-changelog-sync` workers (paused
+Replaces the `api-changelog-sync` and `lovable-changelog-sync` workers (deleted
 2026-11-06). One page per changelog entry per product, in the ordinary Notion
 database **Product Changelogs** (data source
 `6d311e8f-6533-4dbe-8c86-6c7581b58942`), each with its product's logo.dev
