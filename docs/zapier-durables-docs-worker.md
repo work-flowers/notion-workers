@@ -93,7 +93,7 @@ the connection is ever unavailable, but it is strictly more to manage.
 
 Sync upserts accept `pageContentMarkdown`, and it **replaces** the body on
 update rather than appending. Documented and relied on in
-`workers/api-changelog-sync`, which is the closest template for this worker:
+`workers/api-changelog-sync` (removed 2026-11-06; see git history), which was the closest template for this worker:
 fetch markdown, hash it into sync state, only re-emit changed rows.
 
 ## Decisions
