@@ -1,3 +1,5 @@
+> **Superseded (2026-11-06).** This worker is paused and no longer maintained. Changelogs now go to the Product Changelogs database via a Zapier RSS workflow; see [`scripts/changelog-zap/`](../../scripts/changelog-zap/README.md). The worker and its database are kept until deletion is confirmed.
+
 # Lovable Changelog → Notion database (Worker sync)
 
 A [Notion Worker](https://developers.notion.com/workers) that fetches the
