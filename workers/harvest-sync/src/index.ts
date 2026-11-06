@@ -84,7 +84,11 @@ worker.sync("timeEntriesBackfill", {
 	database: timeEntries,
 	mode: "replace",
 	schedule: "manual",
-	execute: async (state: { page?: number } | undefined) => {
+	execute: async (state: { page?: number; relink?: boolean } | undefined) => {
+		if (state?.relink) {
+			await tryBackfillRelations();
+			return { changes: [], hasMore: false };
+		}
 		const page = state?.page ?? 1;
 		const [result, userEmails] = await Promise.all([
 			fetchTimeEntries({ page, perPage: 100 }, harvestApi.wait),
@@ -92,13 +96,12 @@ worker.sync("timeEntriesBackfill", {
 		]);
 		const hasMore = page < result.total_pages;
 
-		// Opportunistically patch relations each batch.
-		await tryBackfillRelations();
-
 		return {
 			changes: result.time_entries.map((e) => toUpsertChange(e, userEmails)),
-			hasMore,
-			nextState: hasMore ? { page: page + 1 } : undefined,
+			// Always continue once more: the final call runs the relation
+			// backfill after this batch has been written (see RELINK note).
+			hasMore: true,
+			nextState: hasMore ? { page: page + 1 } : { relink: true },
 		};
 	},
 });
@@ -110,9 +113,14 @@ worker.sync("timeEntriesDelta", {
 	schedule: "1d",
 	execute: async (
 		state:
-			| { cursor?: string; page?: number; cycleStart?: string }
+			| { cursor?: string; page?: number; cycleStart?: string; relink?: boolean }
 			| undefined,
 	) => {
+		if (state?.relink) {
+			await tryBackfillRelations();
+			return { changes: [], hasMore: false, nextState: { cursor: state.cursor } };
+		}
+
 		// 60-second consistency buffer — Harvest is eventually consistent, so
 		// never advance the cursor past "now minus 60s" to avoid skipping
 		// records that haven't been indexed yet.
@@ -131,25 +139,33 @@ worker.sync("timeEntriesDelta", {
 		]);
 		const hasMore = page < result.total_pages;
 
-		// Opportunistic relation backfill — covers entries written by prior
-		// cycles whose Deal/Company lookup values now have matches.
-		await tryBackfillRelations();
-
 		return {
 			changes: result.time_entries.map((e) => toUpsertChange(e, userEmails)),
-			hasMore,
+			// Always continue once more: the final call runs the relation
+			// backfill after this batch has been written (see RELINK note).
+			hasMore: true,
 			nextState: hasMore
 				? { cursor, page: page + 1, cycleStart }
-				: { cursor: cycleStart },
+				: { cursor: cycleStart, relink: true },
 		};
 	},
 });
 
+// RELINK note: the relation backfill patches rows that already exist in
+// Notion, but a batch's upserts are only written after `execute` returns.
+// Running the backfill at the top of each call (as this worker used to) left
+// every row from a run's last batch unlinked until the next run — a full day
+// on the daily delta schedule. So each cycle now ends with an extra call that
+// writes nothing and only runs the backfill, after all batches have landed.
+// The relink call is also where a backfill failure fails the run; the cursor
+// has already advanced by then, but the rows are in Notion and the next run's
+// relink still picks them up, since it scans for empty relations.
+//
 // Fails the sync run on any backfill problem. It used to log a warning and
 // carry on, which hid a lost integration share for ~2.5 months (Aug–Nov 2026)
-// while `sync status` reported healthy. Throwing aborts the batch before the
-// cursor advances, so no time entries are skipped — they land on the first
-// run after the fix.
+// while `sync status` reported healthy. Unlinked rows are never lost: every
+// relink scans for empty relations, so they are patched on the first run
+// after the cause is fixed.
 async function tryBackfillRelations(): Promise<void> {
 	const required = [
 		"NOTION_API_TOKEN",
