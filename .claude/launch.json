@@ -70,6 +70,20 @@
 				"--strictPort"
 			],
 			"port": 5178
+		},
+		{
+			"name": "partnerstack-program-summary",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-partnerstack-sync",
+				"--",
+				"--port",
+				"5179",
+				"--strictPort"
+			],
+			"port": 5179
 		}
 	]
 }
