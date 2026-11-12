@@ -1,0 +1,363 @@
+/*
+ * Chrome from NDS tokens so the block tracks the page theme. Series colours are
+ * the validated workFlowers azure from docs/custom-blocks.md, re-stepped per
+ * mode; "scheduled" is the same hue at reduced strength with a dashed outline,
+ * and the legend is the secondary encoding. Status colours use fallbacks so a
+ * missing token can't invalidate the declaration.
+ */
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: transparent;
+}
+
+.ps-root {
+	--series-paid: #1479e1;
+	--series-scheduled: color-mix(in oklab, #1479e1 30%, transparent);
+	--good: #006300;
+	--warn: #a15c00;
+	--bad: #d03b3b;
+	--muted: var(--content-secondary, #6b6b6b);
+	--line: var(--border-primary, rgba(0, 0, 0, 0.1));
+
+	width: 100%;
+	color: var(--content-primary);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.45;
+}
+
+.ps-root[data-display-mode="dark"] {
+	--series-paid: #3a92f0;
+	--series-scheduled: color-mix(in oklab, #3a92f0 32%, transparent);
+	--good: #0ca30c;
+	--warn: #e0a33a;
+	--bad: #e66767;
+}
+
+.ps-root[data-mock="true"] {
+	min-height: 100vh;
+	padding: var(--spacing-16);
+	background: var(--bg-base);
+}
+
+.ps-dash {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-20, 20px);
+	padding: var(--spacing-4) 0;
+}
+
+.ps-note {
+	margin: 0;
+	padding: var(--spacing-12) 0;
+	color: var(--muted);
+}
+
+.ps-error {
+	color: var(--bad);
+}
+
+.ps-footnote {
+	margin: var(--spacing-8, 8px) 0 0;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.ps-h {
+	margin: 0 0 var(--spacing-8, 8px);
+	font-size: 12px;
+	font-weight: var(--font-weight-semibold, 600);
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+/* ── tiles ── */
+.ps-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: var(--spacing-8, 8px);
+}
+
+.ps-tile {
+	padding: var(--spacing-12) var(--spacing-12);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md, 8px);
+	background: var(--bg-elevated);
+}
+
+.ps-tile-label {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.ps-tile-value {
+	margin-top: 2px;
+	font-size: 22px;
+	font-weight: var(--font-weight-semibold, 600);
+	font-variant-numeric: tabular-nums;
+}
+
+.ps-tile[data-tone="paid"] .ps-tile-value {
+	color: var(--series-paid);
+}
+
+.ps-tile-sub {
+	margin-top: 2px;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+/* ── monthly bars ── */
+.ps-legend {
+	display: flex;
+	gap: var(--spacing-12);
+	margin-bottom: var(--spacing-8, 8px);
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.ps-legend i {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	margin-right: 4px;
+	border-radius: 2px;
+	vertical-align: -1px;
+}
+
+.ps-legend i[data-kind="paid"],
+.ps-bar[data-kind="paid"] {
+	background: var(--series-paid);
+}
+
+.ps-legend i[data-kind="scheduled"],
+.ps-bar[data-kind="scheduled"] {
+	background: var(--series-scheduled);
+	outline: 1px dashed var(--series-paid);
+	outline-offset: -1px;
+}
+
+.ps-bars {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--spacing-8, 8px);
+	padding-bottom: 2px;
+	border-bottom: 1px solid var(--line);
+}
+
+/* No overflow scrolling here: it would clip the tooltips. Columns shrink instead. */
+.ps-bar-col {
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: 88px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.ps-bar-col {
+	position: relative;
+	outline: none;
+}
+
+/* Values live in a hover/focus tooltip rather than as labels on the bars. */
+.ps-tooltip {
+	position: absolute;
+	bottom: calc(100% + 4px);
+	left: 50%;
+	z-index: 2;
+	transform: translateX(-50%);
+	padding: 6px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm, 6px);
+	background: var(--bg-elevated);
+	box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12));
+	font-size: 12px;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 80ms ease;
+}
+
+.ps-bar-col:first-child .ps-tooltip {
+	left: 0;
+	transform: none;
+}
+
+.ps-bar-col:last-child:not(:first-child) .ps-tooltip {
+	left: auto;
+	right: 0;
+	transform: none;
+}
+
+.ps-bar-col:hover .ps-tooltip,
+.ps-bar-col:focus-visible .ps-tooltip {
+	opacity: 1;
+}
+
+.ps-bar-col:hover .ps-bar,
+.ps-bar-col:focus-visible .ps-bar {
+	filter: brightness(1.08);
+}
+
+.ps-tooltip-title {
+	margin-bottom: 2px;
+	font-weight: var(--font-weight-semibold, 600);
+}
+
+.ps-tooltip i {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	margin-right: 4px;
+	border-radius: 2px;
+}
+
+.ps-tooltip i[data-kind="paid"] {
+	background: var(--series-paid);
+}
+
+.ps-tooltip i[data-kind="scheduled"] {
+	background: var(--series-scheduled);
+	outline: 1px dashed var(--series-paid);
+	outline-offset: -1px;
+}
+
+.ps-tooltip span {
+	margin-left: 8px;
+	font-variant-numeric: tabular-nums;
+}
+
+.ps-bar-stack {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+}
+
+.ps-bar {
+	width: 100%;
+	border-radius: 0;
+}
+
+.ps-bar-stack .ps-bar:first-child {
+	border-radius: 3px 3px 0 0;
+}
+
+.ps-bar-label {
+	max-width: 100%;
+	margin-top: 4px;
+	overflow: hidden;
+	font-size: 11px;
+	color: var(--muted);
+	text-overflow: clip;
+	white-space: nowrap;
+}
+
+/* ── tables ── */
+.ps-table-wrap {
+	overflow-x: auto;
+}
+
+.ps-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+.ps-table th,
+.ps-table td {
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.ps-table th {
+	font-weight: var(--font-weight-medium, 500);
+	color: var(--muted);
+	white-space: nowrap;
+}
+
+.ps-table th:first-child,
+.ps-table td:first-child {
+	padding-left: 0;
+}
+
+.ps-table .num {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.ps-table .nowrap {
+	white-space: nowrap;
+}
+
+.ps-status {
+	white-space: nowrap;
+	text-transform: capitalize;
+}
+
+.ps-status::before {
+	content: "";
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	margin-right: 6px;
+	border-radius: 50%;
+	background: var(--muted);
+	vertical-align: 1px;
+}
+
+.ps-status[data-status="paid"]::before,
+.ps-status[data-status="successful"]::before {
+	background: var(--good);
+}
+
+.ps-status[data-status="approved"]::before {
+	background: var(--series-paid);
+}
+
+.ps-status[data-status="pending"]::before,
+.ps-status[data-status="hold"]::before,
+.ps-status[data-status="new"]::before {
+	background: var(--warn);
+}
+
+.ps-status[data-status="declined"]::before,
+.ps-status[data-status="failed"]::before {
+	background: var(--bad);
+}
+
+.ps-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: var(--spacing-8, 8px);
+	font-size: 12px;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.ps-more {
+	margin-top: var(--spacing-8, 8px);
+	padding: 4px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm, 6px);
+	background: transparent;
+	color: var(--content-primary);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.ps-more:hover {
+	background: var(--bg-elevated);
+}

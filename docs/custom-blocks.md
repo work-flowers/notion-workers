@@ -26,6 +26,14 @@ the Vite build itself, so a caret range there drifts the same way: on
 8.2.0. The pinned versions are the ones that cloud build used, and that bundle
 is confirmed rendering.
 
+**Adding a block to an existing sync worker moves it to TypeScript 6**, the
+version the block workers use, and TS 6 changes two tsconfig defaults: `@types/*`
+are no longer included automatically (`Cannot find name 'process'`), and the
+scaffold's ES2020 target lacks `Array.prototype.at`. Set `"types": ["node"]` and
+an ES2022 target/lib in the worker's `tsconfig.json`. The cloud build catches it
+even when a local `npm run check` doesn't, because locally `tsc` can resolve to
+the root's TS 5 (hit on `partnerstack-sync`, 2026-11-12).
+
 **A block that stops rendering usually just needs a redeploy.** `ga4-sync`'s
 dashboard stopped rendering after sitting on its 2026-08-03 build while the host
 moved on; the code typechecked and built cleanly against 0.1.44, and `./scripts/deploy.sh
