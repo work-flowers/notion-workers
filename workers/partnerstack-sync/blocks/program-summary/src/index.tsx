@@ -15,7 +15,7 @@ import { App, type AppProps } from "./App.tsx"
 import { toPayoutRow, toProgramRow, toRewardRow } from "./rows.ts"
 import "./block.css"
 
-// The alpha caps a query at 999 rows; today's volumes are 4 / 54 / 5.
+// The alpha caps a query at 999 rows, far above today's volumes.
 const QUERY = { limit: 999 } as const
 
 const params = new URLSearchParams(window.location.search)
@@ -78,7 +78,7 @@ const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
 
 if (isMock) {
-	// `?mock` = all-programs overview; `?mock&program=co_…` = one program page.
+	// `?mock` = all-programs overview; `?mock&program=prog_setup` = one program page.
 	void import("./mock.ts").then(({ MOCK_PAYOUTS, MOCK_PROGRAMS, MOCK_REWARDS }) => {
 		const summary = summarize(MOCK_PROGRAMS, MOCK_REWARDS, MOCK_PAYOUTS, params.get("program"))
 		ReactDOM.createRoot(root).render(

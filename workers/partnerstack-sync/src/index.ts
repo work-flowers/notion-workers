@@ -182,7 +182,7 @@ type Match = { batch: Batch; fee: number };
 // The API never links a payout (withdrawal, "pay_…") to the rewards it paid:
 // a reward's integer `payout_id` is not a payout key. But each withdrawal is
 // exactly one reward batch (rewards sharing a payout_id) minus a small
-// withdrawal fee ($1–$3.50 seen). So a payout is matched to the batch whose
+// withdrawal fee. So a payout is matched to the batch whose
 // total exceeds it by at most MAX_FEE_CENTS, and only when that pairing is
 // unique in both directions; anything ambiguous is left unlinked.
 const MAX_FEE_CENTS = 500;
@@ -249,7 +249,7 @@ type CursorState = { startingAfter?: string };
 
 // All syncs are replace mode: the API has no updated-since filter, and rewards
 // change status (pending → approved → paid) long after creation, so each run
-// re-reads everything. 4 programs, 54 rewards and 5 payouts as of 2026-11-12.
+// re-reads everything. Volumes are small (one page per source).
 
 worker.sync("programsSync", {
 	database: programs,
