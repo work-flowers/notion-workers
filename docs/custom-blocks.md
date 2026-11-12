@@ -155,6 +155,14 @@ read at runtime via `useParent()`:
   a page has no enclosing data source, so mapping is manual.
 - A custom view belongs to **one** data source. On a multi-source database, create
   it on the data source you actually want.
+- **Custom blocks are native database page-layout modules**, placed either as a
+  tab of their own or as a view inside the main Content tab. One placement then
+  shows on every row's page, which beats pasting the block into each page body
+  or a template. This is done in the UI: the Notion MCP's `update-data-source`
+  `page_layout` schema has no custom-block module yet (as of 2026-11-12), so
+  don't conclude from it that layouts can't hold one. Whether `usePage()` there
+  returns the row being viewed is untested; `partnerstack-sync`'s block relies
+  on it.
 
 ## The manifest and binding
 
