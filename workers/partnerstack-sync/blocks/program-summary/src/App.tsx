@@ -123,10 +123,22 @@ function MonthlyBars({ months }: { months: Month[] }) {
 			</div>
 			<div className="ps-bars" role="img" aria-label="Paid and scheduled amounts by payment month">
 				{months.map((m) => {
-					const total = m.paid + m.scheduled
 					return (
-						<div className="ps-bar-col" key={m.month} title={`${fmtMonth(m.month)}: ${usd(m.paid)} paid, ${usd(m.scheduled)} scheduled`}>
-							<div className="ps-bar-value">{total ? usd(total) : ""}</div>
+						<div
+							className="ps-bar-col"
+							key={m.month}
+							tabIndex={0}
+							aria-label={`${fmtMonth(m.month)}: ${usd(m.paid)} paid, ${usd(m.scheduled)} scheduled`}
+						>
+							<div className="ps-tooltip" role="tooltip">
+								<div className="ps-tooltip-title">{fmtMonth(m.month)}</div>
+								{m.paid || !m.scheduled ? (
+									<div><i data-kind="paid" /> Paid <span>{usd(m.paid)}</span></div>
+								) : null}
+								{m.scheduled ? (
+									<div><i data-kind="scheduled" /> Scheduled <span>{usd(m.scheduled)}</span></div>
+								) : null}
+							</div>
 							<div className="ps-bar-stack" style={{ height: H }}>
 								<div className="ps-bar" data-kind="scheduled" style={{ height: (m.scheduled / max) * H }} />
 								<div className="ps-bar" data-kind="paid" style={{ height: (m.paid / max) * H }} />
