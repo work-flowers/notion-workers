@@ -52,8 +52,8 @@ schema: declaring it would make it read-only.
 
 ## Program summary block
 
-`programSummary` is a custom block for the **page body of a program**. Placed
-there, it works out which program it's on and shows:
+`programSummary` is a custom block for **program pages**. On a program's page
+it works out which program it's on and shows:
 
 - **Totals**: paid (with the last payment date), awaiting payment (approved vs
   pending, with the next payment date), declined, and the number of rewards.
@@ -66,24 +66,26 @@ there, it works out which program it's on and shows:
 Placed anywhere other than a program page, it shows an overview of all
 programs instead.
 
-### Adding it to a program page
+### Adding it to the program pages
 
-1. On a program page, type `/` in the body and pick the PartnerStack program
-   summary block.
-2. In the block's settings, map its three data sources:
+Add it once, to the **PartnerStack Programs page layout**, and every program
+page gets it. Custom blocks are native page-layout modules, placed either:
 
-   | Block data source | Notion data source | Properties |
-   |---|---|---|
-   | Programs | PartnerStack Programs | Name |
-   | Rewards | PartnerStack Rewards | Name, **Partner Program** (the relation, not the `Program` select), Payout, Amount, Status, Payment Date, Created |
-   | Payouts | PartnerStack Payouts | Name, Amount, Status, Fee, Withdrawn, Sent, Created |
+- as a **tab** of its own, next to the page's Content tab, or
+- as a view **inside the main Content tab**.
 
-   Most properties match by name automatically.
-3. To get it on every program page, add it to a Programs database template and
-   make that the default. Each inserted block is bound separately.
+Then map the block's three data sources in its settings:
 
-Notion's database page *layouts* can't hold custom blocks, which is why it
-goes in the page body.
+| Block data source | Notion data source | Properties |
+|---|---|---|
+| Programs | PartnerStack Programs | Name |
+| Rewards | PartnerStack Rewards | Name, **Partner Program** (the relation, not the `Program` select), Payout, Amount, Status, Payment Date, Created |
+| Payouts | PartnerStack Payouts | Name, Amount, Status, Fee, Withdrawn, Sent, Created |
+
+Most properties match by name automatically.
+
+The block can also be typed into any page body with `/`, as an ordinary block.
+On a program page it behaves the same; anywhere else it shows the overview.
 
 ## Setup
 
