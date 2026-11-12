@@ -43,6 +43,16 @@ both directions. Each linked payout also records its batch id and the fee.
 Anything ambiguous or unmatched is left unlinked and noted in the run's log,
 rather than guessed.
 
+### Which teammate referred a reward
+
+**Rewards → Referred By** shows the sub IDs on the referral link the customer
+signed up through. This is the only way the API can say which of us referred
+someone. PartnerStack's per-link report isn't available to partners through
+the API, and customers don't record which link they used. So for referrals to
+be credited, each teammate shares their link with a sub ID that names them.
+Check PartnerStack's link settings for the exact format. Referrals made
+without one show a blank Referred By.
+
 ### The Description column
 
 **Programs → Description** is written by hand, not by the sync. PartnerStack

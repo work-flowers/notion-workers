@@ -19,7 +19,8 @@ export type Reward = {
 	payment_status: string | null; // available | withdrawn
 	payout_id: number | null; // PartnerStack payout batch; not a /v2/payouts key
 	company: { key: string; name: string } | null;
-	customer: { key: string | null } | null;
+	// sub_ids: whatever was appended to the referral link (e.g. a teammate's name).
+	customer: { key: string | null; sub_ids?: string[] | null } | null;
 	transaction: { product_key: string | null; category_key: string | null } | null;
 };
 
