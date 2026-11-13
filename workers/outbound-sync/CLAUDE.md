@@ -24,13 +24,16 @@ Both point at Smartlead Campaigns, and they mean different things (decided with 
 
 **One Smartlead campaign per Apollo list**, one list per target segment, e.g. "Zapier People List" → "Zapier Campaign" (agreed with Seth 31 Oct 2026; built 13 Nov 2026). Nobody picks a campaign per lead, and Status → Sequenced stays the human go/no-go.
 
-- **Apollo List** on Outbound Leads (synced by `apolloLeads`) shows the names of the contact's Apollo contact lists, comma-separated. It's informational only.
-- **Apollo List ID** on Smartlead Campaigns is **human-edited and undeclared** (added by hand, since the sync owns every declared column). Put the list's ID or its exact name there; comma-separate several lists if one campaign takes more than one. Matching ignores case.
-- `pushToSmartlead` re-reads the contact's lists **live from Apollo** (`GET /api/v1/contacts/{id}`) rather than trusting the synced column, then matches them against every Smartlead Campaigns page.
-  - Exactly one mapped campaign: push there.
-  - None: `Blocked:` naming the contact's lists.
-  - More than one: `Blocked:` listing each list → campaign pair.
-  - **Push to campaign**, when set, skips the lookup.
+- **Apollo Lists** is a managed database, one row per Apollo *contact* list (account lists are skipped), keyed on List ID. `apolloListsSync` refreshes it hourly from `GET /api/v1/labels`, in replace mode, which only removes lists deleted in Apollo.
+- **Apollo Lists** on Outbound Leads is a synced, two-way relation written by `apolloLeads`. The reverse, **Leads**, is on each Apollo Lists page. It was declared two-way from the start, because converting an existing relation is silently ignored.
+- **Smartlead Campaign** on Apollo Lists is the mapping. It's **human-edited and added by hand** (a one-way or two-way relation to Smartlead Campaigns, limited to one page), so it stays outside the schema and editable.
+- `pushToSmartlead` follows lead → Apollo Lists → Smartlead Campaign.
+  - One distinct campaign: push there.
+  - None: `Blocked:` naming the lists.
+  - Different campaigns: `Blocked:` with each list → campaign pair.
+  - **Push to campaign**, when set, skips this lookup.
+  - The relation is up to an hour old, as of the last `apolloLeads` run. A contact added to a list since then gets its new list after the next hourly run.
+- Apollo Lists must be shared with the `notion-worker-automations` integration (moving it under CRM > Databases does this), or the push can't read the list pages.
 
 ## Two syncs share Outbound Leads rows
 
@@ -44,7 +47,7 @@ Both point at Smartlead Campaigns, and they mean different things (decided with 
 
 While attached:
 
-- **Declared properties are read-only in Notion.** Declared from Apollo: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location, Apollo List. Declared from Smartlead: Smartlead Status, Sequence Step, Last Event, Latest Reply, Smartlead Lead ID, In campaign. Everything a human edits stays undeclared: Status, **Push to campaign**, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
+- **Declared properties are read-only in Notion.** Declared from Apollo: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location, Apollo Lists. Declared from Smartlead: Smartlead Status, Sequence Step, Last Event, Latest Reply, Smartlead Lead ID, In campaign. Everything a human edits stays undeclared: Status, **Push to campaign**, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
 - **Rows can't be added or deleted by hand** or by other integrations. Every lead enters through an Apollo list. Deleting is blocked both in the UI and through the API (the Notion connector's trash call failed with a bare validation error, 2026-10-30). **Archiving a row does work in the UI.** For a hand-made row with no Apollo ID, that's permanent. For a synced row, the next upsert of that contact un-archives it: a change in Apollo, or a state reset and re-run. To drop a synced lead for good, remove it from the Apollo list first. To trash rows, detach, trash them, then re-attach (re-attaching runs a sync immediately).
 - **Detach before decommissioning.** Run `ntn workers databases detach outboundLeads` first. That releases the read-only locks and leaves every row. Deleting the worker or removing the declaration does *not* release the database; it stays locked with nothing able to release it.
 - Rows from before the worker have no Apollo ID. Incremental mode leaves them alone, but their titles become read-only.

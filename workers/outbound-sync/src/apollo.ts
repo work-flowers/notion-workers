@@ -17,7 +17,7 @@ export type ApolloContact = {
 };
 
 /** An Apollo contact list (label). */
-export type ApolloList = { id: string; name: string };
+export type ApolloList = { id: string; name: string; count: number };
 
 type SearchResponse = {
 	contacts?: ApolloContact[];
@@ -46,20 +46,10 @@ export async function contactLists(): Promise<ApolloList[]> {
 		const body = await res.text().catch(() => "");
 		throw new Error(`Apollo labels failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
 	}
-	const labels = (await res.json()) as { id: string; name: string; modality?: string }[];
-	return labels.filter((l) => l.modality === "contacts").map((l) => ({ id: l.id, name: l.name }));
-}
-
-/** One contact, read live (the push webhook uses it so it never acts on a stale sync). */
-export async function getContact(id: string): Promise<ApolloContact> {
-	const res = await fetch(`https://api.apollo.io/api/v1/contacts/${encodeURIComponent(id)}`, {
-		headers: { "X-Api-Key": apiKey(), Accept: "application/json", "Cache-Control": "no-cache" },
-	});
-	if (!res.ok) {
-		const body = await res.text().catch(() => "");
-		throw new Error(`Apollo contact ${id} failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
-	}
-	return ((await res.json()) as { contact: ApolloContact }).contact;
+	const labels = (await res.json()) as { id: string; name: string; modality?: string; cached_count?: number }[];
+	return labels
+		.filter((l) => l.modality === "contacts")
+		.map((l) => ({ id: l.id, name: l.name, count: l.cached_count ?? 0 }));
 }
 
 /** One page of contacts on the given lists, most recently updated first. */

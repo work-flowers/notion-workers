@@ -3,15 +3,12 @@ import {
 	createPage,
 	DEFAULT_CONTACTS_DATA_SOURCE_ID,
 	lookupExistingContacts,
-	queryDataSource,
 	retrievePage,
 	updatePage,
 } from "@work-flowers/notion-worker-shared";
-import { contactLists, getContact } from "./apollo.js";
 import { addLead, stopLeadEverywhere } from "./smartlead.js";
 
-/** Smartlead Campaigns, the worker's managed database (moved under CRM > Databases). */
-const SMARTLEAD_CAMPAIGNS_DATA_SOURCE_ID = "5484e931-dbc6-45a5-84bb-3622ed5bab0e";
+
 
 type Props = Record<string, any>;
 type Event = { deliveryId: string; body: unknown };
@@ -67,47 +64,35 @@ async function each(events: Event[], label: string, fn: (pageId: string) => Prom
 type Campaign = { pageId: string; id: number; name: string };
 
 /**
- * One Smartlead campaign per Apollo list (agreed with Seth, 31 Oct 2026). Each
- * Smartlead Campaigns page names its list in the human-edited "Apollo List ID"
- * column: the list's ID or its exact name (comma-separate several). The
- * contact's lists are read live from Apollo, so a stale sync can't misroute it.
+ * One Smartlead campaign per Apollo list (agreed with Seth, 31 Oct 2026). The
+ * lead's synced "Apollo Lists" relation leads to Apollo Lists pages, and each
+ * of those names its campaign in the hand-added "Smartlead Campaign" relation.
  */
-async function campaignForLists(apolloId: string): Promise<{ campaign: Campaign } | { reason: string }> {
-	const [contact, lists, campaigns] = await Promise.all([
-		getContact(apolloId),
-		contactLists(),
-		queryDataSource(SMARTLEAD_CAMPAIGNS_DATA_SOURCE_ID, { page_size: 100 }),
-	]);
-	const onLists = lists.filter((l) => contact.label_ids?.includes(l.id));
-	const matches: (Campaign & { list: string })[] = [];
-	for (const page of campaigns.results ?? []) {
-		const keys = text(page.properties?.["Apollo List ID"])
-			.split(",")
-			.map((k) => k.trim().toLowerCase())
-			.filter(Boolean);
-		for (const l of onLists) {
-			if (keys.includes(l.id.toLowerCase()) || keys.includes(l.name.toLowerCase())) {
-				matches.push({
-					pageId: page.id,
-					id: Number(text(page.properties?.["Campaign ID"])),
-					name: text(page.properties?.Name),
-					list: l.name,
-				});
-			}
-		}
-	}
-	const distinct = [...new Map(matches.map((m) => [m.pageId, m])).values()];
-	const listNames = onLists.map((l) => l.name).join(", ") || "none";
-	if (distinct.length === 0) {
+async function campaignForLists(props: Props): Promise<{ campaign: Campaign } | { reason: string }> {
+	const listPageIds = relationIds(props["Apollo Lists"]);
+	if (listPageIds.length === 0) return { reason: "the lead isn't on any Apollo list" };
+	const lists = await Promise.all(
+		listPageIds.map(async (id) => {
+			const p: Props = (await retrievePage(id)).properties ?? {};
+			return { name: text(p.Name), campaignPageId: relationIds(p["Smartlead Campaign"])[0] };
+		}),
+	);
+	const mapped = lists.filter((l) => l.campaignPageId);
+	const campaignPageIds = [...new Set(mapped.map((l) => l.campaignPageId!))];
+	const names = lists.map((l) => l.name).join(", ");
+	if (campaignPageIds.length === 0) {
 		return {
-			reason: `no Smartlead campaign is mapped to this contact's Apollo lists (${listNames}). Put the list's name or ID in Apollo List ID on its Smartlead Campaigns page, or set Push to campaign`,
+			reason: `none of this lead's Apollo lists (${names}) has a Smartlead Campaign set on Apollo Lists. Set one there, or set Push to campaign`,
 		};
 	}
-	if (distinct.length > 1) {
-		const pairs = matches.map((m) => `${m.list} → ${m.name}`).join("; ");
-		return { reason: `this contact is on more than one mapped Apollo list (${pairs}). Set Push to campaign to choose one` };
+	const campaigns = await Promise.all(campaignPageIds.map(campaignFromPage));
+	if (campaigns.length > 1) {
+		const pairs = mapped
+			.map((l) => `${l.name} → ${campaigns.find((c) => c.pageId === l.campaignPageId)?.name}`)
+			.join("; ");
+		return { reason: `this lead's Apollo lists map to different campaigns (${pairs}). Set Push to campaign to choose one` };
 	}
-	return { campaign: distinct[0] };
+	return { campaign: campaigns[0] };
 }
 
 async function campaignFromPage(pageId: string): Promise<Campaign> {
@@ -156,7 +141,7 @@ export function pushToSmartlead(events: Event[]): Promise<void> {
 		if (overridePageId) {
 			campaign = await campaignFromPage(overridePageId);
 		} else {
-			const resolved = await campaignForLists(apolloId);
+			const resolved = await campaignForLists(props);
 			if ("reason" in resolved) return block(resolved.reason);
 			campaign = resolved.campaign;
 		}

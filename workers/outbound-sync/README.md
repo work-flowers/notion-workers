@@ -19,6 +19,6 @@ Detaching removes the read-only locks and keeps every row. Deleting the worker o
 3. Attach: `cd workers/outbound-sync && ntn workers databases attach outboundLeads 61a01f87-741b-4dbd-a98e-ada01e07eb3b` (the data source ID). **This starts a real sync straight away**, so step 2 must be complete and correct first.
 4. Check the result: `ntn workers sync status --no-watch`. `ntn workers sync trigger <sync> --preview` shows what the next cycle would write without writing it.
 5. Share the worker-created **Smartlead Campaigns** database with the `notion-worker-automations` integration (moving it under CRM > Databases does this). Then:
-   - Add a text column named exactly **Apollo List ID** to Smartlead Campaigns, and fill in each campaign's Apollo list, by ID or exact name. That's how the push picks a campaign.
+   - Share the worker-created **Apollo Lists** database the same way. On it, add a relation named exactly **Smartlead Campaign** to Smartlead Campaigns, limited to one page, and set each list's campaign. That's how the push picks a campaign.
    - Give Outbound Leads a one-way, single-page relation to Smartlead Campaigns named exactly **Push to campaign**. It's an optional override for leads on more than one mapped list.
 6. Create two database automations on Outbound Leads, each a **Send webhook** action with the default body: Status → Sequenced → the `pushToSmartlead` URL, and Status → Interested → the `promoteToContact` URL. Get the URLs from `ntn workers webhooks list` and keep them private; the URL is the only authentication.

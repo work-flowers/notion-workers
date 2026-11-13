@@ -19,6 +19,25 @@ const worker = new Worker();
 export default worker;
 
 /**
+ * Apollo Lists: managed by this worker, one row per Apollo contact list, keyed
+ * on the list ID. Which Smartlead campaign a list feeds is a human decision,
+ * so that relation ("Smartlead Campaign", one page) is added by hand in Notion,
+ * outside this schema, and the push webhook reads it.
+ */
+const apolloLists = worker.database("apolloLists", {
+	type: "managed",
+	initialTitle: "Apollo Lists",
+	primaryKeyProperty: "List ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"List ID": Schema.richText(),
+			Contacts: Schema.number("number"),
+		},
+	},
+});
+
+/**
  * Smartlead Campaigns: managed by this worker, keyed on the Smartlead campaign
  * ID. Segment/Notes columns for humans are added by hand in Notion, outside
  * this schema, so they stay editable.
@@ -78,9 +97,10 @@ const outboundLeads = worker.database("outboundLeads", {
 			Email: Schema.email(),
 			"LinkedIn Profile URL": Schema.url(),
 			Location: Schema.richText(),
-			// Names of the Apollo lists the contact is on, comma-separated. Informational:
-			// the push webhook re-reads the lists live from Apollo to pick the campaign.
-			"Apollo List": Schema.richText(),
+			// The contact's Apollo lists. Declared two-way from the start: the platform
+			// ignores converting an existing relation. The push webhook follows it to
+			// each list's Smartlead Campaign.
+			"Apollo Lists": Schema.relation("apolloLists", { twoWay: true, relatedPropertyName: "Leads" }),
 			// Smartlead (smartleadLeads)
 			"Smartlead Status": Schema.select([
 				{ name: "In sequence", color: "blue" },
@@ -144,7 +164,7 @@ function toApolloUpsert(c: ApolloContact, lists: ApolloList[]) {
 	const name = c.name || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.id;
 	// Apollo repeats a city-state like Singapore or Tokyo as its state or country.
 	const location = [...new Set([c.city, c.state, c.country].filter(Boolean))].join(", ");
-	const listNames = lists.filter((l) => c.label_ids?.includes(l.id)).map((l) => l.name);
+	const onLists = lists.filter((l) => c.label_ids?.includes(l.id));
 	return {
 		type: "upsert" as const,
 		// Must be byte-identical to the "Apollo ID" value, or every run inserts a new row.
@@ -160,7 +180,7 @@ function toApolloUpsert(c: ApolloContact, lists: ApolloList[]) {
 			Email: Builder.email(revealedEmail(c.email) ?? ""),
 			"LinkedIn Profile URL": Builder.url(c.linkedin_url ?? ""),
 			Location: Builder.richText(location),
-			"Apollo List": Builder.richText(listNames.join(", ")),
+			"Apollo Lists": onLists.map((l) => Builder.relation(l.id)),
 		}),
 	};
 }
@@ -210,6 +230,29 @@ worker.sync("apolloLeads", {
 			: { cursor, page: page + 1, runMax, lists };
 
 		return { changes: fresh.map((c) => toApolloUpsert(c, lists)), hasMore: !done, nextState };
+	},
+});
+
+/** Replace mode is safe: a list only disappears when it's deleted in Apollo. */
+worker.sync("apolloListsSync", {
+	database: apolloLists,
+	mode: "replace",
+	schedule: "1h",
+	execute: async () => {
+		await apollo.wait();
+		const lists = await contactLists();
+		return {
+			changes: lists.map((l) => ({
+				type: "upsert" as const,
+				key: l.id,
+				properties: {
+					Name: Builder.title(l.name),
+					"List ID": Builder.richText(l.id),
+					Contacts: Builder.number(l.count),
+				},
+			})),
+			hasMore: false,
+		};
 	},
 });
 
