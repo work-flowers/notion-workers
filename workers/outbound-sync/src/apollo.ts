@@ -12,7 +12,12 @@ export type ApolloContact = {
 	state?: string | null;
 	country?: string | null;
 	updated_at?: string | null;
+	/** IDs of the Apollo lists (labels) the contact is on. */
+	label_ids?: string[] | null;
 };
+
+/** An Apollo contact list (label). */
+export type ApolloList = { id: string; name: string; count: number };
 
 type SearchResponse = {
 	contacts?: ApolloContact[];
@@ -33,7 +38,7 @@ function apiKey(): string {
  * Outbound Leads; contacts on no list (saved ad hoc, or added by Apollo
  * itself) stay out. Looked up each cycle, so a new list needs no config.
  */
-export async function contactListIds(): Promise<string[]> {
+export async function contactLists(): Promise<ApolloList[]> {
 	const res = await fetch("https://api.apollo.io/api/v1/labels", {
 		headers: { "X-Api-Key": apiKey(), Accept: "application/json", "Cache-Control": "no-cache" },
 	});
@@ -41,8 +46,10 @@ export async function contactListIds(): Promise<string[]> {
 		const body = await res.text().catch(() => "");
 		throw new Error(`Apollo labels failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
 	}
-	const labels = (await res.json()) as { id: string; modality?: string }[];
-	return labels.filter((l) => l.modality === "contacts").map((l) => l.id);
+	const labels = (await res.json()) as { id: string; name: string; modality?: string; cached_count?: number }[];
+	return labels
+		.filter((l) => l.modality === "contacts")
+		.map((l) => ({ id: l.id, name: l.name, count: l.cached_count ?? 0 }));
 }
 
 /** One page of contacts on the given lists, most recently updated first. */
