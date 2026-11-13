@@ -26,14 +26,23 @@ Both point at Smartlead Campaigns, and they mean different things (decided with 
 
 - **Apollo Lists** is a managed database, one row per Apollo *contact* list (account lists are skipped), keyed on List ID. `apolloListsSync` refreshes it hourly from `GET /api/v1/labels`, in replace mode, which only removes lists deleted in Apollo.
 - **Apollo Lists** on Outbound Leads is a synced, two-way relation written by `apolloLeads`. The reverse, **Leads**, is on each Apollo Lists page. It was declared two-way from the start, because converting an existing relation is silently ignored.
-- **Smartlead Campaign** on Apollo Lists is the mapping. It's **human-edited and added by hand** (a one-way or two-way relation to Smartlead Campaigns, limited to one page), so it stays outside the schema and editable.
+- **Smartlead Campaign** on Apollo Lists is the mapping. It's **human-edited and added by hand** (a relation to Smartlead Campaigns, limited to one page), so it stays outside the schema and editable. As set up on 13 Nov 2026 it's two-way, and its reverse, **Apollo List** on Smartlead Campaigns, is also limited to one page. That makes the mapping strictly one-to-one: pointing a second list at a campaign silently clears the first list's link. If a campaign ever needs to take more than one list, lift the limit on the reverse.
+- Adding columns to these worker-owned databases works from the Notion UI, but it can take a minute to show up through the API.
+- The hand-set mapping survives the hourly replace-mode `apolloListsSync`, which only writes its declared columns (checked 13 Nov 2026).
 - `pushToSmartlead` follows lead → Apollo Lists → Smartlead Campaign.
   - One distinct campaign: push there.
   - None: `Blocked:` naming the lists.
   - Different campaigns: `Blocked:` with each list → campaign pair.
   - **Push to campaign**, when set, skips this lookup.
   - The relation is up to an hour old, as of the last `apolloLeads` run. A contact added to a list since then gets its new list after the next hourly run.
-- Apollo Lists must be shared with the `notion-worker-automations` integration (moving it under CRM > Databases does this), or the push can't read the list pages.
+- Apollo Lists must be shared with the `notion-worker-automations` integration, or the push can't read the list pages. Moving it into the **📣 Outbound Leads and Campaigns** database as a data source does this.
+- Tested live on 13 Nov 2026 against draft campaign 4276123:
+  - Grace (one mapped list): pushed.
+  - Ada (two lists, one mapped): pushed.
+  - Ada (lists mapped to different campaigns): blocked with the pairs, and nothing reached Smartlead.
+  - Ada with **Push to campaign** set: pushed "(from Push to campaign)".
+  - Before the mapping existed, a push blocked with "no campaign mapped".
+- **Retired along the way:** the plain-text **Apollo List** column (a first cut, replaced the same day by the relation) and the **Subject Line** and **Message** columns. Delete the first by hand if it's still there.
 
 ## Two syncs share Outbound Leads rows
 
