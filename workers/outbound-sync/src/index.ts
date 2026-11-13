@@ -1,7 +1,7 @@
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
-import { type ApolloContact, contactListIds, revealedEmail, searchContacts } from "./apollo.js";
+import { type ApolloContact, type ApolloList, contactLists, revealedEmail, searchContacts } from "./apollo.js";
 import {
 	type CampaignLead,
 	campaignAnalytics,
@@ -56,7 +56,7 @@ const smartleadCampaigns = worker.database("smartleadCampaigns", {
  * survive. Bind it with `ntn workers databases attach outboundLeads <data-source-id>`.
  *
  * Only Apollo and Smartlead facts are declared: declaring a property makes it
- * read-only in Notion. Status, Campaign, Subject Line, Message, Notes, Owner,
+ * read-only in Notion. Status, Push to campaign, Notes, Owner,
  * Contacts and Follow-up Date are human decisions and must stay out of this schema.
  *
  * Two syncs write here, each sending only its own columns (see `partial`).
@@ -78,6 +78,9 @@ const outboundLeads = worker.database("outboundLeads", {
 			Email: Schema.email(),
 			"LinkedIn Profile URL": Schema.url(),
 			Location: Schema.richText(),
+			// Names of the Apollo lists the contact is on, comma-separated. Informational:
+			// the push webhook re-reads the lists live from Apollo to pick the campaign.
+			"Apollo List": Schema.richText(),
 			// Smartlead (smartleadLeads)
 			"Smartlead Status": Schema.select([
 				{ name: "In sequence", color: "blue" },
@@ -134,13 +137,14 @@ type ApolloState = {
 	/** Latest `updated_at` seen so far in the current cycle. */
 	runMax?: string;
 	/** Every contact list, looked up at the start of the cycle and kept for its pages. */
-	lists?: string[];
+	lists?: ApolloList[];
 };
 
-function toApolloUpsert(c: ApolloContact) {
+function toApolloUpsert(c: ApolloContact, lists: ApolloList[]) {
 	const name = c.name || [c.first_name, c.last_name].filter(Boolean).join(" ") || c.id;
 	// Apollo repeats a city-state like Singapore or Tokyo as its state or country.
 	const location = [...new Set([c.city, c.state, c.country].filter(Boolean))].join(", ");
+	const listNames = lists.filter((l) => c.label_ids?.includes(l.id)).map((l) => l.name);
 	return {
 		type: "upsert" as const,
 		// Must be byte-identical to the "Apollo ID" value, or every run inserts a new row.
@@ -156,6 +160,7 @@ function toApolloUpsert(c: ApolloContact) {
 			Email: Builder.email(revealedEmail(c.email) ?? ""),
 			"LinkedIn Profile URL": Builder.url(c.linkedin_url ?? ""),
 			Location: Builder.richText(location),
+			"Apollo List": Builder.richText(listNames.join(", ")),
 		}),
 	};
 }
@@ -181,14 +186,14 @@ worker.sync("apolloLeads", {
 		let lists = state?.lists;
 		if (!lists) {
 			await apollo.wait();
-			lists = await contactListIds();
+			lists = await contactLists();
 		}
 		// An empty contact_label_ids filter matches every contact in Apollo, so
 		// with no lists there is nothing to sync, not everything.
 		if (lists.length === 0) return { changes: [], hasMore: false, nextState: { cursor } };
 
 		await apollo.wait();
-		const { contacts, totalPages } = await searchContacts(lists, page);
+		const { contacts, totalPages } = await searchContacts(lists.map((l) => l.id), page);
 
 		const fresh = cursor
 			? contacts.filter((c) => !c.updated_at || Date.parse(c.updated_at) > Date.parse(cursor))
@@ -204,7 +209,7 @@ worker.sync("apolloLeads", {
 				}
 			: { cursor, page: page + 1, runMax, lists };
 
-		return { changes: fresh.map(toApolloUpsert), hasMore: !done, nextState };
+		return { changes: fresh.map((c) => toApolloUpsert(c, lists)), hasMore: !done, nextState };
 	},
 });
 

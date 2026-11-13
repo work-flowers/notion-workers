@@ -3,10 +3,15 @@ import {
 	createPage,
 	DEFAULT_CONTACTS_DATA_SOURCE_ID,
 	lookupExistingContacts,
+	queryDataSource,
 	retrievePage,
 	updatePage,
 } from "@work-flowers/notion-worker-shared";
+import { contactLists, getContact } from "./apollo.js";
 import { addLead, stopLeadEverywhere } from "./smartlead.js";
+
+/** Smartlead Campaigns, the worker's managed database (moved under CRM > Databases). */
+const SMARTLEAD_CAMPAIGNS_DATA_SOURCE_ID = "5484e931-dbc6-45a5-84bb-3622ed5bab0e";
 
 type Props = Record<string, any>;
 type Event = { deliveryId: string; body: unknown };
@@ -59,11 +64,64 @@ async function each(events: Event[], label: string, fn: (pageId: string) => Prom
 	}
 }
 
+type Campaign = { pageId: string; id: number; name: string };
+
 /**
- * Status → Sequenced. Pre-flight per TKT-1051: email, name, company and
- * campaign set, and the email not already a Contact. On failure the lead goes
- * back to Backlog with a Blocked comment; on success it is added to the
- * campaign with notion_page_id, apollo_id, subject_line and opener.
+ * One Smartlead campaign per Apollo list (agreed with Seth, 31 Oct 2026). Each
+ * Smartlead Campaigns page names its list in the human-edited "Apollo List ID"
+ * column: the list's ID or its exact name (comma-separate several). The
+ * contact's lists are read live from Apollo, so a stale sync can't misroute it.
+ */
+async function campaignForLists(apolloId: string): Promise<{ campaign: Campaign } | { reason: string }> {
+	const [contact, lists, campaigns] = await Promise.all([
+		getContact(apolloId),
+		contactLists(),
+		queryDataSource(SMARTLEAD_CAMPAIGNS_DATA_SOURCE_ID, { page_size: 100 }),
+	]);
+	const onLists = lists.filter((l) => contact.label_ids?.includes(l.id));
+	const matches: (Campaign & { list: string })[] = [];
+	for (const page of campaigns.results ?? []) {
+		const keys = text(page.properties?.["Apollo List ID"])
+			.split(",")
+			.map((k) => k.trim().toLowerCase())
+			.filter(Boolean);
+		for (const l of onLists) {
+			if (keys.includes(l.id.toLowerCase()) || keys.includes(l.name.toLowerCase())) {
+				matches.push({
+					pageId: page.id,
+					id: Number(text(page.properties?.["Campaign ID"])),
+					name: text(page.properties?.Name),
+					list: l.name,
+				});
+			}
+		}
+	}
+	const distinct = [...new Map(matches.map((m) => [m.pageId, m])).values()];
+	const listNames = onLists.map((l) => l.name).join(", ") || "none";
+	if (distinct.length === 0) {
+		return {
+			reason: `no Smartlead campaign is mapped to this contact's Apollo lists (${listNames}). Put the list's name or ID in Apollo List ID on its Smartlead Campaigns page, or set Push to campaign`,
+		};
+	}
+	if (distinct.length > 1) {
+		const pairs = matches.map((m) => `${m.list} → ${m.name}`).join("; ");
+		return { reason: `this contact is on more than one mapped Apollo list (${pairs}). Set Push to campaign to choose one` };
+	}
+	return { campaign: distinct[0] };
+}
+
+async function campaignFromPage(pageId: string): Promise<Campaign> {
+	const p: Props = (await retrievePage(pageId)).properties ?? {};
+	return { pageId, id: Number(text(p["Campaign ID"])), name: text(p.Name) };
+}
+
+/**
+ * Status → Sequenced. Pre-flight per TKT-1051: email, name, company and Apollo
+ * ID set, the email not already a Contact, and exactly one campaign: Push to
+ * campaign if someone set it, otherwise the campaign mapped to the contact's
+ * Apollo list. On failure the lead goes back to Backlog with a Blocked comment;
+ * on success it is added with notion_page_id, apollo_id and job_title. Copy
+ * lives in Smartlead (decided 30 Oct 2026), so no subject or opener is sent.
  */
 export function pushToSmartlead(events: Event[]): Promise<void> {
 	return each(events, "push-to-smartlead", async (pageId) => {
@@ -80,27 +138,33 @@ export function pushToSmartlead(events: Event[]): Promise<void> {
 		const name = text(props.Lead);
 		const company = text(props.Company);
 		const apolloId = text(props["Apollo ID"]);
-		// Exact spelling, lowercase "c". It's the push's only input; moves later happen in Smartlead.
-		const campaignPageId = relationIds(props["Push to campaign"])[0];
+		// Exact spelling, lowercase "c". An optional override of the list mapping;
+		// after a push, moves happen in Smartlead.
+		const overridePageId = relationIds(props["Push to campaign"])[0];
 		const missing = [
 			!email && "Email",
 			!name && "Lead name",
 			!company && "Company",
 			!apolloId && "Apollo ID (only Apollo-synced leads can be sequenced)",
-			!campaignPageId && "Push to campaign",
 		].filter(Boolean);
 		if (missing.length) return block(`missing ${missing.join(", ")}`);
 
 		const existing = await lookupExistingContacts([email!.toLowerCase()]);
 		if (existing.size > 0) return block(`${email} is already in Contacts; never sequence an existing contact`);
 
-		const campaignProps: Props = (await retrievePage(campaignPageId)).properties ?? {};
-		const campaignId = Number(text(campaignProps["Campaign ID"]));
-		const campaignName = text(campaignProps.Name) || String(campaignId);
-		if (!campaignId) return block("the Push to campaign page has no Campaign ID");
+		let campaign: Campaign;
+		if (overridePageId) {
+			campaign = await campaignFromPage(overridePageId);
+		} else {
+			const resolved = await campaignForLists(apolloId);
+			if ("reason" in resolved) return block(resolved.reason);
+			campaign = resolved.campaign;
+		}
+		if (!campaign.id) return block(`the campaign page "${campaign.name}" has no Campaign ID`);
+		const campaignName = campaign.name || String(campaign.id);
 
 		const { first, last } = splitName(name);
-		const result = await addLead(campaignId, {
+		const result = await addLead(campaign.id, {
 			email: email!,
 			first_name: first,
 			last_name: last,
@@ -110,12 +174,11 @@ export function pushToSmartlead(events: Event[]): Promise<void> {
 			custom_fields: {
 				notion_page_id: pageId.replace(/-/g, ""),
 				apollo_id: apolloId,
-				subject_line: text(props["Subject Line"]),
-				opener: text(props.Message),
+				job_title: text(props.Role),
 			},
 		});
 		if (!result.ok) return block(`Smartlead didn't add the lead: ${result.reason}`);
-		await comment(pageId, `Done: added to ${campaignName}`);
+		await comment(pageId, `Done: added to ${campaignName}${overridePageId ? " (from Push to campaign)" : ""}`);
 	});
 }
 
