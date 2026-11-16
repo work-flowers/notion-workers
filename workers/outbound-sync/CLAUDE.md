@@ -16,9 +16,33 @@ Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage
 
 Both point at Smartlead Campaigns, and they mean different things (decided with Dennis 2026-10-30):
 
-- **Push to campaign** (human, one-way, one page; spelled with a lowercase "c") is only the **input** to `pushToSmartlead`. It used to be called Campaign. After a push, Smartlead is the source of truth, and moving a lead between campaigns happens in Smartlead, not here. It's hidden on already-sequenced leads. It's undeclared, so a rename in Notion silently breaks the push ("missing Push to campaign"): keep `src/webhooks.ts` in step.
+- **Push to campaign** (human, one-way, one page; spelled with a lowercase "c") is an **optional override** for `pushToSmartlead`. Normally the campaign comes from the lead's Apollo list (see *List → campaign mapping*), and this stays empty. Set it only to choose for a contact on more than one mapped list, or to send a lead somewhere else. It used to be called Campaign. After a push, Smartlead is the source of truth, and moving a lead between campaigns happens in Smartlead, not here. It's undeclared, so a rename in Notion silently stops the override from being read: keep `src/webhooks.ts` in step.
 - **In campaign** (synced by `smartleadLeads`, two-way) is the **fact**: which campaign Smartlead has the lead in. Its reverse, **Outbound Leads** on each Smartlead Campaigns page, is a read-only list of that campaign's actual members. It can't be called "Leads": that name is taken by the lead-count column, and the deploy rejects a reciprocal that collides with an existing property.
 - **Why it's called "In campaign":** it started as a one-way `Smartlead Campaign`. Declaring that existing relation `twoWay` deployed fine and every sync stayed healthy, but **the platform never converted it**: it stayed `single_property` with no reverse column (2026-10-30). Declaring a *new* relation name with `twoWay` created it two-way at once. To make any relation two-way, rename it. The old `Smartlead Campaign` column is now undeclared, editable and stale, and is deleted by hand.
+
+## List → campaign mapping
+
+**One Smartlead campaign per Apollo list**, one list per target segment, e.g. "Zapier People List" → "Zapier Campaign" (agreed with Seth 31 Oct 2026; built 13 Nov 2026). Nobody picks a campaign per lead, and Status → Sequenced stays the human go/no-go.
+
+- **Apollo Lists** is a managed database, one row per Apollo *contact* list (account lists are skipped), keyed on List ID. `apolloListsSync` refreshes it hourly from `GET /api/v1/labels`, in replace mode, which only removes lists deleted in Apollo.
+- **Apollo Lists** on Outbound Leads is a synced, two-way relation written by `apolloLeads`. The reverse, **Leads**, is on each Apollo Lists page. It was declared two-way from the start, because converting an existing relation is silently ignored.
+- **Smartlead Campaign** on Apollo Lists is the mapping. It's **human-edited and added by hand** (a relation to Smartlead Campaigns, limited to one page), so it stays outside the schema and editable. As set up on 13 Nov 2026 it's two-way, and its reverse, **Apollo List** on Smartlead Campaigns, is also limited to one page. That makes the mapping strictly one-to-one: pointing a second list at a campaign silently clears the first list's link. If a campaign ever needs to take more than one list, lift the limit on the reverse.
+- Adding columns to these worker-owned databases works from the Notion UI, but it can take a minute to show up through the API.
+- The hand-set mapping survives the hourly replace-mode `apolloListsSync`, which only writes its declared columns (checked 13 Nov 2026).
+- `pushToSmartlead` follows lead → Apollo Lists → Smartlead Campaign.
+  - One distinct campaign: push there.
+  - None: `Blocked:` naming the lists.
+  - Different campaigns: `Blocked:` with each list → campaign pair.
+  - **Push to campaign**, when set, skips this lookup.
+  - The relation is up to an hour old, as of the last `apolloLeads` run. A contact added to a list since then gets its new list after the next hourly run.
+- Apollo Lists must be shared with the `notion-worker-automations` integration, or the push can't read the list pages. Moving it into the **📣 Outbound Leads and Campaigns** database as a data source does this.
+- Tested live on 13 Nov 2026 against draft campaign 4276123:
+  - Grace (one mapped list): pushed.
+  - Ada (two lists, one mapped): pushed.
+  - Ada (lists mapped to different campaigns): blocked with the pairs, and nothing reached Smartlead.
+  - Ada with **Push to campaign** set: pushed "(from Push to campaign)".
+  - Before the mapping existed, a push blocked with "no campaign mapped".
+- **Retired along the way:** the plain-text **Apollo List** column (a first cut, replaced the same day by the relation) and the **Subject Line** and **Message** columns. Delete the first by hand if it's still there.
 
 ## Two syncs share Outbound Leads rows
 
@@ -32,7 +56,7 @@ Both point at Smartlead Campaigns, and they mean different things (decided with 
 
 While attached:
 
-- **Declared properties are read-only in Notion.** Declared from Apollo: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location. Declared from Smartlead: Smartlead Status, Sequence Step, Last Event, Latest Reply, Smartlead Lead ID, In campaign. Everything a human edits stays undeclared: Status, **Push to campaign**, Subject Line, Message, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
+- **Declared properties are read-only in Notion.** Declared from Apollo: Lead (title), Apollo ID (primary key), Role, Company, Email, LinkedIn Profile URL, Location, Apollo Lists. Declared from Smartlead: Smartlead Status, Sequence Step, Last Event, Latest Reply, Smartlead Lead ID, In campaign. Everything a human edits stays undeclared: Status, **Push to campaign**, Notes, Owner, Contacts, Follow-up Date, Date Sent, Outreach Method, Phone, JD Summary, Job Listing.
 - **Rows can't be added or deleted by hand** or by other integrations. Every lead enters through an Apollo list. Deleting is blocked both in the UI and through the API (the Notion connector's trash call failed with a bare validation error, 2026-10-30). **Archiving a row does work in the UI.** For a hand-made row with no Apollo ID, that's permanent. For a synced row, the next upsert of that contact un-archives it: a change in Apollo, or a state reset and re-run. To drop a synced lead for good, remove it from the Apollo list first. To trash rows, detach, trash them, then re-attach (re-attaching runs a sync immediately).
 - **Detach before decommissioning.** Run `ntn workers databases detach outboundLeads` first. That releases the read-only locks and leaves every row. Deleting the worker or removing the declaration does *not* release the database; it stays locked with nothing able to release it.
 - Rows from before the worker have no Apollo ID. Incremental mode leaves them alone, but their titles become read-only.
@@ -85,7 +109,7 @@ Replace mode, hourly: one row per campaign with Campaign Status, Leads, Sent, Op
 
 Both are fired by Notion database automations on Outbound Leads ("Send webhook" with the default body; get the URLs with `ntn workers webhooks list`, which are secrets). Each re-reads the page and acts only if Status still has the triggering value, so late or retried deliveries are harmless. Each leaves a `Done:` or `Blocked:` page comment. Unexpected errors also become a `Blocked:` comment, with the message.
 
-- **`pushToSmartlead`, Status → Sequenced.** Pre-flight checks Email, Lead name, Company, Apollo ID and **Push to campaign**, and that the email isn't already a Contact (Primary or Secondary Email). Any failure sets Status back to Backlog with a `Blocked:` reason. On success it adds the lead to that campaign with `notion_page_id`, `apollo_id`, `subject_line` (Subject Line) and `opener` (Message). Smartlead returns 200 even when it skips a lead, so its counters decide; already being in the campaign counts as success.
+- **`pushToSmartlead`, Status → Sequenced.** Pre-flight checks Email, Lead name, Company and Apollo ID, that the email isn't already a Contact (Primary or Secondary Email), and that exactly one campaign applies (see *List → campaign mapping*). Any failure sets Status back to Backlog with a `Blocked:` reason. On success it adds the lead with `notion_page_id`, `apollo_id` and `job_title` (Role) as custom fields, alongside the standard first and last name, company, location and LinkedIn. **Copy lives in Smartlead** (decided 30 Oct 2026): sequences are written there and personalised from these fields, so no subject line or opener is sent. The old Subject Line and Message columns were retired. Smartlead returns 200 even when it skips a lead, so its counters decide; already being in the campaign counts as success.
 - **`promoteToContact`, Status → Interested.** Finds the Contact by email or creates one: Name, First/Last Name, Primary Email, Job Title, Location, Linkedin, Lead Source = **Outbound** (the option was created on first use). It links the Contact and stops the lead in every Smartlead campaign: `manual-complete`, falling back to `pause` because manual-complete 404s ("No sequences found for campaign") on a campaign with no sequences. `link-contact-to-company` then links the company.
 - **Automations don't fire on a net-zero change.** Flipping Status away and back within a few seconds produced no delivery. Leave a gap when re-triggering by hand.
 - Comments posted by the API on a page that already has a discussion are appended to that discussion, not started as a new thread.
