@@ -1,6 +1,14 @@
 import type { Client } from "@notionhq/client";
 
 export interface MeetingNotesCalendarEvent {
+	/**
+	 * The linked event's Google Calendar **occurrence** id (`<series>_<UTC
+	 * start>` for a recurring occurrence), never the iCalUID. Added to the API
+	 * 2026-11-16 and backfilled onto older notes, but absent on some notes (seen
+	 * 2026-11-17 on notes whose `start_time` is formatted as UTC `Z` and whose
+	 * page title has no trailing timestamp), so it is optional.
+	 */
+	event_id?: string;
 	start_time: string;
 	end_time?: string;
 	attendees?: string[];

@@ -9,7 +9,11 @@ import {
 	updatePage,
 } from "@work-flowers/notion-worker-shared";
 import { classifyMeetingType } from "./classifyMeetingType";
-import { findCalendarEvent, type CalendarEvent } from "./googleCalendar";
+import {
+	findCalendarEvent,
+	getCalendarEventById,
+	type CalendarEvent,
+} from "./googleCalendar";
 import { upsertMeetingNoteIdRow } from "./meetingNoteIdsTable";
 import { waitForMeetingNotesBlock } from "./meetingNotesBlock";
 
@@ -338,6 +342,65 @@ async function filterOpenDeals(
 	return open;
 }
 
+/**
+ * Find the Google Calendar event behind a meeting note, reading internal
+ * attendees' calendars through the domain-wide-delegated service account.
+ *
+ * Primary path: `events.get` by the block's `event_id` (the occurrence id),
+ * trying each internal attendee until one has the event on their calendar.
+ * Fallback: the start-time + title search on the first internal attendee's
+ * calendar, used when the block has no `event_id` (some notes still lack it)
+ * or when no internal attendee's calendar has that id. The fallback returns
+ * null rather than guess when same-start events can't be told apart.
+ */
+async function lookupCalendarEvent(
+	internalEmails: string[],
+	{ eventId, startTime, title }: { eventId?: string; startTime: string; title: string },
+): Promise<CalendarEvent | null> {
+	if (internalEmails.length === 0) {
+		console.log("No internal attendee resolved; skipping calendar lookup.");
+		return null;
+	}
+
+	if (eventId) {
+		for (const subject of internalEmails) {
+			try {
+				const event = await getCalendarEventById(subject, eventId);
+				if (event) {
+					console.log(`Calendar event ${eventId} found on ${subject}'s calendar.`);
+					return event;
+				}
+				console.log(`Calendar event ${eventId} not on ${subject}'s calendar.`);
+			} catch (err) {
+				console.log(
+					`Calendar lookup by id failed (${subject}): ${(err as Error)?.message ?? err}`,
+				);
+			}
+		}
+		console.log(
+			`Calendar event ${eventId} not found on any internal attendee's calendar; falling back to start time + title.`,
+		);
+	} else {
+		console.log("meeting_notes block has no event_id; falling back to start time + title.");
+	}
+
+	const subject = internalEmails[0];
+	try {
+		const event = await findCalendarEvent(subject, startTime, title);
+		if (!event) {
+			console.log(
+				`No calendar event titled "${title}" at ${startTime} on ${subject}'s calendar`,
+			);
+		}
+		return event;
+	} catch (err) {
+		console.log(
+			`Calendar lookup failed (${subject}): ${(err as Error)?.message ?? err}`,
+		);
+		return null;
+	}
+}
+
 export async function handlePageCreated(
 	body: unknown,
 	{ notion, zapier }: { notion: Client; zapier: Zapier },
@@ -368,37 +431,22 @@ export async function handlePageCreated(
 	// The Notion users API only resolves workspace members and guests. The
 	// calendar event — read from an internal attendee's calendar via the
 	// domain-wide-delegated service account — supplies everyone else's email,
-	// plus event metadata (call link, description, iCalUID).
-	// The `meeting_notes` block title is a placeholder until the meeting runs, so
-	// disambiguate same-start calendar events on the parent page title instead —
-	// it holds the event summary (plus a trailing ISO timestamp) from creation.
-	// Fall back to the block title if the page title can't be read.
+	// plus event metadata (call link, description, iCalUID). It is found by the
+	// block's `event_id` when present (see lookupCalendarEvent).
+	// The title below only matters to the start-time fallback and as the
+	// classifier's title when no event is found. The `meeting_notes` block title
+	// is a placeholder until the meeting runs, so use the page title (event
+	// summary plus a trailing ISO timestamp) and fall back to the block title.
 	const page = await fetchPage(notion, pageId);
 	const pageTitle = page?.title ?? null;
 	const eventTitle =
 		(pageTitle && stripTrailingTimestamp(pageTitle)) || meetingNotesBlock.title;
-	if (pageTitle) {
-		console.log(`Disambiguation title (from page): "${eventTitle}"`);
-	}
 
-	let event: CalendarEvent | null = null;
-	const subject = internalEmails[0];
-	if (subject) {
-		try {
-			event = await findCalendarEvent(subject, start_time, eventTitle);
-			if (!event) {
-				console.log(
-					`No calendar event titled "${eventTitle}" at ${start_time} on ${subject}'s calendar`,
-				);
-			}
-		} catch (err) {
-			console.log(
-				`Calendar lookup failed (${subject}): ${(err as Error)?.message ?? err}`,
-			);
-		}
-	} else {
-		console.log("No internal attendee resolved; skipping calendar lookup.");
-	}
+	const event = await lookupCalendarEvent(internalEmails, {
+		eventId: meetingNotesBlock.calendar_event.event_id,
+		startTime: start_time,
+		title: eventTitle,
+	});
 	if (unresolvedCount > 0 && !event) {
 		console.log(
 			`${unresolvedCount} attendee(s) unresolved and no calendar event found; Contacts may be incomplete.`,
