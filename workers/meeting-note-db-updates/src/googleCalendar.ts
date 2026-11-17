@@ -92,6 +92,37 @@ export async function getAccessToken(subject: string): Promise<string> {
 }
 
 /**
+ * Fetch an event by its Google **occurrence** id from `subject`'s primary
+ * calendar (`events.get`). This is the primary lookup: Notion exposes the id as
+ * `meeting_notes.calendar_event.event_id`, so no guessing by time or title.
+ *
+ * The id is the same on every attendee's calendar (verified 2026-11-17 for a
+ * recurring occurrence and a one-off, read from a non-organizer's calendar).
+ * Returns null on 404/410, meaning the event isn't on this subject's calendar;
+ * the caller tries the next internal attendee. Any other failure throws.
+ */
+export async function getCalendarEventById(
+	subject: string,
+	eventId: string,
+): Promise<CalendarEvent | null> {
+	const token = await getAccessToken(subject);
+	const res = await fetch(
+		`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+		{ headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+	);
+	if (res.status === 404 || res.status === 410) return null;
+	if (!res.ok) {
+		throw new Error(
+			`Google Calendar events.get failed for ${subject}: ${res.status} ${await res.text()}`,
+		);
+	}
+	return (await res.json()) as CalendarEvent;
+}
+
+/**
+ * **Fallback only**, for meeting notes whose block carries no `event_id`
+ * (see getCalendarEventById for the primary path).
+ *
  * Find the event on `subject`'s primary calendar identified by the composite
  * of `startTime` and `title`. The time window catches overlapping events
  * (all-day events, still-running earlier meetings), so results are filtered
