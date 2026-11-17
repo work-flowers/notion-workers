@@ -31,6 +31,19 @@ The `ntn` CLI keeps a **single global login** with no per-repo binding, so a dep
 
 Client repos carry the mirror-image guard pinned to their own workspace. Never copy IDs, page references or secrets between this repo and a client's.
 
+### ntn auth in Claude Code cloud sessions
+
+Cloud sessions authenticate `ntn` without `ntn login` and without the real token in the container (set up and verified 2026-11-17):
+
+- **Network secret**: a Bearer secret holding a **Workers-only personal access token** for work.flowers, scoped to **both `api.notion.com` and `app.notion.com`**. The proxy overwrites the `Authorization` header on requests to those hosts.
+- **Environment variables**: `NOTION_API_TOKEN=placeholder` and `NOTION_WORKSPACE_ID=9607e18f-5d82-4842-8b96-ca0d32e66011`. The placeholder only exists because `ntn` refuses to send any request without a token; its value is never seen by Notion. `NOTION_WORKSPACE_ID` pins every session in the environment to work.flowers, so `ntn doctor` should report `Resolved workspace … from NOTION_WORKSPACE_ID`.
+
+Things that bit during setup:
+
+- **`ntn workers` commands call `app.notion.com/api/v3/…`, not `api.notion.com`.** That host must be both allowed by the network policy *and* covered by the secret. Allowed but not covered gives `401 unauthorized` (the literal `placeholder` reaches Notion); not allowed gives `tunnel error: unsuccessful`. Run `ntn --verbose …` to see the host.
+- **The PAT has no public-API capability.** `ntn doctor` warns `Public API access … 403 restricted_resource`, and anything going through `/v1/` (`ntn datasources query`, `ntn api`, `ntn whoami`) is refused. Use the Notion MCP for reads such as the schema-change read-back in the version-pin check above.
+- **Environment variables only load when a session's container starts.** After changing them, start a new session; an existing one won't see them.
+
 ## ntn CLI
 
 Run all `ntn workers` commands from inside the worker's directory — it resolves `workers.json` by CWD lookup.
