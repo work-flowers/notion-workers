@@ -43,6 +43,7 @@ Things that bit during setup:
 - **`ntn workers` commands call `app.notion.com/api/v3/…`, not `api.notion.com`.** That host must be both allowed by the network policy *and* covered by the secret. Allowed but not covered gives `401 unauthorized` (the literal `placeholder` reaches Notion); not allowed gives `tunnel error: unsuccessful`. Run `ntn --verbose …` to see the host.
 - **The PAT has no public-API capability.** `ntn doctor` warns `Public API access … 403 restricted_resource`, and anything going through `/v1/` (`ntn datasources query`, `ntn api`, `ntn whoami`) is refused. Use the Notion MCP for reads such as the schema-change read-back in the version-pin check above.
 - **Environment variables only load when a session's container starts.** After changing them, start a new session; an existing one won't see them.
+- **Deploying a worker with linked databases needs `--yes` here.** `ntn workers deploy` asks for confirmation before deploying a worker with managed databases, and a non-interactive session can't answer, so it exits with `Deploying this worker with linked databases requires confirmation`. `deploy.sh` passes extra args through: `./scripts/deploy.sh <worker> --yes`. That flag skips the prompt guarding schema changes on live databases, so check `git log` for the worker since its last deploy (the date is in `ntn workers list`) and use it only when the schema is unchanged or the change is intended. (Verified on `fx-rates`, 2026-11-17.)
 
 ## ntn CLI
 
