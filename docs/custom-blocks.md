@@ -248,6 +248,14 @@ which is what makes a block usable as an app rather than a report.
   leaves the old value in place, so a field that should have been *cleared*
   silently keeps its previous value.
 - `pages.create` cannot set an icon or cover yet — create, then `pages.update`.
+- **`row.archive()` lands, but the live subscription keeps serving the row**
+  until the page reloads (verified on `resource-schedule`, 2026-11-18: Notion
+  had `is_archived: true`, the block still listed it, and a reload dropped it).
+  Track ids the block archived and filter them out yourself
+  (`resource-schedule/blocks/schedule/src/index.tsx`).
+- **People values read back as `{ id }` pointers and write as
+  `{ type: "people", people: [{ id }] }`.** `users.get` resolves guests' names
+  for a member viewer (verified 2026-11-18); for a *guest* viewer it is untested.
 
 ### A `created_time` property on a bound database hangs every write
 
