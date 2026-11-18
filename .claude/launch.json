@@ -84,6 +84,20 @@
 				"--strictPort"
 			],
 			"port": 5179
+		},
+		{
+			"name": "resource-schedule",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev:block",
+				"--workspace=notion-worker-resource-schedule",
+				"--",
+				"--port",
+				"5180",
+				"--strictPort"
+			],
+			"port": 5180
 		}
 	]
 }
