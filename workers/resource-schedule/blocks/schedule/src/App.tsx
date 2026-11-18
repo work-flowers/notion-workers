@@ -351,6 +351,12 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 
 	return (
 		<div className="rs-app">
+			{/* Hidden by default; brand.local.css shows it and supplies the mark and name. */}
+			<header className="rs-brandbar" aria-hidden="true">
+				<span className="rs-brandmark" />
+				<span className="rs-brandname" />
+				<span className="rs-brandname-sub">Resourcing schedule</span>
+			</header>
 			<div className="rs-toolbar">
 				<div className="rs-seg" role="tablist" aria-label="View">
 					<button type="button" role="tab" aria-selected={tab === "projects"} className="rs-seg-btn" onClick={() => setTab("projects")}>

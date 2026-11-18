@@ -23,6 +23,11 @@ import {
 import type { Store } from "./store.ts"
 import "./schedule.css"
 
+// Optional per-client theme, kept out of git so no client branding lands in this
+// public repo. The glob matches nothing when the file is absent, so the build
+// still works without it.
+import.meta.glob("./brand.local.css", { eager: true })
+
 /** The mock-up databases are small; one window at the per-subscription cap is plenty. */
 const QUERY = { limit: 999 }
 

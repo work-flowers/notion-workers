@@ -1,6 +1,15 @@
 /* Resourcing schedule — NDS tokens for chrome so it follows the page theme. */
 
 .rs-root {
+	/*
+	 * Brand hooks. Defaults are plain NDS; an optional, gitignored
+	 * brand.local.css overrides them (see the worker's CLAUDE.md).
+	 */
+	--rs-brand: var(--bg-interactive-strong);
+	--rs-brand-hover: var(--bg-interactive-strong-hover);
+	--rs-on-brand: var(--content-on-interactive-strong);
+	--rs-brand-soft: var(--bg-muted);
+	--rs-today: var(--red-60);
 	--rs-name-w: 248px;
 	--rs-row-h: 44px;
 	--rs-sub-h: 34px;
@@ -51,7 +60,7 @@
 }
 
 .rs-seg-btn[aria-selected="true"] {
-	background: var(--bg-muted);
+	background: var(--rs-brand-soft);
 	color: var(--content-primary);
 	font-weight: 600;
 }
@@ -114,14 +123,14 @@
 }
 
 .rs-btn--primary {
-	background: var(--bg-interactive-strong);
-	border-color: var(--bg-interactive-strong);
-	color: var(--content-on-interactive-strong);
+	background: var(--rs-brand);
+	border-color: var(--rs-brand);
+	color: var(--rs-on-brand);
 	font-weight: 600;
 }
 
 .rs-btn--primary:hover {
-	background: var(--bg-interactive-strong-hover);
+	background: var(--rs-brand-hover);
 }
 
 .rs-btn--danger-quiet {
@@ -307,7 +316,7 @@
 }
 
 .rs-hcell--today .rs-hcell-bottom {
-	background: var(--red-60);
+	background: var(--rs-today);
 	color: white;
 	border-radius: 10px;
 	padding: 0 6px;
@@ -781,4 +790,33 @@
 
 .rs-round-dates {
 	color: var(--content-secondary);
+}
+
+/* ---------------------------------------------------------------- brand bar */
+
+/* Hidden unless brand.local.css turns it on and fills in the mark and name. */
+.rs-brandbar {
+	display: none;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	border-radius: 8px;
+	background: var(--rs-brand);
+	color: var(--rs-on-brand);
+}
+
+.rs-brandmark {
+	flex: 0 0 auto;
+}
+
+.rs-brandname {
+	font-size: 13px;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+}
+
+.rs-brandname-sub {
+	margin-left: auto;
+	font-size: 12px;
+	opacity: 0.8;
 }

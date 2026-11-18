@@ -307,6 +307,14 @@ Practical consequence: don't render links to Notion pages. Let Notion's own
 relation cell do the navigating. (Copy-to-clipboard-on-click was built as a
 workaround and rejected as more surprising than useful.)
 
+**`ntn workers deploy` uploads only what git would track.** It discovers files
+through git and skips anything ignored, including entries in
+`.git/info/exclude`, so a locally excluded file (a client theme, say) never
+reaches the cloud build and the deploy still succeeds without it. `--no-git`
+switches to a filesystem walk that still honours `.gitignore` files. Compare
+the build's CSS/JS sizes with a local `build:block` to confirm a file shipped
+(found on `resource-schedule`, 2026-11-18).
+
 **No direct network access either.** Cross-origin work goes through the host. So
 CDN assets fail silently — a Google-Fonts `@import` in a stylesheet just doesn't
 load. Bundle fonts instead (`@fontsource/*`) so they're same-origin assets. The
