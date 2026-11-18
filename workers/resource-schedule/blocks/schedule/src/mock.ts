@@ -11,6 +11,7 @@ import { deriveRoster, mondayOf, todayIso, type Booking, type Job } from "./mode
 import type { Store } from "./store.ts"
 
 const ROLE_OPTIONS = ["Designer", "Retoucher", "Editor", "Motion Designer", "Copywriter", "Producer", "Account Manager"]
+const TEAM_OPTIONS = ["Studio", "Agency"]
 const LABEL_OPTIONS = ["Blue", "Green", "Orange", "Pink", "Purple", "Yellow", "Red", "Brown"]
 
 const pause = () => new Promise((r) => setTimeout(r, 250))
@@ -29,6 +30,7 @@ export function useMockStore(): Store {
 			templates: seed.templates,
 			people,
 			roleOptions: ROLE_OPTIONS,
+			teamOptions: TEAM_OPTIONS,
 			labelOptions: LABEL_OPTIONS,
 			loading: false,
 			bindingProblems: [],
@@ -85,6 +87,16 @@ export function useMockStore(): Store {
 					})),
 				])
 				return { ok: true, jobId }
+			},
+
+			async savePerson(personId, profile) {
+				await pause()
+				setBookings((all) =>
+					all.map((b) =>
+						b.personId === personId ? { ...b, roles: profile.roles, team: profile.team, capacity: profile.weeklyCapacity } : b,
+					),
+				)
+				return { ok: true }
 			},
 		}
 	}, [bookings, jobs, seed])

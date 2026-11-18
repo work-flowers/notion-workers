@@ -48,6 +48,11 @@ workspace members as people; `fixture.ts` uses fictional names in their place.
   seed bookings had to carry the values, and someone with no bookings at all
   doesn't appear. A real build needs a proper People sync, starting with
   whether the API can read the People database at all.
+- **Clicking a person's name opens `PersonPanel.tsx`** (Role, Team, Hours /
+  week). Saving rewrites those three fields on *every* one of their bookings,
+  one `row.update` each, which is the only place they live; someone with no
+  bookings can't be saved. The panel previews live like the booking editor.
+  Team choices are the Bookings Team property's options.
 - **People's names come from `users.get`**, memoised with an 8s timeout. Whether
   a *guest* viewer can resolve other members' and guests' names is unverified;
   a failure shows "Unknown person" rather than breaking the grid.
@@ -63,5 +68,19 @@ workspace members as people; `fixture.ts` uses fictional names in their place.
 - **No `created_time` (or formula/rollup/unique ID) property on Bookings or
   Jobs** — it makes every block write hang (see `docs/custom-blocks.md`).
 - **NDS styling**, so it follows the page's light and dark themes.
+- **Client theming stays out of git.** `schedule.css` routes the primary
+  button, selected tabs and today marker through `--rs-brand*` variables (NDS
+  defaults) and carries a hidden `.rs-brandbar`. An optional
+  `blocks/schedule/src/brand.local.css` overrides them and shows the bar; it is
+  loaded with `import.meta.glob`, so the build works without it. Selectors in it
+  must out-rank `schedule.css` (`.nds.rs-root …`), because the glob import is
+  hoisted above it. The file is listed in `.git/info/exclude`, not `.gitignore`.
+  **Deploy with `./scripts/deploy.sh resource-schedule --no-git`**, or the
+  theme silently doesn't ship: `ntn` discovers files through git and honours
+  every ignore source, `info/exclude` included; `--no-git` walks the
+  filesystem and still respects `.gitignore` files (verified 2026-11-18 by
+  CSS bundle size: 204.51 kB with the theme, 203.68 kB without). The theme file
+  exists only in the checkout it was made in; keep a copy somewhere durable.
+  Availability colours are never themed: they carry meaning.
 - Out of scope for the mock-up: Linear, time off, milestones, export, 999-row
   windowing.

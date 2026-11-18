@@ -13,7 +13,7 @@ import type {
 } from "@notionhq/custom-blocks"
 
 import type { Booking, Client, Job, Person, PlannedRound, Template } from "./model.ts"
-import type { BookingDraft } from "./store.ts"
+import type { BookingDraft, PersonProfile } from "./store.ts"
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -139,6 +139,15 @@ export function bookingProperties(d: BookingDraft, person: Person | undefined): 
 		dates: dates(d.start, d.end),
 		hoursPerDay: { type: "number", number: d.hoursPerDay },
 		notes: text(d.notes),
+	} as NotionPagePropertyInputMap
+}
+
+/** The roster fields alone, for re-stamping a person's existing bookings. */
+export function personProperties(p: PersonProfile): NotionPagePropertyInputMap {
+	return {
+		role: { type: "multi_select", multi_select: p.roles.map((name) => ({ name })) },
+		team: { type: "select", select: p.team ? { name: p.team } : null },
+		capacity: { type: "number", number: p.weeklyCapacity },
 	} as NotionPagePropertyInputMap
 }
 

@@ -15,6 +15,7 @@ import {
 	newJobProperties,
 	onlyBound,
 	optionNames,
+	personProperties,
 	toBooking,
 	toClient,
 	toJob,
@@ -22,6 +23,11 @@ import {
 } from "./rows.ts"
 import type { Store } from "./store.ts"
 import "./schedule.css"
+
+// Optional per-client theme, kept out of git so no client branding lands in this
+// public repo. The glob matches nothing when the file is absent, so the build
+// still works without it.
+import.meta.glob("./brand.local.css", { eager: true })
 
 /** The mock-up databases are small; one window at the per-subscription cap is plenty. */
 const QUERY = { limit: 999 }
@@ -128,6 +134,7 @@ function useNotionStore(): Store {
 			templates: live(templates.items).map(toTemplate),
 			people,
 			roleOptions: optionNames(bookings.propertySchemasByKey.role),
+			teamOptions: optionNames(bookings.propertySchemasByKey.team),
 			labelOptions: optionNames(jobs.propertySchemasByKey.label),
 			loading,
 			bindingProblems: loading ? [] : bindingProblems({ Bookings: bookings, Jobs: jobs, Clients: clients, "Job templates": templates }),
@@ -171,6 +178,20 @@ function useNotionStore(): Store {
 					if (b.status === "error") return { ok: false, message: `Job created, but round ${r.round} failed: ${b.error.message}` }
 				}
 				return { ok: true, jobId }
+			},
+
+			async savePerson(personId, profile) {
+				const theirs = bookingList.filter((b) => b.personId === personId)
+				const properties = onlyBound(personProperties(profile), bookings.propertyIdsByKey)
+				for (const [i, b] of theirs.entries()) {
+					const row = rows.get(b.id)
+					if (row === undefined) continue
+					const result = await settle(row.update({ properties }))
+					if (result.status === "error") {
+						return { ok: false, message: `Saved ${i} of ${theirs.length} bookings, then: ${result.error.message}` }
+					}
+				}
+				return { ok: true }
 			},
 		}
 	}, [bookings, jobs, clients, templates, bookingList, clientList, names])

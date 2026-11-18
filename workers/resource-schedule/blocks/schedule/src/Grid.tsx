@@ -28,6 +28,8 @@ export type GridRow = {
 	expandable?: boolean
 	expanded?: boolean
 	highlight?: boolean
+	/** Makes the label a button, e.g. to open the person panel. The caret still expands. */
+	onOpen?: () => void
 	/** One per column. Omitted for rows that only carry bars. */
 	cells?: CellSpec[]
 	bars?: BarSpec[]
@@ -162,7 +164,23 @@ export function Grid({ scale, cols, rows, today, onToggle, onBarClick, onBarMove
 							<span className="rs-toggle-spacer" />
 						)}
 						<div className="rs-name-text" onClick={row.expandable ? () => onToggle(row.key) : undefined}>
-							<div className="rs-name-label">{row.label}</div>
+							<div className="rs-name-label">
+								{row.onOpen ? (
+									<button
+										type="button"
+										className="rs-name-open"
+										title="Edit role, team and hours"
+										onClick={(e) => {
+											e.stopPropagation()
+											row.onOpen?.()
+										}}
+									>
+										{row.label}
+									</button>
+								) : (
+									row.label
+								)}
+							</div>
 							{row.sublabel ? <div className="rs-name-sub">{row.sublabel}</div> : null}
 						</div>
 						{row.badge}

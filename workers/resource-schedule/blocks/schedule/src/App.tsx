@@ -24,11 +24,16 @@ import {
 	type Person,
 } from "./model.ts"
 import { NewJob } from "./NewJob.tsx"
-import type { BookingDraft, NewJob as NewJobInput, Store } from "./store.ts"
+import { PersonPanel } from "./PersonPanel.tsx"
+import type { BookingDraft, NewJob as NewJobInput, PersonProfile, Store } from "./store.ts"
 
 type Tab = "team" | "projects"
 
-type Panel = { kind: "booking"; id: string; draft: BookingDraft } | { kind: "newJob" } | null
+type Panel =
+	| { kind: "booking"; id: string; draft: BookingDraft }
+	| { kind: "person"; id: string; draft: PersonProfile }
+	| { kind: "newJob" }
+	| null
 
 const OVERFLOW_KEY = `placeholder:${OVERFLOW}`
 /** Bar-id prefix for a collapsed job's summary bar, which expands the job rather than opening a booking. */
@@ -52,6 +57,12 @@ function withDraft(bookings: Booking[], panel: Panel, people: Person[]): Booking
 			capacity: who?.weeklyCapacity ?? null,
 		}
 	})
+}
+
+/** The person panel previews live: the roster shows the unsaved profile, so capacity changes recolour the heat map. */
+function withPersonDraft(people: Person[], panel: Panel): Person[] {
+	if (panel?.kind !== "person") return people
+	return people.map((p) => (p.id === panel.id ? { ...p, ...panel.draft } : p))
 }
 
 // ---------------------------------------------------------------------------
@@ -113,8 +124,9 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 
 	const jobsById = useMemo(() => new Map(store.jobs.map((j) => [j.id, j])), [store.jobs])
 	const clientsById = useMemo(() => new Map(store.clients.map((c) => [c.id, c])), [store.clients])
-	const peopleById = useMemo(() => new Map(store.people.map((p) => [p.id, p])), [store.people])
-	const bookings = useMemo(() => withDraft(store.bookings, panel, store.people), [store.bookings, panel, store.people])
+	const people = useMemo(() => withPersonDraft(store.people, panel), [store.people, panel])
+	const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people])
+	const bookings = useMemo(() => withDraft(store.bookings, panel, people), [store.bookings, panel, people])
 	const selectedId = panel?.kind === "booking" ? panel.id : null
 
 	const toggle = (key: string) =>
@@ -166,7 +178,7 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 	}
 
 	// People who pass the search and role filter.
-	const visiblePeople = store.people.filter(
+	const visiblePeople = people.filter(
 		(p) => (role === "" || p.roles.includes(role)) && matchesQuery(personHaystack(p), query),
 	)
 
@@ -201,6 +213,7 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 				expandable: inView.length > 0,
 				expanded: isOpen,
 				highlight: !person && flash !== null,
+				onOpen: person ? () => openPerson(person.id) : undefined,
 				cells: person ? personCells(cols, load, person, scale) : overflowCells(cols, load, scale),
 			})
 			if (!isOpen) continue
@@ -276,6 +289,7 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 						kind: "sub",
 						label: person?.name ?? who,
 						sublabel: person ? person.roles.join(", ") : "Waiting to be assigned",
+						onOpen: person ? () => openPerson(person.id) : undefined,
 						bars: wl.map((b) => bar(b, "compact")),
 					})
 				}
@@ -296,6 +310,23 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 		if (!b) return
 		setError(null)
 		setPanel({ kind: "booking", id, draft: draftOf(b) })
+	}
+
+	function openPerson(id: string) {
+		const p = store.people.find((x) => x.id === id)
+		if (!p) return
+		setError(null)
+		setPanel({ kind: "person", id, draft: { roles: p.roles, team: p.team, weeklyCapacity: p.weeklyCapacity } })
+	}
+
+	async function savePerson() {
+		if (panel?.kind !== "person") return
+		setSaving(true)
+		setError(null)
+		const result = await store.savePerson(panel.id, panel.draft)
+		setSaving(false)
+		if (result.ok) setPanel(null)
+		else setError(result.message)
 	}
 
 	async function saveBooking() {
@@ -348,9 +379,16 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 
 	const selected = panel?.kind === "booking" ? store.bookings.find((b) => b.id === panel.id) : undefined
 	const selectedJob = selected?.jobId ? jobsById.get(selected.jobId) : undefined
+	const editingPerson = panel?.kind === "person" ? store.people.find((p) => p.id === panel.id) : undefined
 
 	return (
 		<div className="rs-app">
+			{/* Hidden by default; brand.local.css shows it and supplies the mark and name. */}
+			<header className="rs-brandbar" aria-hidden="true">
+				<span className="rs-brandmark" />
+				<span className="rs-brandname" />
+				<span className="rs-brandname-sub">Resourcing schedule</span>
+			</header>
 			<div className="rs-toolbar">
 				<div className="rs-seg" role="tablist" aria-label="View">
 					<button type="button" role="tab" aria-selected={tab === "projects"} className="rs-seg-btn" onClick={() => setTab("projects")}>
@@ -450,6 +488,20 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 						onSave={saveBooking}
 						onCancel={() => setPanel(null)}
 						onDelete={deleteBooking}
+					/>
+				) : null}
+				{panel?.kind === "person" && editingPerson ? (
+					<PersonPanel
+						person={editingPerson}
+						draft={panel.draft}
+						roleOptions={store.roleOptions}
+						teamOptions={store.teamOptions}
+						bookingCount={store.bookings.filter((b) => b.personId === panel.id).length}
+						saving={saving}
+						error={error}
+						onChange={(draft) => setPanel({ kind: "person", id: panel.id, draft })}
+						onSave={savePerson}
+						onCancel={() => setPanel(null)}
 					/>
 				) : null}
 				{panel?.kind === "newJob" ? (
