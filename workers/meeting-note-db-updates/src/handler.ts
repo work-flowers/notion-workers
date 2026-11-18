@@ -489,13 +489,22 @@ export async function handlePageCreated(
 		...eventCandidates,
 	]);
 
-	// Internal Attendees and Date are bound to the meeting note by the typed
-	// Meetings database (since 2026-10-18), but the bound Date carries only the
-	// start time. Write Date again so it also has the end time; Internal
-	// Attendees is left to the binding.
+	// Date is bound to the meeting note by the typed Meetings database (since
+	// 2026-10-18), but the bound Date carries only the start time. Write Date
+	// again so it also has the end time.
+	//
+	// The typed database's bound attendees property ("Auto attendees") sometimes
+	// picks up external guests, so the worker again writes the work.flowers-only
+	// list to the manually managed "Internal attendees" person property (added
+	// 2026-11-18). Note the lowercase "a": property names are matched exactly.
 	const properties: Record<string, any> = {
 		Date: { date: { start: start_time, end: end_time ?? null } },
 	};
+	if (internalUserIds.length > 0) {
+		properties["Internal attendees"] = {
+			people: internalUserIds.map((id) => ({ id })),
+		};
+	}
 	if (event) {
 		properties["Google Calendar Event ID"] = {
 			rich_text: [{ type: "text", text: { content: event.id } }],
