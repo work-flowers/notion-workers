@@ -48,6 +48,11 @@ workspace members as people; `fixture.ts` uses fictional names in their place.
   seed bookings had to carry the values, and someone with no bookings at all
   doesn't appear. A real build needs a proper People sync, starting with
   whether the API can read the People database at all.
+- **Clicking a person's name opens `PersonPanel.tsx`** (Role, Team, Hours /
+  week). Saving rewrites those three fields on *every* one of their bookings,
+  one `row.update` each, which is the only place they live; someone with no
+  bookings can't be saved. The panel previews live like the booking editor.
+  Team choices are the Bookings Team property's options.
 - **People's names come from `users.get`**, memoised with an 8s timeout. Whether
   a *guest* viewer can resolve other members' and guests' names is unverified;
   a failure shows "Unknown person" rather than breaking the grid.

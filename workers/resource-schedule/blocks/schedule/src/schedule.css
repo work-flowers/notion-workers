@@ -820,3 +820,52 @@
 	font-size: 12px;
 	opacity: 0.8;
 }
+
+/* Person panel ------------------------------------------------------------ */
+
+.rs-name-open {
+	all: unset;
+	cursor: pointer;
+	border-radius: 3px;
+}
+
+.rs-name-open:hover {
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.rs-name-open:focus-visible {
+	outline: 2px solid var(--rs-brand);
+	outline-offset: 2px;
+}
+
+.rs-choice-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.rs-choice {
+	font: inherit;
+	font-size: 12px;
+	padding: 3px 10px;
+	border-radius: 12px;
+	border: 1px solid var(--border-primary);
+	background: transparent;
+	color: var(--content-secondary);
+	cursor: pointer;
+}
+
+.rs-choice:hover {
+	background: var(--bg-muted);
+}
+
+.rs-choice--on {
+	background: var(--rs-brand);
+	border-color: var(--rs-brand);
+	color: var(--rs-on-brand);
+}
+
+.rs-choice--on:hover {
+	background: var(--rs-brand-hover);
+}
