@@ -74,6 +74,11 @@ const recordings = worker.database("recordings", {
 			Owner: Schema.richText(),
 			Summary: Schema.richText(),
 			Chapters: Schema.richText(),
+			// All-time viewership from the `analytics` block on /recordings/{id}.
+			Visits: Schema.number(),
+			"Unique Visits": Schema.number(),
+			Plays: Schema.number(),
+			"Unique Plays": Schema.number(),
 		},
 	},
 });
@@ -233,6 +238,7 @@ function toChange(rec: WebsiteRecording) {
 	const workspace = listing.workspace_safename;
 	const durationMs = detail?.duration_ms ?? listing.duration_ms;
 	const thumbnail = oembed?.thumbnail_url;
+	const analytics = detail?.analytics;
 
 	return {
 		type: "upsert" as const,
@@ -253,6 +259,16 @@ function toChange(rec: WebsiteRecording) {
 			...(detail?.summary ? { Summary: Builder.richText(truncate(detail.summary)) } : {}),
 			...(detail?.chapters?.length
 				? { Chapters: Builder.richText(truncate(formatChapters(detail.chapters))) }
+				: {}),
+			// Absent when the token lacks analytics access: leave the last known
+			// counts in place rather than zeroing them.
+			...(analytics
+				? {
+						Visits: Builder.number(analytics.visits.total),
+						"Unique Visits": Builder.number(analytics.visits.unique),
+						Plays: Builder.number(analytics.plays.total),
+						"Unique Plays": Builder.number(analytics.plays.unique),
+					}
 				: {}),
 		},
 		...(thumbnail ? { cover: Builder.imageCover(thumbnail) } : {}),
