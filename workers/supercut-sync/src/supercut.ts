@@ -45,6 +45,22 @@ export interface Chapter {
 	start_ms: number;
 }
 
+/** A total plus a unique (deduplicated viewer) count. */
+export interface ViewCount {
+	total: number;
+	unique: number;
+}
+
+/**
+ * All-time viewership, aggregated across versions. Supercut includes it on
+ * `/recordings/{id}` only when the token has analytics access, so it is
+ * optional; engagement rate is not in it (that needs `/recordings/{id}/analytics`).
+ */
+export interface RecordingAnalytics {
+	visits: ViewCount;
+	plays: ViewCount;
+}
+
 export interface RecordingDetail {
 	public_id: string;
 	title: string;
@@ -54,6 +70,7 @@ export interface RecordingDetail {
 	owner: { name: string; avatar_url: string | null };
 	summary: string | null;
 	chapters: Chapter[];
+	analytics?: RecordingAnalytics | null;
 }
 
 export interface OEmbed {

@@ -25,6 +25,20 @@ Bullet.so can publish them. Daily, replace mode, one batch. (Hourly until 2026-1
 - **Page body** = exactly one `html` code block holding Supercut's embed snippet,
   with the caption `bullet:HTML` (Bullet.so's signal to render raw HTML).
 
+## Viewership analytics
+
+`/recordings/{id}` returns an `analytics` block (added by Supercut, picked up
+2026-11-19): all-time `visits` and `plays`, each `{ total, unique }`,
+aggregated across versions. These land in **Visits**, **Unique Visits**,
+**Plays** and **Unique Plays**. The block is only present when the token has
+analytics access; when it is missing the four columns are left out of the
+upsert, so the last known counts stay rather than dropping to zero. Counts are
+refreshed once a day with the sync.
+
+Engagement rate (average % watched) is **not** in that block — it needs a
+separate `/recordings/{id}/analytics` call per recording, deliberately not
+made.
+
 ## Two data sources, one recording
 
 The Supercut REST API (`https://api.supercut.ai/v1`, spec at
