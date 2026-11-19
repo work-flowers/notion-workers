@@ -7,7 +7,7 @@
  * shifted by `fixture(monday)` so the mock always opens on a busy week.
  */
 
-import { addDays, daysBetween, type Booking, type Client, type Job, type Template } from "./model.ts"
+import { addDays, daysBetween, type Booking, type Client, type Job, type Person, type Template } from "./model.ts"
 
 export const SEED_MONDAY = "2026-11-16"
 
@@ -27,12 +27,12 @@ export const PEOPLE: Who[] = [
 ]
 
 const CLIENTS: Client[] = [
-	{ id: "c-saltbush", name: "Saltbush Dairy", dedicatedIds: ["u-retoucher-1"] },
-	{ id: "c-harbour", name: "Harbour & Pine", dedicatedIds: [] },
-	{ id: "c-northwind", name: "Northwind Cycles", dedicatedIds: [] },
-	{ id: "c-lumen", name: "Lumen Skincare", dedicatedIds: [] },
-	{ id: "c-tidewater", name: "Tidewater Bank", dedicatedIds: [] },
-	{ id: "c-kestrel", name: "Kestrel Air", dedicatedIds: [] },
+	{ id: "c-saltbush", name: "Saltbush Dairy" },
+	{ id: "c-harbour", name: "Harbour & Pine" },
+	{ id: "c-northwind", name: "Northwind Cycles" },
+	{ id: "c-lumen", name: "Lumen Skincare" },
+	{ id: "c-tidewater", name: "Tidewater Bank" },
+	{ id: "c-kestrel", name: "Kestrel Air" },
 ]
 
 const TEMPLATES: Template[] = [
@@ -109,7 +109,10 @@ const BOOKING_ROWS: [string | null, string, string, string, number, number | nul
 	[null, "j12", "11-20", "11-20", 2, 2],
 ]
 
-export type Fixture = { bookings: Booking[]; jobs: Job[]; clients: Client[]; templates: Template[]; names: Map<string, string> }
+export type Fixture = { bookings: Booking[]; jobs: Job[]; clients: Client[]; templates: Template[]; people: Person[] }
+
+/** Who is dedicated to which client, as the Team database's "Dedicated to" relation holds it. */
+const DEDICATED: Record<string, string[]> = { "u-retoucher-1": ["c-saltbush"] }
 
 /** The seed with every date moved so `SEED_MONDAY` lands on `monday`. */
 export function fixture(monday: string = SEED_MONDAY): Fixture {
@@ -136,9 +139,6 @@ export function fixture(monday: string = SEED_MONDAY): Fixture {
 			end: at(e),
 			hoursPerDay: h,
 			round,
-			roles: p ? [p.role] : [],
-			team: p?.team ?? null,
-			capacity: p?.capacity ?? null,
 			notes: null,
 		}
 	})
@@ -147,6 +147,13 @@ export function fixture(monday: string = SEED_MONDAY): Fixture {
 		jobs,
 		clients: CLIENTS,
 		templates: TEMPLATES,
-		names: new Map(PEOPLE.map((p) => [p.id, p.name])),
+		people: PEOPLE.map((p) => ({
+			id: p.id,
+			name: p.name,
+			roles: [p.role],
+			team: p.team,
+			weeklyCapacity: p.capacity,
+			dedicatedTo: DEDICATED[p.id] ?? [],
+		})),
 	}
 }

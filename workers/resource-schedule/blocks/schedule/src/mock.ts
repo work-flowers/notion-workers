@@ -6,8 +6,8 @@
 
 import { useMemo, useState } from "react"
 
-import { fixture, PEOPLE } from "./fixture.ts"
-import { deriveRoster, mondayOf, todayIso, type Booking, type Job } from "./model.ts"
+import { fixture } from "./fixture.ts"
+import { mondayOf, sortPeople, todayIso, type Booking, type Job, type Person } from "./model.ts"
 import type { Store } from "./store.ts"
 
 const ROLE_OPTIONS = ["Designer", "Retoucher", "Editor", "Motion Designer", "Copywriter", "Producer", "Account Manager"]
@@ -20,9 +20,10 @@ export function useMockStore(): Store {
 	const seed = useMemo(() => fixture(mondayOf(todayIso())), [])
 	const [bookings, setBookings] = useState<Booking[]>(seed.bookings)
 	const [jobs, setJobs] = useState<Job[]>(seed.jobs)
+	const [team, setTeam] = useState<Person[]>(seed.people)
 
 	return useMemo<Store>(() => {
-		const people = deriveRoster(bookings, seed.names, seed.clients, PEOPLE.map((p) => p.id))
+		const people = sortPeople(team)
 		return {
 			bookings,
 			jobs,
@@ -40,16 +41,7 @@ export function useMockStore(): Store {
 				setBookings((all) =>
 					all.map((b) => {
 						if (b.id !== id) return b
-						// Same as the Notion store: Role, Team and capacity come from the roster.
-						const who = d.personId ? people.find((p) => p.id === d.personId) : undefined
-						return {
-							...b,
-							...d,
-							placeholder: d.personId ? null : (d.placeholder ?? "Overflow"),
-							roles: who?.roles ?? [],
-							team: who?.team ?? null,
-							capacity: who?.weeklyCapacity ?? null,
-						}
+						return { ...b, ...d, placeholder: d.personId ? null : (d.placeholder ?? "Overflow") }
 					}),
 				)
 				return { ok: true }
@@ -80,9 +72,6 @@ export function useMockStore(): Store {
 						end: r.end,
 						hoursPerDay: r.hoursPerDay,
 						round: r.round,
-						roles: [],
-						team: null,
-						capacity: null,
 						notes: null,
 					})),
 				])
@@ -91,13 +80,9 @@ export function useMockStore(): Store {
 
 			async savePerson(personId, profile) {
 				await pause()
-				setBookings((all) =>
-					all.map((b) =>
-						b.personId === personId ? { ...b, roles: profile.roles, team: profile.team, capacity: profile.weeklyCapacity } : b,
-					),
-				)
+				setTeam((all) => all.map((p) => (p.id === personId ? { ...p, ...profile } : p)))
 				return { ok: true }
 			},
 		}
-	}, [bookings, jobs, seed])
+	}, [bookings, jobs, team, seed])
 }

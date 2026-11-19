@@ -4,8 +4,8 @@ const worker = new Worker()
 export default worker
 
 /**
- * Resourcing schedule — a Forecast-style capacity grid over four ordinary
- * Notion databases (Bookings, Jobs, Clients, Job templates).
+ * Resourcing schedule — a Forecast-style capacity grid over five ordinary
+ * Notion databases (Bookings, Team, Jobs, Clients, Job templates).
  *
  * - **Team** tab: one row per person (plus an Overflow placeholder row), with
  *   a per-day availability heat map. Expand a person to see their jobs.
@@ -18,11 +18,10 @@ export default worker
  *   reassigns each booking; the picker ranks people with the role by open hours
  *   but never assigns on its own.
  *
- * People are real workspace members (a Person property). Role, Team and
- * Weekly capacity live on the Bookings rows: the block reads them from a
- * person's existing bookings and writes them onto any booking it assigns to
- * that person, so the grid works for a guest who can't see the People
- * database. (Notion automations can't reach People-record properties.)
+ * People are rows of a **Team** database, not workspace members: a Person
+ * property can't show names to guests, and Notion's native People database
+ * can't be shared with them either. Bookings point at Team rows through a
+ * relation, and the person panel edits the Team row directly.
  *
  * Property keys are the block's own vocabulary; the config panel maps them onto
  * real properties. **The declared `type` must equal the bound property's type
@@ -41,7 +40,11 @@ worker.customBlock("resourceSchedule", {
 			properties: {
 				title: { name: "Booking", description: "Title.", type: "title" },
 				job: { name: "Job", description: "Relation to Jobs.", type: "relation" },
-				person: { name: "Person", description: "Person. Empty while the booking sits on a placeholder.", type: "people" },
+				member: {
+					name: "Team member",
+					description: "Relation to Team. Empty while the booking sits on a placeholder.",
+					type: "relation",
+				},
 				placeholder: {
 					name: "Placeholder",
 					description: "Select. “Overflow” for work that isn't assigned yet.",
@@ -50,18 +53,19 @@ worker.customBlock("resourceSchedule", {
 				dates: { name: "Dates", description: "Date range, inclusive. Weekends are skipped.", type: "date" },
 				hoursPerDay: { name: "Hours per day", description: "Number.", type: "number" },
 				round: { name: "Round", description: "Number. Which template round this booking is.", type: "number" },
-				role: {
-					name: "Role",
-					description: "Multi-select. Written by the block from the person's other bookings.",
-					type: "multi_select",
-				},
-				team: { name: "Team", description: "Select. Written by the block from the person's other bookings.", type: "select" },
-				capacity: {
-					name: "Weekly capacity",
-					description: "Number. Written by the block from the person's other bookings. Empty means 35.",
-					type: "number",
-				},
 				notes: { name: "Notes", description: "Text.", type: "rich_text" },
+			},
+		},
+		team: {
+			name: "Team",
+			description: "Written to by the person panel. One row per bookable person.",
+			icon: { type: "emoji", emoji: "👥" },
+			properties: {
+				name: { name: "Name", description: "Title.", type: "title" },
+				roles: { name: "Role", description: "Multi-select. What they can be booked for.", type: "multi_select" },
+				team: { name: "Team", description: "Select.", type: "select" },
+				capacity: { name: "Weekly capacity", description: "Number. Bookable hours a week; empty means 35.", type: "number" },
+				dedicatedTo: { name: "Dedicated to", description: "Relation to Clients. Accounts they're dedicated to.", type: "relation" },
 			},
 		},
 		jobs: {
@@ -82,7 +86,6 @@ worker.customBlock("resourceSchedule", {
 			icon: { type: "emoji", emoji: "🏢" },
 			properties: {
 				name: { name: "Client", description: "Title.", type: "title" },
-				dedicated: { name: "Dedicated people", description: "Person. Staff dedicated to this account.", type: "people" },
 			},
 		},
 		templates: {

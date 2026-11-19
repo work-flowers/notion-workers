@@ -12,7 +12,7 @@ import type {
 	NotionPropertySchema,
 } from "@notionhq/custom-blocks"
 
-import type { Booking, Client, Job, Person, PlannedRound, Template } from "./model.ts"
+import { DEFAULT_WEEKLY_CAPACITY, type Booking, type Client, type Job, type Person, type PlannedRound, type Template } from "./model.ts"
 import type { BookingDraft, PersonProfile } from "./store.ts"
 
 // ---------------------------------------------------------------------------
@@ -62,15 +62,12 @@ export function toBooking(row: NotionDataSourcePage): Booking {
 		id: row.id,
 		title: asText(p.title) ?? "Untitled",
 		jobId: asIds(p.job)[0] ?? null,
-		personId: asIds(p.person)[0] ?? null,
+		personId: asIds(p.member)[0] ?? null,
 		placeholder: asText(p.placeholder),
 		start,
 		end,
 		hoursPerDay: asNumber(p.hoursPerDay) ?? 0,
 		round: asNumber(p.round),
-		roles: asNames(p.role),
-		team: asText(p.team),
-		capacity: asNumber(p.capacity),
 		notes: asText(p.notes),
 	}
 }
@@ -89,7 +86,19 @@ export function toJob(row: NotionDataSourcePage): Job {
 
 export function toClient(row: NotionDataSourcePage): Client {
 	const p = row.propertiesByKey
-	return { id: row.id, name: asText(p.name) ?? "Untitled", dedicatedIds: asIds(p.dedicated) }
+	return { id: row.id, name: asText(p.name) ?? "Untitled" }
+}
+
+export function toPerson(row: NotionDataSourcePage): Person {
+	const p = row.propertiesByKey
+	return {
+		id: row.id,
+		name: asText(p.name) ?? "Unnamed",
+		roles: asNames(p.roles),
+		team: asText(p.team),
+		weeklyCapacity: asNumber(p.capacity) ?? DEFAULT_WEEKLY_CAPACITY,
+		dedicatedTo: asIds(p.dedicatedTo),
+	}
 }
 
 export function toTemplate(row: NotionDataSourcePage): Template {
@@ -128,24 +137,21 @@ function dates(start: string | null, end: string | null) {
  * and capacity keep working without an automation or access to the People
  * database. Moving back to a placeholder clears them.
  */
-export function bookingProperties(d: BookingDraft, person: Person | undefined): NotionPagePropertyInputMap {
-	const who = d.personId ? person : undefined
+export function bookingProperties(d: BookingDraft): NotionPagePropertyInputMap {
 	return {
-		person: { type: "people", people: d.personId ? [{ id: d.personId }] : [] },
+		member: { type: "relation", relation: d.personId ? [{ id: d.personId }] : [] },
 		placeholder: { type: "select", select: d.personId ? null : { name: d.placeholder ?? "Overflow" } },
-		role: { type: "multi_select", multi_select: (who?.roles ?? []).map((name) => ({ name })) },
-		team: { type: "select", select: who?.team ? { name: who.team } : null },
-		capacity: { type: "number", number: who ? who.weeklyCapacity : null },
 		dates: dates(d.start, d.end),
 		hoursPerDay: { type: "number", number: d.hoursPerDay },
 		notes: text(d.notes),
 	} as NotionPagePropertyInputMap
 }
 
-/** The roster fields alone, for re-stamping a person's existing bookings. */
+/** A row of the Team database. */
 export function personProperties(p: PersonProfile): NotionPagePropertyInputMap {
 	return {
-		role: { type: "multi_select", multi_select: p.roles.map((name) => ({ name })) },
+		name: { type: "title", title: [{ type: "text", text: { content: p.name } }] },
+		roles: { type: "multi_select", multi_select: p.roles.map((name) => ({ name })) },
 		team: { type: "select", select: p.team ? { name: p.team } : null },
 		capacity: { type: "number", number: p.weeklyCapacity },
 	} as NotionPagePropertyInputMap
@@ -193,7 +199,8 @@ export function onlyBound(
 type Bindable = { propertyIdsByKey: Readonly<Record<string, string | undefined>> }
 
 const REQUIRED: Record<string, string[]> = {
-	Bookings: ["title", "job", "person", "placeholder", "dates", "hoursPerDay"],
+	Bookings: ["title", "job", "member", "placeholder", "dates", "hoursPerDay"],
+	Team: ["name", "roles", "capacity"],
 	Jobs: ["title", "client"],
 	Clients: ["name"],
 	"Job templates": ["name", "round1"],

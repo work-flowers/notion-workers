@@ -1,13 +1,13 @@
 import "@notionhq/custom-blocks/nds.css"
 
-import { pages, users, type NotionDataSourcePage } from "@notionhq/custom-blocks"
+import { pages, type NotionDataSourcePage } from "@notionhq/custom-blocks"
 import { NotionCustomBlock, NotionTokenScope, useDataSource, useTheme } from "@notionhq/custom-blocks/react"
-import { StrictMode, useEffect, useMemo, useState, type ReactNode } from "react"
+import { StrictMode, useMemo, useState, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
 import { useMockStore } from "./mock.ts"
-import { deriveRoster } from "./model.ts"
+import { sortPeople } from "./model.ts"
 import {
 	bindingProblems,
 	bookingProperties,
@@ -19,6 +19,7 @@ import {
 	toBooking,
 	toClient,
 	toJob,
+	toPerson,
 	toTemplate,
 } from "./rows.ts"
 import type { Store } from "./store.ts"
@@ -69,43 +70,12 @@ function settle<T>(write: Promise<WriteResult<T>>): Promise<WriteResult<T>> {
 
 const live = (rows: readonly NotionDataSourcePage[]) => rows.filter((r) => r.is_archived !== true)
 
-/** `users.get` per person, memoised and time-limited; a name that can't be read stays unknown. */
-const nameCache = new Map<string, Promise<string | null>>()
-
-function fetchName(id: string): Promise<string | null> {
-	let p = nameCache.get(id)
-	if (p === undefined) {
-		p = Promise.race([
-			users.get(id as Parameters<typeof users.get>[0]).then((r) => (r.status === "success" ? (r.user.name ?? null) : null)),
-			new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-		]).catch(() => null)
-		nameCache.set(id, p)
-	}
-	return p
-}
-
-function useNames(ids: readonly string[]): Map<string, string> {
-	const [names, setNames] = useState<Map<string, string>>(new Map())
-	const key = [...new Set(ids)].sort().join(",")
-	useEffect(() => {
-		let cancelled = false
-		const list = key ? key.split(",") : []
-		Promise.all(list.map(async (id) => [id, await fetchName(id)] as const)).then((pairs) => {
-			if (cancelled) return
-			setNames(new Map(pairs.filter((p): p is readonly [string, string] => p[1] !== null)))
-		})
-		return () => {
-			cancelled = true
-		}
-	}, [key])
-	return names
-}
-
 function useNotionStore(): Store {
 	const bookings = useDataSource("bookings", QUERY)
 	const jobs = useDataSource("jobs", QUERY)
 	const clients = useDataSource("clients", QUERY)
 	const templates = useDataSource("templates", QUERY)
+	const team = useDataSource("team", QUERY)
 
 	// The subscription keeps serving a row after the block archives it (seen live,
 	// 2026-11-18: Notion had is_archived true, the block still listed it), so
@@ -116,16 +86,12 @@ function useNotionStore(): Store {
 		[bookings.items, deleted],
 	)
 	const clientList = useMemo(() => live(clients.items).map(toClient), [clients.items])
-	const personIds = useMemo(
-		() => [...bookingList.map((b) => b.personId), ...clientList.flatMap((c) => c.dedicatedIds)].filter((x): x is string => x !== null),
-		[bookingList, clientList],
-	)
-	const names = useNames(personIds)
+	const people = useMemo(() => sortPeople(live(team.items).map(toPerson)), [team.items])
 
 	return useMemo<Store>(() => {
 		const rows = new Map<string, NotionDataSourcePage>(bookings.items.map((r) => [r.id, r]))
-		const loading = [bookings, jobs, clients, templates].some((s) => s.isLoading)
-		const people = deriveRoster(bookingList, names, clientList)
+		const teamRows = new Map<string, NotionDataSourcePage>(team.items.map((r) => [r.id, r]))
+		const loading = [bookings, team, jobs, clients, templates].some((s) => s.isLoading)
 
 		return {
 			bookings: bookingList,
@@ -133,18 +99,17 @@ function useNotionStore(): Store {
 			clients: clientList,
 			templates: live(templates.items).map(toTemplate),
 			people,
-			roleOptions: optionNames(bookings.propertySchemasByKey.role),
-			teamOptions: optionNames(bookings.propertySchemasByKey.team),
+			roleOptions: optionNames(team.propertySchemasByKey.roles),
+			teamOptions: optionNames(team.propertySchemasByKey.team),
 			labelOptions: optionNames(jobs.propertySchemasByKey.label),
 			loading,
-			bindingProblems: loading ? [] : bindingProblems({ Bookings: bookings, Jobs: jobs, Clients: clients, "Job templates": templates }),
+			bindingProblems: loading ? [] : bindingProblems({ Bookings: bookings, Team: team, Jobs: jobs, Clients: clients, "Job templates": templates }),
 
 			async saveBooking(id, draft) {
 				const row = rows.get(id)
 				if (row === undefined) return { ok: false, message: "That booking is no longer loaded. Reload the block." }
-				const person = people.find((p) => p.id === draft.personId)
 				const result = await settle(
-					row.update({ properties: onlyBound(bookingProperties(draft, person), bookings.propertyIdsByKey) }),
+					row.update({ properties: onlyBound(bookingProperties(draft), bookings.propertyIdsByKey) }),
 				)
 				return result.status === "success" ? { ok: true } : { ok: false, message: result.error.message }
 			},
@@ -181,20 +146,13 @@ function useNotionStore(): Store {
 			},
 
 			async savePerson(personId, profile) {
-				const theirs = bookingList.filter((b) => b.personId === personId)
-				const properties = onlyBound(personProperties(profile), bookings.propertyIdsByKey)
-				for (const [i, b] of theirs.entries()) {
-					const row = rows.get(b.id)
-					if (row === undefined) continue
-					const result = await settle(row.update({ properties }))
-					if (result.status === "error") {
-						return { ok: false, message: `Saved ${i} of ${theirs.length} bookings, then: ${result.error.message}` }
-					}
-				}
-				return { ok: true }
+				const row = teamRows.get(personId)
+				if (row === undefined) return { ok: false, message: "That person is no longer loaded. Reload the block." }
+				const result = await settle(row.update({ properties: onlyBound(personProperties(profile), team.propertyIdsByKey) }))
+				return result.status === "success" ? { ok: true } : { ok: false, message: result.error.message }
 			},
 		}
-	}, [bookings, jobs, clients, templates, bookingList, clientList, names])
+	}, [bookings, team, jobs, clients, templates, bookingList, clientList, people])
 }
 
 function NotionSchedule() {
