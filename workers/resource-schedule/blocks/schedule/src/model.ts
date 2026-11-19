@@ -19,9 +19,6 @@ export type Booking = {
 	end: string | null
 	hoursPerDay: number
 	round: number | null
-	roles: string[]
-	team: string | null
-	capacity: number | null
 	notes: string | null
 }
 
@@ -34,7 +31,7 @@ export type Job = {
 	label: string | null
 }
 
-export type Client = { id: string; name: string; dedicatedIds: string[] }
+export type Client = { id: string; name: string }
 
 export type Template = { id: string; name: string; rounds: number[]; gap: number; role: string | null }
 
@@ -177,40 +174,9 @@ export function fmtHours(h: number): string {
 // People
 // ---------------------------------------------------------------------------
 
-/**
- * Everyone who appears on a booking, with role, team and capacity taken from
- * their bookings (the automation copies them there from the People database).
- * A booking that hasn't been filled in yet just contributes nothing.
- */
-export function deriveRoster(
-	bookings: readonly Booking[],
-	names: ReadonlyMap<string, string>,
-	clients: readonly Client[],
-	extraIds: readonly string[] = [],
-): Person[] {
-	const byId = new Map<string, Person>()
-	const ensure = (id: string) => {
-		let p = byId.get(id)
-		if (p === undefined) {
-			p = { id, name: names.get(id) ?? "Unknown person", roles: [], team: null, weeklyCapacity: NaN, dedicatedTo: [] }
-			byId.set(id, p)
-		}
-		return p
-	}
-	for (const id of extraIds) ensure(id)
-	for (const b of bookings) {
-		if (b.personId === null) continue
-		const p = ensure(b.personId)
-		for (const r of b.roles) if (!p.roles.includes(r)) p.roles.push(r)
-		if (p.team === null && b.team !== null) p.team = b.team
-		if (Number.isNaN(p.weeklyCapacity) && b.capacity !== null) p.weeklyCapacity = b.capacity
-	}
-	for (const c of clients) for (const id of c.dedicatedIds) byId.get(id)?.dedicatedTo.push(c.id)
-	const people = [...byId.values()].map((p) => ({
-		...p,
-		weeklyCapacity: Number.isNaN(p.weeklyCapacity) ? DEFAULT_WEEKLY_CAPACITY : p.weeklyCapacity,
-	}))
-	return people.sort((a, b) => a.name.localeCompare(b.name))
+/** The Team database, A–Z. Each row is one bookable person. */
+export function sortPeople(people: readonly Person[]): Person[] {
+	return [...people].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 // ---------------------------------------------------------------------------

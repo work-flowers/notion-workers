@@ -43,20 +43,13 @@ function draftOf(b: Booking): BookingDraft {
 	return { personId: b.personId, placeholder: b.placeholder, start: b.start, end: b.end, hoursPerDay: b.hoursPerDay, notes: b.notes }
 }
 
-function withDraft(bookings: Booking[], panel: Panel, people: Person[]): Booking[] {
+function withDraft(bookings: Booking[], panel: Panel): Booking[] {
 	if (panel?.kind !== "booking") return bookings
-	return bookings.map((b) => {
-		if (b.id !== panel.id) return b
-		const who = people.find((p) => p.id === panel.draft.personId)
-		return {
-			...b,
-			...panel.draft,
-			placeholder: panel.draft.personId ? null : (panel.draft.placeholder ?? OVERFLOW),
-			roles: who ? who.roles : [],
-			team: who?.team ?? null,
-			capacity: who?.weeklyCapacity ?? null,
-		}
-	})
+	return bookings.map((b) =>
+		b.id === panel.id
+			? { ...b, ...panel.draft, placeholder: panel.draft.personId ? null : (panel.draft.placeholder ?? OVERFLOW) }
+			: b,
+	)
 }
 
 /** The person panel previews live: the roster shows the unsaved profile, so capacity changes recolour the heat map. */
@@ -126,7 +119,7 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 	const clientsById = useMemo(() => new Map(store.clients.map((c) => [c.id, c])), [store.clients])
 	const people = useMemo(() => withPersonDraft(store.people, panel), [store.people, panel])
 	const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people])
-	const bookings = useMemo(() => withDraft(store.bookings, panel, people), [store.bookings, panel, people])
+	const bookings = useMemo(() => withDraft(store.bookings, panel), [store.bookings, panel])
 	const selectedId = panel?.kind === "booking" ? panel.id : null
 
 	const toggle = (key: string) =>
@@ -316,7 +309,7 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 		const p = store.people.find((x) => x.id === id)
 		if (!p) return
 		setError(null)
-		setPanel({ kind: "person", id, draft: { roles: p.roles, team: p.team, weeklyCapacity: p.weeklyCapacity } })
+		setPanel({ kind: "person", id, draft: { name: p.name, roles: p.roles, team: p.team, weeklyCapacity: p.weeklyCapacity } })
 	}
 
 	async function savePerson() {
@@ -496,7 +489,6 @@ export function App({ store, mock }: { store: Store; mock: boolean }) {
 						draft={panel.draft}
 						roleOptions={store.roleOptions}
 						teamOptions={store.teamOptions}
-						bookingCount={store.bookings.filter((b) => b.personId === panel.id).length}
 						saving={saving}
 						error={error}
 						onChange={(draft) => setPanel({ kind: "person", id: panel.id, draft })}

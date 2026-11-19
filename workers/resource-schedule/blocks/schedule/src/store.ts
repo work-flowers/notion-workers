@@ -11,8 +11,8 @@ export type SaveResult = { ok: true } | { ok: false; message: string }
 /** The booking fields the editor owns. Written in full on every save. */
 export type BookingDraft = Pick<Booking, "personId" | "placeholder" | "start" | "end" | "hoursPerDay" | "notes">
 
-/** What the person panel edits. Stored on every one of the person's bookings. */
-export type PersonProfile = Pick<Person, "roles" | "team" | "weeklyCapacity">
+/** What the person panel edits: one row of the Team database. */
+export type PersonProfile = Pick<Person, "name" | "roles" | "team" | "weeklyCapacity">
 
 export type NewJob = {
 	title: string
@@ -30,9 +30,9 @@ export type Store = {
 	clients: Client[]
 	templates: Template[]
 	people: Person[]
-	/** The Role property's options, for the role filter. */
+	/** The Team database's Role options, for the role filter. */
 	roleOptions: string[]
-	/** The Team property's options, for the person panel. */
+	/** The Team database's Team options, for the person panel. */
 	teamOptions: string[]
 	/** The Label property's options, for New job. */
 	labelOptions: string[]
@@ -43,6 +43,6 @@ export type Store = {
 	saveBooking: (id: string, draft: BookingDraft) => Promise<SaveResult>
 	deleteBooking: (id: string) => Promise<SaveResult>
 	createJob: (job: NewJob) => Promise<SaveResult & { jobId?: string }>
-	/** Writes Role, Team and Weekly capacity onto all of the person's bookings. */
+	/** Writes the person's row in the Team database. */
 	savePerson: (personId: string, profile: PersonProfile) => Promise<SaveResult>
 }

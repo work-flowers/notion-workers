@@ -6,8 +6,6 @@ type Props = {
 	draft: PersonProfile
 	roleOptions: string[]
 	teamOptions: string[]
-	/** How many bookings carry this person's roster values; saving rewrites all of them. */
-	bookingCount: number
 	saving: boolean
 	error: string | null
 	onChange: (d: PersonProfile) => void
@@ -15,15 +13,12 @@ type Props = {
 	onCancel: () => void
 }
 
-/**
- * A person's Role, Team and Weekly capacity. There is no People record the
- * block can read, so these live on the person's bookings and saving rewrites
- * every one of them (see the worker's CLAUDE.md).
- */
-export function PersonPanel({ person, draft, roleOptions, teamOptions, bookingCount, saving, error, onChange, onSave, onCancel }: Props) {
+/** One row of the Team database: name, roles, team and weekly hours. */
+export function PersonPanel({ person, draft, roleOptions, teamOptions, saving, error, onChange, onSave, onCancel }: Props) {
 	const roles = [...new Set([...roleOptions, ...person.roles])]
 	const teams = [...new Set([...teamOptions, ...(person.team ? [person.team] : [])])]
 	const capacityInvalid = !(draft.weeklyCapacity > 0 && draft.weeklyCapacity <= 80)
+	const nameInvalid = draft.name.trim() === ""
 	const toggleRole = (r: string) =>
 		onChange({ ...draft, roles: draft.roles.includes(r) ? draft.roles.filter((x) => x !== r) : [...draft.roles, r] })
 
@@ -32,12 +27,17 @@ export function PersonPanel({ person, draft, roleOptions, teamOptions, bookingCo
 			<div className="rs-panel-head">
 				<div>
 					<div className="rs-panel-kicker">Team member</div>
-					<h2 className="rs-panel-title">{person.name}</h2>
+					<h2 className="rs-panel-title">{draft.name.trim() || person.name}</h2>
 				</div>
 				<button type="button" className="rs-icon-btn" onClick={onCancel} aria-label="Close">
 					×
 				</button>
 			</div>
+
+			<label className="rs-field">
+				<span className="rs-label">Name</span>
+				<input className="rs-input" value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })} />
+			</label>
 
 			<div className="rs-field">
 				<span className="rs-label">Role</span>
@@ -89,12 +89,6 @@ export function PersonPanel({ person, draft, roleOptions, teamOptions, bookingCo
 					: `${fmtHours(draft.weeklyCapacity / 5)}h a day over a five-day week.`}
 			</p>
 
-			<p className="rs-help">
-				{bookingCount > 0
-					? `Saved onto ${person.name.split(" ")[0]}'s ${bookingCount} booking${bookingCount === 1 ? "" : "s"}.`
-					: "No bookings yet, so there is nowhere to save this. Assign them a booking first."}
-			</p>
-
 			{error ? <div className="rs-banner rs-banner--error">{error}</div> : null}
 
 			<div className="rs-panel-actions">
@@ -106,7 +100,7 @@ export function PersonPanel({ person, draft, roleOptions, teamOptions, bookingCo
 					type="button"
 					className="rs-btn rs-btn--primary"
 					onClick={onSave}
-					disabled={saving || capacityInvalid || bookingCount === 0}
+					disabled={saving || capacityInvalid || nameInvalid}
 				>
 					{saving ? "Saving…" : "Save"}
 				</button>

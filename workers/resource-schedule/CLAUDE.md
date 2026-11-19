@@ -1,7 +1,7 @@
 # resource-schedule
 
 A **custom block** (Notion alpha), not a sync: a Forecast-style resourcing
-schedule over four ordinary Notion databases. Built as a sales mock-up, so it
+schedule over five ordinary Notion databases. Built as a sales mock-up, so it
 is deliberately small. `README.md` has the binding table and the demo script.
 General custom-block mechanics live in
 [`docs/custom-blocks.md`](../../docs/custom-blocks.md) — read that first.
@@ -14,7 +14,7 @@ workspace members as people; `fixture.ts` uses fictional names in their place.
 
 ## Shape
 
-- `src/index.ts` — the manifest. Four data sources (Bookings, Jobs, Clients,
+- `src/index.ts` — the manifest. Five data sources (Bookings, Team, Jobs, Clients,
   Job templates); property names match the demo databases so the config panel
   auto-maps them.
 - `blocks/schedule/src/model.ts` — all the arithmetic as pure functions: dates
@@ -35,27 +35,22 @@ workspace members as people; `fixture.ts` uses fictional names in their place.
   day**, like a Forecast assignment. Front-loaded work is several bookings,
   which is what template rounds produce.
 - **Overflow is a placeholder row, not a person**: a booking with an empty
-  Person and `Placeholder = Overflow`. Assigning a person clears the
+  Team member and `Placeholder = Overflow`. Assigning a person clears the
   placeholder and vice versa.
-- **Role, Team and Weekly capacity live on the Bookings rows, and the block
-  writes them.** A person's roster entry is the union of their bookings' values
-  (empty capacity means 35); assigning a booking to someone writes their roster
-  values onto it, and moving it back to a placeholder clears them. There is no
-  automation: a Notion automation formula can't reach a person's People-record
-  properties (`Trigger page.Person.first().` offers nothing, tried 2026-11-18),
-  and neither search nor the Notion MCP can see the native People database. A
-  guest can't see it either, so the block never reads it. Consequences: the
-  seed bookings had to carry the values, and someone with no bookings at all
-  doesn't appear. A real build needs a proper People sync, starting with
-  whether the API can read the People database at all.
-- **Clicking a person's name opens `PersonPanel.tsx`** (Role, Team, Hours /
-  week). Saving rewrites those three fields on *every* one of their bookings,
-  one `row.update` each, which is the only place they live; someone with no
-  bookings can't be saved. The panel previews live like the booking editor.
-  Team choices are the Bookings Team property's options.
-- **People's names come from `users.get`**, memoised with an 8s timeout. Whether
-  a *guest* viewer can resolve other members' and guests' names is unverified;
-  a failure shows "Unknown person" rather than breaking the grid.
+- **People are rows of a Team database, not workspace users.** Bookings point
+  at them through the `Team member` relation; Name, Role, Team, Weekly capacity
+  and Dedicated to (relation → Clients) live on the Team row. Replaced on
+  2026-11-19 a design that used a Person property plus `users.get` for names
+  and copied Role/Team/capacity onto every booking. That failed for guests: a
+  guest viewer saw no names, and Notion's native People database can't be
+  shared with guests at all, nor read through the API, search or the Notion MCP
+  (its properties aren't reachable from an automation formula either). A Team
+  database has none of those limits and lets someone with no bookings appear.
+  Team's optional `Notion account` person column is for humans; the block
+  never reads it.
+- **Clicking a person's name opens `PersonPanel.tsx`** (Name, Role, Team, Hours
+  / week), which writes that person's Team row. It previews live like the
+  booking editor. Role and Team choices are the Team database's options.
 - **Suggestions rank, never assign.** Role match first, then whoever fits on
   every day, then dedicated-to-this-client, then most headroom. A person always
   clicks the name.

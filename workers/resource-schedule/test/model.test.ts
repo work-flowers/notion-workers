@@ -3,23 +3,23 @@ import { test } from "node:test"
 
 import { barSpan, columnsFor, DAY_WIDTH as D, totalWidth, WEEKEND_WIDTH as W } from "../blocks/schedule/src/columns.ts"
 import { fixture, PEOPLE, SEED_MONDAY } from "../blocks/schedule/src/fixture.ts"
-import { bookingProperties } from "../blocks/schedule/src/rows.ts"
+import { bookingProperties, personProperties } from "../blocks/schedule/src/rows.ts"
 import {
 	addWorkingDays,
 	dailyLoad,
 	dayCell,
-	deriveRoster,
 	matchesQuery,
 	mondayOf,
 	personHaystack,
 	planFromTemplate,
+	sortPeople,
 	suggestFor,
 	workingDays,
 	type Booking,
 } from "../blocks/schedule/src/model.ts"
 
 const seed = fixture()
-const roster = deriveRoster(seed.bookings, seed.names, seed.clients)
+const roster = sortPeople(seed.people)
 const person = (name: string) => {
 	const p = roster.find((x) => x.name === name)
 	assert.ok(p, name)
@@ -33,13 +33,15 @@ test("dates: working days skip weekends and Monday is the week start", () => {
 	assert.equal(addWorkingDays("2026-11-21", 0), "2026-11-23")
 })
 
-test("roster: role, team and capacity come from bookings; empty capacity is 35", () => {
+test("roster: everyone on the Team list appears, A–Z, with their own role, team and capacity", () => {
 	assert.equal(roster.length, PEOPLE.length)
+	assert.deepEqual(
+		roster.map((p) => p.name),
+		[...PEOPLE.map((p) => p.name)].sort((a, b) => a.localeCompare(b)),
+	)
 	const motion = person("Lee Moretti")
 	assert.deepEqual(motion.roles, ["Motion Designer"])
 	assert.equal(motion.weeklyCapacity, 21)
-	const bare = deriveRoster([{ ...seed.bookings[0], capacity: null }], seed.names, [])
-	assert.equal(bare[0].weeklyCapacity, 35)
 	assert.deepEqual(person("Mia Lindqvist").dedicatedTo, ["c-saltbush"])
 })
 
@@ -120,19 +122,22 @@ test("columns: bars land on the right days and clip to the axis", () => {
 	assert.equal(totalWidth(cols), 4 * (5 * D + 2 * W))
 })
 
-test("writes: assigning copies the person's role, team and capacity; Overflow clears them", () => {
+test("writes: assigning links the Team row; Overflow clears it; the person panel writes the Team row", () => {
 	const editor = person("Chris Mendes")
 	const draft = { personId: editor.id, placeholder: null, start: "2026-11-23", end: "2026-11-23", hoursPerDay: 4, notes: null }
-	const assigned = bookingProperties(draft, editor) as Record<string, unknown>
-	assert.deepEqual(assigned.role, { type: "multi_select", multi_select: [{ name: "Editor" }] })
-	assert.deepEqual(assigned.team, { type: "select", select: { name: "Agency" } })
-	assert.deepEqual(assigned.capacity, { type: "number", number: 35 })
+	const assigned = bookingProperties(draft) as Record<string, unknown>
+	assert.deepEqual(assigned.member, { type: "relation", relation: [{ id: editor.id }] })
 	assert.deepEqual(assigned.placeholder, { type: "select", select: null })
 
-	const back = bookingProperties({ ...draft, personId: null, placeholder: "Overflow" }, editor) as Record<string, unknown>
-	assert.deepEqual(back.person, { type: "people", people: [] })
+	const back = bookingProperties({ ...draft, personId: null, placeholder: "Overflow" }) as Record<string, unknown>
+	assert.deepEqual(back.member, { type: "relation", relation: [] })
 	assert.deepEqual(back.placeholder, { type: "select", select: { name: "Overflow" } })
-	assert.deepEqual(back.role, { type: "multi_select", multi_select: [] })
-	assert.deepEqual(back.team, { type: "select", select: null })
-	assert.deepEqual(back.capacity, { type: "number", number: null })
+
+	const row = personProperties({ name: "Chris Mendes", roles: ["Editor", "Designer"], team: null, weeklyCapacity: 28 }) as Record<
+		string,
+		unknown
+	>
+	assert.deepEqual(row.roles, { type: "multi_select", multi_select: [{ name: "Editor" }, { name: "Designer" }] })
+	assert.deepEqual(row.team, { type: "select", select: null })
+	assert.deepEqual(row.capacity, { type: "number", number: 28 })
 })
