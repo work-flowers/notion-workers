@@ -24,7 +24,7 @@ const MAX_RICH_TEXT = 1_900;
 
 /**
  * Public Supercut topic playlists, as multi-select options. See the schema
- * note below. The Website gate playlist is deliberately not one of them.
+ * note below.
  */
 const PLAYLIST_OPTIONS = [
 	"Dashboards & Custom UI",
@@ -40,7 +40,7 @@ const PLAYLIST_COLORS = ["blue", "red", "orange", "green", "purple", "pink", "ye
 // ---------------------------------------------------------------------------
 //
 // Every property below is written by the sync and is therefore read-only in
-// Notion. Anything a person needs to edit (a publish flag for Bullet, notes)
+// Notion. Anything a person needs to edit (the YouTube columns, notes)
 // must be added to the data source by hand and left undeclared here — see
 // CLAUDE.md.
 
@@ -82,10 +82,6 @@ const recordings = worker.database("recordings", {
 			Owner: Schema.richText(),
 			Summary: Schema.richText(),
 			Chapters: Schema.richText(),
-			// True when the recording is in the Website playlist. The database is
-			// private and holds every recording; if it is ever published again,
-			// filter on this or client and throwaway videos reach the site.
-			"On Website": Schema.checkbox(),
 			// All-time viewership from the `analytics` block on /recordings/{id}.
 			Visits: Schema.number(),
 			"Unique Visits": Schema.number(),
@@ -111,7 +107,6 @@ const notionApi = worker.pacer("notionApi", { allowedRequests: 3, intervalMs: 1_
 
 interface SyncedRecording {
 	listing: PlaylistRecording;
-	onWebsite: boolean;
 	playlists: Set<string>;
 	detail?: RecordingDetail;
 	oembed?: OEmbed;
@@ -156,56 +151,31 @@ worker.sync("recordingsSync", {
 		);
 
 		const changes = [...found.values()].map(toChange);
-		const onWebsite = [...found.values()].filter((r) => r.onWebsite).length;
-		console.log(`recordings: ${changes.length} upserts (${onWebsite} on the Website playlist)`);
+		console.log(`recordings: ${changes.length} upserts`);
 		return { changes, hasMore: false, nextState: undefined };
 	},
 });
 
 /**
- * Every recording the token's user owns, flagged with whether it is in the
- * Website playlist and tagged with the public topic playlists it belongs to,
- * with detail + oEmbed attached.
+ * Every recording the token's user owns, tagged with the public topic
+ * playlists it belongs to, with detail + oEmbed attached. The topic playlists
+ * only supply the Playlists category; they don't decide which rows exist.
  *
- * The Website playlist no longer decides which rows exist (it did until
- * 2026-11-20); it only sets `On Website`, which is what Bullet filters on. The
- * topic playlists only supply the Playlists category.
+ * Until 2026-11-20 a Supercut "Website" playlist gated or flagged rows (On
+ * Website). That playlist was deleted once the database went private, and the
+ * gate went with it.
  */
 async function collectRecordings(): Promise<Map<string, SyncedRecording>> {
-	const websiteId = websitePlaylistId();
 	const all = await listPlaylists(supercutApi);
-
-	const website = all.find((p) => p.public_id === websiteId);
-	if (!website) {
-		throw new Error(
-			`WEBSITE_PLAYLIST_ID ${websiteId} is not among the ${all.length} playlists the token ` +
-				"can see — it was deleted, or SUPERCUT_API_TOKEN is not the personal token of its owner.",
-		);
-	}
-	if (!website.is_public) {
-		console.warn(
-			`playlist "${website.name}" (the Website gate) is not public — make it public in Supercut ` +
-				"so its recordings' embeds and share links are viewable on the site.",
-		);
-	}
 
 	const found = new Map<string, SyncedRecording>();
 	for (const listing of await listOwnedRecordings(supercutApi)) {
-		found.set(listing.public_id, { listing, onWebsite: false, playlists: new Set() });
-	}
-	const owned = found.size;
-
-	// A Website recording someone else owns is not in the owned list; add it so
-	// the site never loses a video it was publishing.
-	for (const listing of await listPlaylistRecordings(website.public_id, supercutApi)) {
-		const rec = found.get(listing.public_id);
-		if (rec) rec.onWebsite = true;
-		else found.set(listing.public_id, { listing, onWebsite: true, playlists: new Set() });
+		found.set(listing.public_id, { listing, playlists: new Set() });
 	}
 
-	const topics = all.filter((p) => p.is_public && p.public_id !== websiteId);
+	const topics = all.filter((p) => p.is_public);
 	console.log(
-		`recordings: ${owned} owned, ${found.size - owned} more from the Website playlist; ` +
+		`recordings: ${found.size} owned; ` +
 			`${topics.length} public topic playlists — ${topics.map((p) => p.name).join(", ")}`,
 	);
 	for (const p of topics) {
@@ -225,12 +195,6 @@ async function collectRecordings(): Promise<Map<string, SyncedRecording>> {
 	const oembedFailures: string[] = [];
 	for (const rec of found.values()) {
 		const id = rec.listing.public_id;
-		if (rec.onWebsite && rec.playlists.size === 0) {
-			console.warn(
-				`recording ${id} ("${rec.listing.title}") is in the Website playlist but no public ` +
-					"topic playlist — it will sync with an empty Playlists category.",
-			);
-		}
 		const workspace = rec.listing.workspace_safename;
 		// Neither enrichment is load-bearing for the row itself: a failure here
 		// logs and degrades to the listing data rather than failing the run.
@@ -256,12 +220,6 @@ async function collectRecordings(): Promise<Map<string, SyncedRecording>> {
 	return found;
 }
 
-function websitePlaylistId(): string {
-	const id = process.env.WEBSITE_PLAYLIST_ID;
-	if (!id) throw new Error("WEBSITE_PLAYLIST_ID environment variable is not set");
-	return id;
-}
-
 function toChange(rec: SyncedRecording) {
 	const { listing, detail, oembed } = rec;
 	const id = listing.public_id;
@@ -283,7 +241,6 @@ function toChange(rec: SyncedRecording) {
 			"Embed URL": Builder.url(embedUrl(workspace, id)),
 			"Recorded At": Builder.dateTime(listing.created_at),
 			Playlists: Builder.multiSelect(...[...rec.playlists].sort()),
-			"On Website": Builder.checkbox(rec.onWebsite),
 			...(thumbnail ? { "Thumbnail URL": Builder.url(thumbnail) } : {}),
 			...(durationMs != null ? { "Duration (s)": Builder.number(Math.round(durationMs / 1000)) } : {}),
 			...(detail ? { Status: Builder.select(detail.status) } : {}),
