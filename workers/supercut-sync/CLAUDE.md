@@ -140,7 +140,17 @@ stay undeclared in `src/index.ts`. Record any such column here:
 
 | Property | Type | Purpose |
 | --- | --- | --- |
-| _(none yet)_ | | |
+| YouTube Status | select: Ready for YouTube, Uploading, Uploaded (unlisted), Public, Needs review, Failed | Set to Ready for YouTube to publish the recording unlisted, to Public to make it public. The Zap moves it through the other states. |
+| YouTube Video ID | text | The uploaded video's id. Match key for the `youtube-sync` worker's Supercut Recording relation. |
+| YouTube URL | url | Watch URL of the uploaded video. |
+| YouTube Error | text | Why the last publish attempt failed or needs review. |
+| YouTube Clients OK | checkbox | Tick after reviewing a Needs review flag to let the Zap publish despite client names in the transcript. |
+
+All five were added by hand on 2026-11-20 and are written by the
+`supercut-to-youtube` Next Gen Zap in the `zapier-sdk` repo
+(work-flowers/zapier-sdk#314). **Never declare them in `worker.database()`**:
+that would make them read-only, and the Zap's write-back would fail. The six
+videos uploaded by hand on 2026-11-20 were backfilled into YouTube Video ID.
 
 ## Operating
 
