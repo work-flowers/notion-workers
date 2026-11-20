@@ -20,6 +20,15 @@ export default worker;
 /** The workFlowers channel, @work.flowers. */
 const CHANNEL_ID = "UCbrz9V64Z2x5OBveDo5ee4w";
 const VIDEO_ID_PROPERTY = "Video ID";
+/**
+ * Page icon: the image behind the workspace's `youtube` custom emoji. The SDK's
+ * `Icon` has no custom-emoji variant, and an icon set over REST is wiped by the
+ * next upsert (an upsert without `icon` clears it — seen 2026-11-20), so it is
+ * set here as an image icon. `public.notion-static.com` URLs are public and
+ * unsigned. Re-uploading the emoji gives a new URL: `GET /v1/custom_emojis`.
+ */
+const PAGE_ICON_URL =
+	"https://s3-us-west-2.amazonaws.com/public.notion-static.com/070e2f91-438b-4c2c-9b8c-cc2b57e9f703/image.png";
 
 // ---------------------------------------------------------------------------
 // Database
@@ -168,6 +177,7 @@ function toChange(video: Video, analytics: Map<string, VideoAnalytics> | undefin
 					}
 				: {}),
 		},
+		icon: Builder.imageIcon(PAGE_ICON_URL),
 		...(thumbnail ? { cover: Builder.imageCover(thumbnail) } : {}),
 	};
 }

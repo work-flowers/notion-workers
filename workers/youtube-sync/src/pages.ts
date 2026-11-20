@@ -149,13 +149,23 @@ export async function syncPages(videoIdProperty: string, pacer: Pacer): Promise<
 	for (const row of videoRows) {
 		const videoId = plainText(row.properties?.[videoIdProperty]);
 		if (!videoId) continue;
-		if (hasRelation) await linkRow(row, videoId, byVideoId, result);
+		const relation = hasRelation ? linkRow(row, videoId, byVideoId, result) : undefined;
+		if (relation) {
+			await pacer.wait();
+			await updatePage(row.id, { properties: { [RELATION_PROPERTY]: relation } });
+		}
 		await ensurePlayer(row.id, watchUrl(videoId), pacer, result);
 	}
 	return result;
 }
 
-async function linkRow(row: any, videoId: string, byVideoId: Map<string, string[]>, result: PagePassResult) {
+/** The relation value to write, or undefined when it is already right or can't be decided. */
+function linkRow(
+	row: any,
+	videoId: string,
+	byVideoId: Map<string, string[]>,
+	result: PagePassResult,
+): { relation: { id: string }[] } | undefined {
 	const matches = byVideoId.get(videoId) ?? [];
 	if (matches.length === 0) {
 		result.links.noMatch++;
@@ -171,8 +181,8 @@ async function linkRow(row: any, videoId: string, byVideoId: Map<string, string[
 		result.links.unchanged++;
 		return;
 	}
-	await updatePage(row.id, { properties: { [RELATION_PROPERTY]: { relation: [{ id: matches[0] }] } } });
 	result.links.set++;
+	return { relation: [{ id: matches[0] }] };
 }
 
 /** One `video` block per page, pointing at the watch URL; others left alone. */

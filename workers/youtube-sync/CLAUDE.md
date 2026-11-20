@@ -23,6 +23,7 @@ next run. Built for TKT-1069 (pieces 1 and 3); the publish half is the
 | Views, Likes, Comments | `statistics`. Likes is left out of the upsert when the count is hidden |
 | Watch Time (min), Avg View Duration (s), Avg % Viewed | YouTube Analytics API, lifetime, about two days behind |
 | page cover | largest thumbnail (`maxres` for HD uploads) |
+| page icon | the image of the workspace's `youtube` custom emoji (see below) |
 | page body | a Notion `video` block for the watch URL, so the video plays inline (page pass, below) |
 | Supercut Recording | **hand-added** relation, written by the page pass (below) |
 
@@ -94,6 +95,23 @@ block alone, so notes written below the video survive. It is deliberately not
 player on the run after its row is created. The append is sent with silent
 notifications. Cost: one `GET /blocks/{id}/children` per row per run, Notion
 only, no Zapier tasks.
+
+## Page icon: an image, not the custom emoji
+
+Every page's icon is the workspace's `youtube` custom emoji, but set as an
+**image icon** pointing at the emoji's file
+(`public.notion-static.com/070e2f91-…/image.png`, public and unsigned), via
+`Builder.imageIcon` on the upsert. Two things rule out the obvious routes:
+
+- The SDK's `Icon` type has no custom-emoji variant (emoji, Notion icon, image).
+- Setting `{ type: "custom_emoji" }` over REST works, but **the next upsert
+  clears it**: an upsert that carries no `icon` resets the page icon to none
+  (observed 2026-11-20 — the REST pass re-set all 14 icons on two runs running,
+  and the page read back `icon: null` in between).
+
+So the icon has to travel with the upsert. If the emoji is re-uploaded its URL
+changes: `GET /v1/custom_emojis` lists the current one. A logo.dev URL would
+also work but needs a token in this public repo.
 
 ## Where the database lives
 
