@@ -6,6 +6,7 @@ import {
 	embedUrl,
 	getOEmbed,
 	getRecording,
+	listOwnedRecordings,
 	listPlaylistRecordings,
 	listPlaylists,
 	shareUrl,
@@ -66,7 +67,7 @@ const recordings = worker.database("recordings", {
 			// A multi-select value whose option is not declared here is silently
 			// dropped on write (observed 2026-09-03: only the one seeded option
 			// survived). Every public topic playlist must be listed; a new one needs
-			// an entry here and a redeploy. `collectWebsiteRecordings` warns when it
+			// an entry here and a redeploy. `collectRecordings` warns when it
 			// meets a name that is missing.
 			Playlists: Schema.multiSelect(
 				PLAYLIST_OPTIONS.map((name, i) => ({ name, color: PLAYLIST_COLORS[i % PLAYLIST_COLORS.length] })),
@@ -74,6 +75,10 @@ const recordings = worker.database("recordings", {
 			Owner: Schema.richText(),
 			Summary: Schema.richText(),
 			Chapters: Schema.richText(),
+			// True when the recording is in the Website playlist — the publish
+			// gate. The database holds every recording, so Bullet must filter on
+			// this or it would publish client and throwaway videos too.
+			"On Website": Schema.checkbox(),
 			// All-time viewership from the `analytics` block on /recordings/{id}.
 			Visits: Schema.number(),
 			"Unique Visits": Schema.number(),
@@ -97,8 +102,9 @@ const notionApi = worker.pacer("notionApi", { allowedRequests: 3, intervalMs: 1_
 // Sync
 // ---------------------------------------------------------------------------
 
-interface WebsiteRecording {
+interface SyncedRecording {
 	listing: PlaylistRecording;
+	onWebsite: boolean;
 	playlists: Set<string>;
 	detail?: RecordingDetail;
 	oembed?: OEmbed;
@@ -106,60 +112,59 @@ interface WebsiteRecording {
 
 worker.sync("recordingsSync", {
 	database: recordings,
-	// Replace mode: a recording taken out of the Website playlist is swept from
-	// Notion on the next run. The whole set is a handful of rows, so one batch.
+	// Replace mode: a recording deleted in Supercut is swept from Notion on the
+	// next run. The whole set is a few dozen rows, so one batch.
 	mode: "replace",
 	schedule: "1d",
 	execute: async () => {
-		const found = await collectWebsiteRecordings();
+		const found = await collectRecordings();
 
 		// Replace mode sweeps every row absent from the batch, so an empty batch
-		// would archive the whole database. An empty Website playlist is far more
-		// likely to be a mistake (emptied by accident, or a token that sees
-		// nothing — a workspace token returns 200 with no items for user-owned
-		// content) than a real empty gallery, so fail loudly and leave the rows
-		// alone. If the gallery is ever legitimately empty, pause the sync
-		// instead of relaxing this.
+		// would archive the whole database. No recordings at all is far more
+		// likely to be a token that sees nothing (a workspace token returns 200
+		// with no items for user-owned content) than a real empty library, so
+		// fail loudly and leave the rows alone.
 		if (found.size === 0) {
 			throw new Error(
-				"The Website playlist has no recordings — refusing to sweep the database. Add " +
-					"recordings to it, or check SUPERCUT_API_TOKEN (a personal sk_u_ token is needed " +
-					"to see user-owned playlists).",
+				"Supercut returned no recordings — refusing to sweep the database. Check " +
+					"SUPERCUT_API_TOKEN (a personal sk_u_ token is needed to see user-owned recordings).",
 			);
 		}
 
 		// Body pass first: it only ever touches pages created by an earlier run,
 		// so ordering relative to the upserts below does not matter, but doing it
 		// first means a Notion outage fails the run before any rows move.
-		const targets: EmbedTarget[] = [];
-		for (const rec of found.values()) {
-			if (rec.oembed?.html) targets.push({ recordingId: rec.listing.public_id, html: rec.oembed.html });
-		}
+		const targets: EmbedTarget[] = [...found.values()].map((rec) => ({
+			recordingId: rec.listing.public_id,
+			url: embedUrl(rec.listing.workspace_safename, rec.listing.public_id),
+		}));
 		const body = await syncEmbedBlocks(targets, notionApi);
 		console.log(
 			body.skipped
 				? "embed blocks: skipped (see warning above)"
 				: `embed blocks: ${body.appended} appended, ${body.updated} updated, ` +
+						`${body.removed} old code blocks removed, ` +
 						`${body.unchanged} unchanged, ${body.missingPage} awaiting page creation ` +
 						`(${body.pagesFound} pages in database)`,
 		);
 
 		const changes = [...found.values()].map(toChange);
-		console.log(`recordings: ${changes.length} upserts from ${found.size} Website recordings`);
+		const onWebsite = [...found.values()].filter((r) => r.onWebsite).length;
+		console.log(`recordings: ${changes.length} upserts (${onWebsite} on the Website playlist)`);
 		return { changes, hasMore: false, nextState: undefined };
 	},
 });
 
 /**
- * Every recording in the Website playlist, tagged with the public topic
- * playlists it also belongs to, with detail + oEmbed attached.
+ * Every recording the token's user owns, flagged with whether it is in the
+ * Website playlist and tagged with the public topic playlists it belongs to,
+ * with detail + oEmbed attached.
  *
- * The Website playlist is the publish gate; the topic playlists only supply
- * the Playlists category. A recording in a topic playlist but not in Website is
- * not synced, so client-specific or throwaway videos can live in topic
- * playlists without reaching the site.
+ * The Website playlist no longer decides which rows exist (it did until
+ * 2026-11-20); it only sets `On Website`, which is what Bullet filters on. The
+ * topic playlists only supply the Playlists category.
  */
-async function collectWebsiteRecordings(): Promise<Map<string, WebsiteRecording>> {
+async function collectRecordings(): Promise<Map<string, SyncedRecording>> {
 	const websiteId = websitePlaylistId();
 	const all = await listPlaylists(supercutApi);
 
@@ -177,14 +182,23 @@ async function collectWebsiteRecordings(): Promise<Map<string, WebsiteRecording>
 		);
 	}
 
-	const found = new Map<string, WebsiteRecording>();
+	const found = new Map<string, SyncedRecording>();
+	for (const listing of await listOwnedRecordings(supercutApi)) {
+		found.set(listing.public_id, { listing, onWebsite: false, playlists: new Set() });
+	}
+	const owned = found.size;
+
+	// A Website recording someone else owns is not in the owned list; add it so
+	// the site never loses a video it was publishing.
 	for (const listing of await listPlaylistRecordings(website.public_id, supercutApi)) {
-		found.set(listing.public_id, { listing, playlists: new Set() });
+		const rec = found.get(listing.public_id);
+		if (rec) rec.onWebsite = true;
+		else found.set(listing.public_id, { listing, onWebsite: true, playlists: new Set() });
 	}
 
 	const topics = all.filter((p) => p.is_public && p.public_id !== websiteId);
 	console.log(
-		`playlists: gate "${website.name}" holds ${found.size} recordings; ` +
+		`recordings: ${owned} owned, ${found.size - owned} more from the Website playlist; ` +
 			`${topics.length} public topic playlists — ${topics.map((p) => p.name).join(", ")}`,
 	);
 	for (const p of topics) {
@@ -201,9 +215,10 @@ async function collectWebsiteRecordings(): Promise<Map<string, WebsiteRecording>
 		}
 	}
 
+	const oembedFailures: string[] = [];
 	for (const rec of found.values()) {
 		const id = rec.listing.public_id;
-		if (rec.playlists.size === 0) {
+		if (rec.onWebsite && rec.playlists.size === 0) {
 			console.warn(
 				`recording ${id} ("${rec.listing.title}") is in the Website playlist but no public ` +
 					"topic playlist — it will sync with an empty Playlists category.",
@@ -220,8 +235,16 @@ async function collectWebsiteRecordings(): Promise<Map<string, WebsiteRecording>
 		try {
 			rec.oembed = await getOEmbed(workspace, id, supercutApi);
 		} catch (err) {
-			console.warn(`recording ${id}: oEmbed fetch failed — ${(err as Error).message}`);
+			// oEmbed is unauthenticated, so it may fail for private recordings;
+			// summarise once instead of warning per row.
+			oembedFailures.push(`${id} (${(err as Error).message.slice(0, 80)})`);
 		}
+	}
+	if (oembedFailures.length > 0) {
+		console.warn(
+			`oEmbed failed for ${oembedFailures.length} recordings — no thumbnail or cover for them: ` +
+				oembedFailures.join("; "),
+		);
 	}
 	return found;
 }
@@ -232,13 +255,14 @@ function websitePlaylistId(): string {
 	return id;
 }
 
-function toChange(rec: WebsiteRecording) {
+function toChange(rec: SyncedRecording) {
 	const { listing, detail, oembed } = rec;
 	const id = listing.public_id;
 	const workspace = listing.workspace_safename;
 	const durationMs = detail?.duration_ms ?? listing.duration_ms;
 	const thumbnail = oembed?.thumbnail_url;
-	const analytics = detail?.analytics;
+	// The owned list carries analytics too, so a failed detail fetch still has counts.
+	const analytics = detail?.analytics ?? listing.analytics;
 
 	return {
 		type: "upsert" as const,
@@ -252,6 +276,7 @@ function toChange(rec: WebsiteRecording) {
 			"Embed URL": Builder.url(embedUrl(workspace, id)),
 			"Recorded At": Builder.dateTime(listing.created_at),
 			Playlists: Builder.multiSelect(...[...rec.playlists].sort()),
+			"On Website": Builder.checkbox(rec.onWebsite),
 			...(thumbnail ? { "Thumbnail URL": Builder.url(thumbnail) } : {}),
 			...(durationMs != null ? { "Duration (s)": Builder.number(Math.round(durationMs / 1000)) } : {}),
 			...(detail ? { Status: Builder.select(detail.status) } : {}),

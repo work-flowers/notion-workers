@@ -35,6 +35,8 @@ export interface PlaylistRecording {
 	duration_ms: number | null;
 	workspace_safename: string;
 	position?: number;
+	/** Present on `/recordings` (owned list) items; not on playlist listings. */
+	analytics?: RecordingAnalytics | null;
 }
 
 export type RecordingStatus = "pending" | "processing" | "completed" | "failed";
@@ -164,6 +166,28 @@ export async function listPlaylistRecordings(
 		items.push(...page.data.items);
 		cursor = page.data.next_cursor;
 	} while (cursor !== null);
+	return items;
+}
+
+/**
+ * Every recording the token's user owns. `/recordings` defaults to the owned
+ * list (the alternatives, `watched` and `shared`, are other people's videos).
+ * Items carry the same `analytics` block as `/recordings/{id}`.
+ */
+export async function listOwnedRecordings(pacer: Pacer): Promise<PlaylistRecording[]> {
+	const items: PlaylistRecording[] = [];
+	let cursor: string | null = null;
+	do {
+		const params: Record<string, string> = { limit: String(PAGE_SIZE) };
+		if (cursor) params.cursor = cursor;
+		const page: { data: { items: PlaylistRecording[]; next_cursor: string | null } } = await apiGet(
+			"/v1/recordings",
+			params,
+			pacer,
+		);
+		items.push(...page.data.items);
+		cursor = page.data.next_cursor;
+	} while (cursor);
 	return items;
 }
 
