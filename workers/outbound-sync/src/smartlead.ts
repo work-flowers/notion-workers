@@ -129,7 +129,7 @@ export type NewLead = {
 	custom_fields?: Record<string, string>;
 };
 
-type AddLeadsResponse = {
+export type AddLeadsResponse = {
 	upload_count?: number;
 	already_added_to_campaign?: number;
 	skipped_in_other_campaign_count?: number;
@@ -141,13 +141,24 @@ type AddLeadsResponse = {
 	is_lead_limit_exhausted?: boolean;
 };
 
+/** Smartlead's per-request cap on `lead_list`. */
+export const ADD_LEADS_MAX = 400;
+
 /**
- * Adds one lead. Smartlead answers 200 even when it skips the lead, so the
- * counters decide. Already being in this campaign counts as success, which
- * makes a retried webhook delivery harmless.
+ * Adds up to 400 leads in one call. Smartlead answers 200 even when it skips
+ * leads and reports only totals, not which lead was skipped.
+ */
+export function addLeads(campaignId: number, leads: NewLead[]): Promise<AddLeadsResponse> {
+	if (leads.length > ADD_LEADS_MAX) throw new Error(`addLeads takes at most ${ADD_LEADS_MAX} leads`);
+	return call<AddLeadsResponse>("POST", `campaigns/${campaignId}/leads`, {}, { lead_list: leads });
+}
+
+/**
+ * Adds one lead, so the counters say why it was refused. Already being in
+ * this campaign counts as success, which makes a re-run harmless.
  */
 export async function addLead(campaignId: number, lead: NewLead): Promise<{ ok: true } | { ok: false; reason: string }> {
-	const r = await call<AddLeadsResponse>("POST", `campaigns/${campaignId}/leads`, {}, { lead_list: [lead] });
+	const r = await addLeads(campaignId, [lead]);
 	if ((r.upload_count ?? 0) > 0 || (r.already_added_to_campaign ?? 0) > 0) return { ok: true };
 	const reason =
 		(r.skipped_in_other_campaign_count ?? 0) > 0
