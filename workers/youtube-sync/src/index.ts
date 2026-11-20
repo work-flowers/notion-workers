@@ -28,7 +28,7 @@ const VIDEO_ID_PROPERTY = "Video ID";
 // Every property below is written by the sync and is therefore read-only in
 // Notion. The **Supercut Recording** relation is deliberately absent: it points
 // at another worker's database, which `Schema.relation()` cannot do, so it is a
-// hand-added column written by `link.ts`. See CLAUDE.md.
+// hand-added column written by `pages.ts`. See CLAUDE.md.
 
 const videos = worker.database("videos", {
 	type: "managed",
@@ -58,7 +58,7 @@ const videos = worker.database("videos", {
 	},
 });
 
-// Notion's public API allows ~3 req/s per integration. Only the link pass uses it.
+// Notion's public API allows ~3 req/s per integration. Only the page pass uses it.
 const notionApi = worker.pacer("notionApi", { allowedRequests: 3, intervalMs: 1_000 });
 
 // ---------------------------------------------------------------------------
