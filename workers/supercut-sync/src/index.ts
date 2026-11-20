@@ -117,7 +117,7 @@ worker.sync("recordingsSync", {
 	// Replace mode: a recording deleted in Supercut is swept from Notion on the
 	// next run. The whole set is a few dozen rows, so one batch.
 	mode: "replace",
-	schedule: "1d",
+	schedule: "1h",
 	execute: async () => {
 		const found = await collectRecordings();
 
