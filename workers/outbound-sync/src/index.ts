@@ -13,7 +13,8 @@ import {
 	messageTime,
 	plainText,
 } from "./smartlead.js";
-import { promoteToContact, pushToSmartlead } from "./webhooks.js";
+import { enrol, enrolmentCandidates, record } from "./enrol.js";
+import { promoteToContact } from "./webhooks.js";
 
 const worker = new Worker();
 export default worker;
@@ -22,7 +23,7 @@ export default worker;
  * Apollo Lists: managed by this worker, one row per Apollo contact list, keyed
  * on the list ID. Which Smartlead campaign a list feeds is a human decision,
  * so that relation ("Smartlead Campaign", one page) is added by hand in Notion,
- * outside this schema, and the push webhook reads it.
+ * outside this schema, and autoEnrol reads it.
  */
 const apolloLists = worker.database("apolloLists", {
 	type: "managed",
@@ -98,7 +99,7 @@ const outboundLeads = worker.database("outboundLeads", {
 			"LinkedIn Profile URL": Schema.url(),
 			Location: Schema.richText(),
 			// The contact's Apollo lists. Declared two-way from the start: the platform
-			// ignores converting an existing relation. The push webhook follows it to
+			// ignores converting an existing relation. autoEnrol follows it to
 			// each list's Smartlead Campaign.
 			"Apollo Lists": Schema.relation("apolloLists", { twoWay: true, relatedPropertyName: "Leads" }),
 			// Smartlead (smartleadLeads)
@@ -116,7 +117,7 @@ const outboundLeads = worker.database("outboundLeads", {
 			// The database key, not the sync key (despite the scaffold guide).
 			// Two-way: each Smartlead Campaigns page gets a read-only "Outbound Leads" list of
 			// Smartlead's actual membership. The human "Push to campaign" relation is
-			// only the push webhook's input; after a push, Smartlead is the source of truth.
+			// only autoEnrol's override input; after enrolment, Smartlead is the source of truth.
 			"In campaign": Schema.relation("smartleadCampaigns", { twoWay: true, relatedPropertyName: "Outbound Leads" }),
 		},
 	},
@@ -233,10 +234,16 @@ worker.sync("apolloLeads", {
 	},
 });
 
-/** Replace mode is safe: a list only disappears when it's deleted in Apollo. */
+/**
+ * Incremental, not replace. Each list's page carries the hand-set Smartlead
+ * Campaign mapping, and auto-enrolment depends on it. On 15 Nov 2026 replace
+ * mode swapped the Zapier People List row for a new page and the mapping went
+ * with it. Upserts by List ID update the same page in place. A list deleted in
+ * Apollo now stays as a stale row: archive it by hand.
+ */
 worker.sync("apolloListsSync", {
 	database: apolloLists,
-	mode: "replace",
+	mode: "incremental",
 	schedule: "1h",
 	execute: async () => {
 		await apollo.wait();
@@ -312,7 +319,7 @@ type SmartleadState = {
 };
 
 async function toSmartleadUpsert(campaignId: number, l: CampaignLead, bounced: Set<number>) {
-	// The push webhook stores the Apollo contact ID on every lead it adds.
+	// autoEnrol stores the Apollo contact ID on every lead it adds.
 	const apolloId = l.lead.custom_fields?.apollo_id;
 	if (!apolloId) return null;
 
@@ -350,7 +357,7 @@ async function toSmartleadUpsert(campaignId: number, l: CampaignLead, bounced: S
 }
 
 /**
- * Smartlead state for leads the push webhook added. Each cycle walks every
+ * Smartlead state for leads autoEnrol added. Each cycle walks every
  * campaign's leads with activity since the cursor (all leads on the first
  * run), and reads each one's message history for its step and latest reply.
  * Leads without an `apollo_id` custom field (added in Smartlead directly) are
@@ -418,16 +425,57 @@ function finish(s: SmartleadState): SmartleadState {
 	return { cursor: s.runStart ? new Date(Date.parse(s.runStart) - OVERLAP_MS).toISOString() : s.cursor };
 }
 
-// ---------------------------------------------------------------- Webhooks
-// Fired by Notion database automations on Outbound Leads (Status → Sequenced,
-// Status → Interested). Both need NOTION_API_TOKEN with access to Outbound
-// Leads, Contacts and Smartlead Campaigns.
+// ---------------------------------------------------------------- Auto-enrolment
 
-worker.webhook("pushToSmartlead", {
-	title: "Push lead to Smartlead",
-	description: "Status set to Sequenced: pre-flight, then add the lead to its Smartlead campaign",
-	execute: (events) => pushToSmartlead(events),
+// Page writes and comments: two per lead. Notion allows about 3 requests a second.
+const notionWrites = worker.pacer("notionWrites", { allowedRequests: 120, intervalMs: 60_000 });
+
+/** Leads resolved per execute call, so one call stays well inside the time limit. */
+const ENROL_BATCH = 25;
+
+type EnrolState = {
+	/** Page IDs already handled this cycle, including waiting (unmapped) ones. */
+	tried?: string[];
+};
+
+/**
+ * Adds new Backlog leads to their Smartlead campaign and sets them to
+ * Sequenced (see src/enrol.ts). Registered as a sync because it's an hourly job
+ * over Outbound Leads; it writes through the REST API, not the sync, since
+ * Status and Push blocked are human columns and must stay undeclared, so it
+ * returns no changes.
+ *
+ * Every lead it enrols is in Smartlead at once, so the go-live gate is the
+ * Smartlead campaign: leads in a campaign that hasn't been started get no email.
+ */
+worker.sync("autoEnrol", {
+	database: outboundLeads,
+	mode: "incremental",
+	schedule: "1h",
+	execute: async (state: EnrolState | undefined) => {
+		const tried = new Set(state?.tried ?? []);
+		const candidates = (await enrolmentCandidates()).filter((l) => !tried.has(l.pageId));
+		const batch = candidates.slice(0, ENROL_BATCH);
+
+		const outcomes = await enrol(batch, () => smartlead.wait());
+		for (const [pageId, outcome] of outcomes) {
+			if (outcome.kind === "waiting") continue;
+			await notionWrites.wait();
+			await notionWrites.wait();
+			await record(pageId, outcome).catch((err) =>
+				console.log(`[autoEnrol] ${pageId}: recording ${outcome.kind} failed: ${(err as Error).message}`),
+			);
+		}
+		for (const l of batch) tried.add(l.pageId);
+
+		const hasMore = candidates.length > batch.length;
+		return { changes: [], hasMore, nextState: hasMore ? { tried: [...tried] } : {} };
+	},
 });
+
+// ---------------------------------------------------------------- Webhooks
+// Fired by a Notion database automation on Outbound Leads (Status → Interested).
+// Needs NOTION_API_TOKEN with access to Outbound Leads and Contacts.
 
 worker.webhook("promoteToContact", {
 	title: "Promote lead to Contact",
