@@ -32,6 +32,9 @@ credit cost, since the page sees little use.)
   `Builder.imageCover()` on the upsert. oEmbed is unauthenticated, so it may
   fail for private recordings; the run log summarises failures in one line and
   those rows get no cover.
+- **Icon** = the Supercut logo on every row, via `Builder.imageIcon()` with a
+  logo.dev URL (since 2026-11-20). The workspace's Supercut custom emoji would
+  be nicer, but the Workers SDK cannot set a custom emoji icon.
 - **Page body** = one Notion **embed block** pointing at
   `https://supercut.ai/embed/{ws}/{id}`, so the video plays inline. Until
   2026-11-20 it was an `html` code block captioned `bullet:HTML` (Bullet.so's

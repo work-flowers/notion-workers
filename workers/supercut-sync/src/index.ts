@@ -44,6 +44,13 @@ const PLAYLIST_COLORS = ["blue", "red", "orange", "green", "purple", "pink", "ye
 // must be added to the data source by hand and left undeclared here — see
 // CLAUDE.md.
 
+/**
+ * Page icon for every row: the Supercut logo. The workspace has it as a custom
+ * emoji, but the Workers SDK can only set emoji, Notion built-in or image-URL
+ * icons, so this is logo.dev's image (a publishable `pk_` key, safe in source).
+ */
+const SUPERCUT_ICON_URL = "https://img.logo.dev/supercut.ai?token=pk_MgvuyiQuRe6IT_XWNAUgrA";
+
 const recordings = worker.database("recordings", {
 	type: "managed",
 	initialTitle: "Supercut Recordings",
@@ -296,6 +303,7 @@ function toChange(rec: SyncedRecording) {
 					}
 				: {}),
 		},
+		icon: Builder.imageIcon(SUPERCUT_ICON_URL),
 		...(thumbnail ? { cover: Builder.imageCover(thumbnail) } : {}),
 		// Deliberately no `pageContentMarkdown`: it would replace the page body
 		// and wipe the captioned embed block that body.ts maintains.
