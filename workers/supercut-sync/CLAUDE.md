@@ -7,8 +7,9 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 
 Syncs **every recording owned** by the token's user in the `workflowers`
 Supercut workspace into a worker-managed database, **Supercut Recordings**, one
-page per recording. Bullet.so publishes the subset flagged **On Website**.
-Daily, replace mode, one batch. (Hourly until 2026-10-04; cut to daily for
+page per recording. The database is **private**: since 2026-11-20 it is no
+longer published to the website by Bullet.so, because it now holds client and
+throwaway recordings too. Daily, replace mode, one batch. (Hourly until 2026-10-04; cut to daily for
 credit cost, since the page sees little use.)
 
 - **Row set = all owned recordings** (`GET /recordings`, about 40 in
@@ -17,9 +18,10 @@ credit cost, since the page sees little use.)
   2026-11-20 the row set was the Website playlist only; before 2026-10-05 it
   was "in any public playlist".
 - **On Website = in the Website playlist** (`WEBSITE_PLAYLIST_ID`,
-  `KNa7tQVRfXvdwBqqj6M1Jj`). This is the publish gate now: **Bullet must filter
-  on `On Website` is checked**, or client-specific and throwaway videos reach
-  the site. Adding a recording to the playlist ticks it on the next run.
+  `KNa7tQVRfXvdwBqqj6M1Jj`). Informational only now that the database is
+  private. **If the database is ever published again, filter on `On Website` is
+  checked**, or client-specific and throwaway videos reach the site. Adding a
+  recording to the playlist ticks it on the next run.
 - **Playlists column = the other public playlists** (the topic ones). They don't
   decide what syncs. A Website recording in no topic playlist syncs with an
   empty category, and the run log warns about it.
@@ -33,7 +35,8 @@ credit cost, since the page sees little use.)
 - **Page body** = one Notion **embed block** pointing at
   `https://supercut.ai/embed/{ws}/{id}`, so the video plays inline. Until
   2026-11-20 it was an `html` code block captioned `bullet:HTML` (Bullet.so's
-  raw-HTML signal); the body pass deletes any such block it finds.
+  raw-HTML signal, from when the site published these pages); the body pass
+  deletes any such block it finds.
 
 ## Viewership analytics
 

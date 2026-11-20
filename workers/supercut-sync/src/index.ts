@@ -75,9 +75,9 @@ const recordings = worker.database("recordings", {
 			Owner: Schema.richText(),
 			Summary: Schema.richText(),
 			Chapters: Schema.richText(),
-			// True when the recording is in the Website playlist — the publish
-			// gate. The database holds every recording, so Bullet must filter on
-			// this or it would publish client and throwaway videos too.
+			// True when the recording is in the Website playlist. The database is
+			// private and holds every recording; if it is ever published again,
+			// filter on this or client and throwaway videos reach the site.
 			"On Website": Schema.checkbox(),
 			// All-time viewership from the `analytics` block on /recordings/{id}.
 			Visits: Schema.number(),
