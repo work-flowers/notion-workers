@@ -58,7 +58,7 @@ async function youtubeGet<T>(url: URL): Promise<T> {
 
 /**
  * A channel's uploads playlist is its id with the `UC` prefix swapped for `UU`.
- * Deriving it saves the `channels.list` call (one task a day). Google has kept
+ * Deriving it saves the `channels.list` call (one task a run). Google has kept
  * this mapping stable for over a decade; if it ever changes, `playlistItems`
  * answers 404 and the run fails loudly rather than syncing nothing.
  */

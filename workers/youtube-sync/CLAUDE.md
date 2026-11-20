@@ -8,7 +8,7 @@ is in `AGENTS.md`. This file covers only what is specific to this worker.
 Mirrors every video on the workFlowers YouTube channel (@work.flowers,
 `UCbrz9V64Z2x5OBveDo5ee4w`) into a worker-managed database, **YouTube Videos**,
 one row per video, and links each row to its source in **Supercut Recordings**.
-Daily, replace mode, one batch, so a video deleted on YouTube is swept on the
+Every 12 hours (`schedule: "12h"`, from 2026-11-20; daily before that), replace mode, one batch, so a video deleted on YouTube is swept on the
 next run. Built for TKT-1069 (pieces 1 and 3); the publish half is the
 `supercut-to-youtube` Next Gen Zap in the `zapier-sdk` repo.
 
@@ -37,7 +37,10 @@ makes:
 2. `videos.list?id=…` — 1 call per 50 videos
 3. Analytics `reports.query` with `dimensions=video` — 1 call per 200 videos
 
-That is **3 tasks a day** for the 14 videos the channel had in November 2026.
+That is **3 tasks a run, 6 a day** (about 180 a month) for the 14 videos the
+channel had in November 2026. Notion credits were estimated at about 0.4–0.6 a
+run from the first day's `ntn workers usage`; recheck once a few days of
+steady-state runs exist.
 The uploads playlist id is derived (`UC…` → `UU…`) instead of read from
 `channels.list`, saving a fourth. Don't add per-video requests, and never use
 `search.list`: it costs 100 quota units a call and does not return unlisted
@@ -77,7 +80,7 @@ declared. Instead:
   YouTube can be linked by hand and stays linked. Two Supercut rows with the
   same id are logged and left unlinked.
 - Rows are created after `execute` returns, so **a new video is linked on the
-  run after it first appears** — one day of lag on the schedule. After the
+  run after it first appears** — up to 12 hours of lag on the schedule. After the
   first deploy, trigger the sync twice.
 - The pass is skipped with a warning while `VIDEOS_DATA_SOURCE_ID` is unset;
   the linking half alone is skipped while the relation column is missing.
@@ -145,4 +148,4 @@ ntn workers logs
 
 The run log prints `supercut links: N set, N unchanged, N with no Supercut row`,
 `players: N appended, N updated, N unchanged` and `videos: N upserts (N public, N unlisted); analytics for N`. A healthy
-steady state has `0 set` and `0 appended` except on the day after a new upload.
+steady state has `0 set` and `0 appended` except on the run after a new upload.

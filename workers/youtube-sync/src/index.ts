@@ -79,7 +79,7 @@ worker.sync("videosSync", {
 	// Replace mode: a video deleted from YouTube is swept on the next run. The
 	// channel has a few dozen videos at most, so one batch.
 	mode: "replace",
-	schedule: "1d",
+	schedule: "12h",
 	execute: async () => {
 		// Page pass first (relation + inline player). It only touches rows created
 		// by an earlier run, and a Notion outage then fails the run before any
