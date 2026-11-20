@@ -1,11 +1,12 @@
 /**
- * Page-body pass: make sure every recording page holds exactly the embed code
- * block Bullet.so expects (see embed.ts), written over the REST API.
+ * Page-body pass: make sure every recording page holds exactly one embed block
+ * playing the recording (see embed.ts), written over the REST API, and that the
+ * legacy `bullet:HTML` code block is gone.
  *
- * Why not `pageContentMarkdown` on the sync upsert: it cannot express a code
- * block caption, and it replaces the whole page body every time it is emitted
- * (verified in workers/zapier-durables-docs). So the sync never touches the body
- * and this pass owns it instead.
+ * Why not `pageContentMarkdown` on the sync upsert: it replaces the whole page
+ * body every time it is emitted (verified in workers/zapier-durables-docs), so
+ * anything a person adds below the video would be wiped daily. So the sync
+ * never touches the body and this pass owns the embed block instead.
  *
  * The pass is idempotent and self-healing, modelled on ga4-sync's relink pass:
  * it reads what is on the page and only writes when the block is missing or
@@ -13,8 +14,8 @@
  * first seen this run) is simply picked up on the next run, because the platform
  * creates rows only after `execute` returns.
  */
-import { codeBlockPayload, codeBlockMatches, codeValue, plainText } from "./embed.js";
-import { appendChildren, listChildren, queryAllPages, updateBlock } from "./notion.js";
+import { embedBlockPayload, isLegacyCodeBlock, plainText } from "./embed.js";
+import { appendChildren, deleteBlock, listChildren, queryAllPages, updateBlock } from "./notion.js";
 import type { Pacer } from "./supercut.js";
 
 /** Primary-key property of the managed database; also read back by this pass. */
@@ -23,8 +24,8 @@ export const RECORDING_ID_PROPERTY = "Recording ID";
 export interface EmbedTarget {
 	/** Supercut `public_id`; equals the row's primary key value. */
 	recordingId: string;
-	/** Exact embed snippet that must be the code block's content. */
-	html: string;
+	/** Supercut player URL the embed block must point at. */
+	url: string;
 }
 
 export interface BodyPassResult {
@@ -34,6 +35,8 @@ export interface BodyPassResult {
 	appended: number;
 	updated: number;
 	unchanged: number;
+	/** Legacy `bullet:HTML` code blocks deleted. */
+	removed: number;
 	/** Targets with no page yet — expected right after a recording first appears. */
 	missingPage: number;
 }
@@ -52,6 +55,7 @@ export async function syncEmbedBlocks(
 		appended: 0,
 		updated: 0,
 		unchanged: 0,
+		removed: 0,
 		missingPage: 0,
 	};
 
@@ -60,7 +64,7 @@ export async function syncEmbedBlocks(
 	const dataSourceId = recordingsDataSourceId();
 	if (!dataSourceId) {
 		console.warn(
-			"RECORDINGS_DATA_SOURCE_ID is not set — skipping the embed code block pass. " +
+			"RECORDINGS_DATA_SOURCE_ID is not set — skipping the embed block pass. " +
 				"After the first deploy has created the database, copy its data source ID and " +
 				"set it with `ntn workers env set RECORDINGS_DATA_SOURCE_ID=<id>`.",
 		);
@@ -68,7 +72,7 @@ export async function syncEmbedBlocks(
 	}
 	if (!process.env.NOTION_API_TOKEN) {
 		console.warn(
-			"NOTION_API_TOKEN is not set — skipping the embed code block pass. Create an internal " +
+			"NOTION_API_TOKEN is not set — skipping the embed block pass. Create an internal " +
 				"integration, share the Supercut Recordings database with it, and set the token with " +
 				"`ntn workers env set NOTION_API_TOKEN=<token>`.",
 		);
@@ -92,15 +96,20 @@ export async function syncEmbedBlocks(
 		}
 
 		const children = await listChildren(pageId, pacer);
-		const existing = children.find((block) => block.type === "code");
 
+		for (const legacy of children.filter(isLegacyCodeBlock)) {
+			await deleteBlock(legacy.id, pacer);
+			result.removed++;
+		}
+
+		const existing = children.find((block) => block.type === "embed");
 		if (!existing) {
-			await appendChildren(pageId, [codeBlockPayload(target.html)], pacer);
+			await appendChildren(pageId, [embedBlockPayload(target.url)], pacer);
 			result.appended++;
-		} else if (codeBlockMatches(existing, target.html)) {
+		} else if (existing.embed?.url === target.url) {
 			result.unchanged++;
 		} else {
-			await updateBlock(existing.id, { code: codeValue(target.html) }, pacer);
+			await updateBlock(existing.id, { embed: { url: target.url } }, pacer);
 			result.updated++;
 		}
 	}

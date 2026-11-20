@@ -34,7 +34,7 @@ function notionToken(): string {
 
 export async function notionRequest<T>(
 	path: string,
-	init: { method: "GET" | "POST" | "PATCH"; body?: unknown },
+	init: { method: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown },
 	pacer: Pacer,
 ): Promise<T> {
 	await pacer.wait();
@@ -101,4 +101,9 @@ export function appendChildren(blockId: string, children: unknown[], pacer: Pace
 
 export function updateBlock(blockId: string, body: Record<string, unknown>, pacer: Pacer): Promise<unknown> {
 	return notionRequest(`/blocks/${blockId}`, { method: "PATCH", body }, pacer);
+}
+
+/** Moves a block to trash (Notion's DELETE is a soft delete, restorable from page history). */
+export function deleteBlock(blockId: string, pacer: Pacer): Promise<unknown> {
+	return notionRequest(`/blocks/${blockId}`, { method: "DELETE" }, pacer);
 }
