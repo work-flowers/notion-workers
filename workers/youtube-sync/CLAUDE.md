@@ -82,13 +82,20 @@ declared. Instead:
 
 ## Where the database lives
 
-_Filled in after the first deploy._
+Worker `01a1f6e0-b6ac-7098-865b-92d460cd9fe2`, first deployed 2026-11-20. The
+platform created **📺 YouTube Videos**
+(`https://app.notion.com/p/41e91b0711ac810ea557cff499bfc507`, data source
+`41e91b07-11ac-81e8-ba54-000b235e10ea`) as a private top-level page, which the
+`notion-worker-automations` integration could not see (404). It was moved into
+the **Database Wiki** home, Demand Gen column, next to Supercut Recordings, which
+the integration already reaches. The **Supercut Recording** relation was added by
+hand the same day.
 
 ## Environment variables
 
 | Variable | Notes |
 | --- | --- |
-| `ZAPIER_CLIENT_ID`, `ZAPIER_CLIENT_SECRET` | Zapier SDK client credentials. Listed in the root `CLAUDE.md` rotation table. |
+| `ZAPIER_CLIENT_ID`, `ZAPIER_CLIENT_SECRET` | Zapier SDK client credentials of this worker's own pair, 1Password `zapier-youtube-sync` (Employee vault), fields **`client id`** and **`client secret`** — not `username`/`credential`, which are empty or a label (reading those set blank values on 2026-11-20 and every run failed with "must be set"). Listed in the root `CLAUDE.md` rotation table. |
 | `ZAPIER_YOUTUBE_CONNECTION_ID` | `028b7213-819e-87ed-91df-0d04103840dc`, authorised to the workFlowers channel (made the default YouTube connection 2026-11-20; an older one had expired). |
 | `NOTION_API_TOKEN` | Link pass only. The shared `notion-worker-automations` integration (1Password item of that name). It must see both Supercut Recordings and YouTube Videos. |
 | `VIDEOS_DATA_SOURCE_ID` | Data source id of YouTube Videos, only knowable after the first deploy (`ntn workers databases list`). Not `NOTION_`-prefixed because `ntn workers env set` reserves that prefix. |
