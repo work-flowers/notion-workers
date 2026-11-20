@@ -9,8 +9,15 @@ Syncs **every recording owned** by the token's user in the `workflowers`
 Supercut workspace into a worker-managed database, **Supercut Recordings**, one
 page per recording. The database is **private**: since 2026-11-20 it is no
 longer published to the website by Bullet.so, because it now holds client and
-throwaway recordings too. Daily, replace mode, one batch. (Hourly until 2026-10-04; cut to daily for
-credit cost, since the page sees little use.)
+throwaway recordings too. Hourly, replace mode, one batch.
+
+Schedule history: hourly until 2026-10-04, then cut to daily for credit cost
+while the page saw little use. **Switched back to hourly on 2026-11-20** so new
+recordings, and their embed blocks one run later, show up within about two
+hours (the `supercut-to-youtube` Zap works from these rows). Dennis accepted
+the credit cost: runs took about 0.1–0.2 credits each before 2026-11-20, but
+syncing every owned recording made them about two minutes instead of 34
+seconds, so hourly is very roughly 70–150+ credits a month.
 
 - **Row set = all owned recordings** (`GET /recordings`, about 40 in
   November 2026). A recording deleted in Supercut is swept on the next run.
