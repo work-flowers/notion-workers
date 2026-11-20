@@ -1,7 +1,7 @@
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
-import { linkSupercutRecordings } from "./link.js";
+import { syncPages } from "./pages.js";
 import {
 	bestThumbnail,
 	getAnalytics,
@@ -72,22 +72,29 @@ worker.sync("videosSync", {
 	mode: "replace",
 	schedule: "1d",
 	execute: async () => {
-		// Link pass first. It only touches rows created by an earlier run, and a
-		// Notion outage then fails the run before any rows move.
-		const link = await linkSupercutRecordings(VIDEO_ID_PROPERTY, notionApi);
-		if (link.skipped) {
-			console.warn(`supercut links: skipped — ${link.skipped}`);
+		// Page pass first (relation + inline player). It only touches rows created
+		// by an earlier run, and a Notion outage then fails the run before any
+		// rows move.
+		const pages = await syncPages(VIDEO_ID_PROPERTY, notionApi);
+		if (pages.skipped) {
+			console.warn(`page pass: skipped — ${pages.skipped}`);
 		} else {
-			console.log(
-				`supercut links: ${link.linked} set, ${link.unchanged} unchanged, ` +
-					`${link.noMatch} with no Supercut row (${link.rows} rows in database)`,
-			);
-			if (link.ambiguous.length > 0) {
+			const { links, players } = pages;
+			if (links.skipped) console.warn(`supercut links: skipped — ${links.skipped}`);
+			else
+				console.log(
+					`supercut links: ${links.set} set, ${links.unchanged} unchanged, ` +
+						`${links.noMatch} with no Supercut row (${pages.rows} rows in database)`,
+				);
+			if (links.ambiguous.length > 0) {
 				console.warn(
 					`supercut links: more than one Supercut row has YouTube Video ID ` +
-						`${link.ambiguous.join(", ")} — left unlinked`,
+						`${links.ambiguous.join(", ")} — left unlinked`,
 				);
 			}
+			console.log(
+				`players: ${players.appended} appended, ${players.updated} updated, ${players.unchanged} unchanged`,
+			);
 		}
 
 		const ids = await listUploadIds(uploadsPlaylistId(CHANNEL_ID));

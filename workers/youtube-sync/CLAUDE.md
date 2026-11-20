@@ -23,7 +23,8 @@ next run. Built for TKT-1069 (pieces 1 and 3); the publish half is the
 | Views, Likes, Comments | `statistics`. Likes is left out of the upsert when the count is hidden |
 | Watch Time (min), Avg View Duration (s), Avg % Viewed | YouTube Analytics API, lifetime, about two days behind |
 | page cover | largest thumbnail (`maxres` for HD uploads) |
-| Supercut Recording | **hand-added** relation, written by the link pass (below) |
+| page body | a Notion `video` block for the watch URL, so the video plays inline (page pass, below) |
+| Supercut Recording | **hand-added** relation, written by the page pass (below) |
 
 ## Call budget: every YouTube request is a Zapier task
 
@@ -42,7 +43,7 @@ The uploads playlist id is derived (`UC…` → `UU…`) instead of read from
 videos. The uploads playlist, read with the owner's token, does include
 unlisted and private videos.
 
-Notion reads and writes in the link pass go straight to the Notion API, not
+Notion reads and writes in the page pass go straight to the Notion API, not
 through Zapier, so they cost no tasks.
 
 ## The Analytics API is reachable
@@ -67,7 +68,7 @@ declared. Instead:
   `0f3fea21-11be-4158-ba98-9bb26936db89`). One-way keeps the relation on one
   side, as TKT-1069 asks, and adds no column to supercut-sync's database.
   Being undeclared, it stays editable.
-- `src/link.ts` runs at the start of each sync: it reads every Supercut row
+- `src/pages.ts` runs at the start of each sync: it reads every Supercut row
   with a `YouTube Video ID` (hand-added there, written by the Zap), then sets
   the relation on each YouTube Videos row whose `Video ID` matches. The match
   is on the id, never the URL, since URL formats vary.
@@ -77,8 +78,22 @@ declared. Instead:
 - Rows are created after `execute` returns, so **a new video is linked on the
   run after it first appears** — one day of lag on the schedule. After the
   first deploy, trigger the sync twice.
-- The pass is skipped with a warning while `VIDEOS_DATA_SOURCE_ID` is unset or
-  the relation column is missing; videos still sync.
+- The pass is skipped with a warning while `VIDEOS_DATA_SOURCE_ID` is unset;
+  the linking half alone is skipped while the relation column is missing.
+  Videos still sync either way.
+
+## Inline player in the page body
+
+The same pass (`src/pages.ts`) makes sure each page holds one Notion `video`
+block with `external.url` set to the watch URL, which Notion renders as a
+playable YouTube player (added 2026-11-20). It appends the block when there is
+no external video block, patches its URL if it differs, and leaves every other
+block alone, so notes written below the video survive. It is deliberately not
+`pageContentMarkdown`, which replaces the whole body on every run (the reason
+`supercut-sync/src/body.ts` exists too). Like the relation, a new video gets its
+player on the run after its row is created. The append is sent with silent
+notifications. Cost: one `GET /blocks/{id}/children` per row per run, Notion
+only, no Zapier tasks.
 
 ## Where the database lives
 
@@ -110,6 +125,6 @@ ntn workers sync trigger videosSync
 ntn workers logs
 ```
 
-The run log prints `supercut links: N set, N unchanged, N with no Supercut row`
-and `videos: N upserts (N public, N unlisted); analytics for N`. A healthy
-steady state has `0 set` except on the day after a new upload.
+The run log prints `supercut links: N set, N unchanged, N with no Supercut row`,
+`players: N appended, N updated, N unchanged` and `videos: N upserts (N public, N unlisted); analytics for N`. A healthy
+steady state has `0 set` and `0 appended` except on the day after a new upload.

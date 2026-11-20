@@ -1,6 +1,6 @@
 # notion-worker-youtube-sync
 
-A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md) that mirrors every video on a YouTube channel, unlisted ones included, into a Notion database daily, with views, likes, comments and YouTube Analytics watch time. Each row is linked to the Supercut recording it was published from, matched on the YouTube video id.
+A [Notion Worker](https://developers.notion.com/workers/get-started/overview.md) that mirrors every video on a YouTube channel, unlisted ones included, into a Notion database daily, with views, likes, comments and YouTube Analytics watch time. Each page plays the video inline and is linked to the Supercut recording it was published from, matched on the YouTube video id.
 
 YouTube is called through the [Zapier SDK](https://docs.zapier.com/sdk), so the worker holds no Google credentials: it uses a Zapier YouTube connection.
 
