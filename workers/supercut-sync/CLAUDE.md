@@ -13,21 +13,19 @@ throwaway recordings too. Daily, replace mode, one batch. (Hourly until 2026-10-
 credit cost, since the page sees little use.)
 
 - **Row set = all owned recordings** (`GET /recordings`, about 40 in
-  November 2026), plus any recording in the Website playlist that someone else
-  owns. A recording deleted in Supercut is swept on the next run. Until
-  2026-11-20 the row set was the Website playlist only; before 2026-10-05 it
-  was "in any public playlist".
-- **On Website = in the Website playlist** (`WEBSITE_PLAYLIST_ID`,
-  `KNa7tQVRfXvdwBqqj6M1Jj`). Informational only now that the database is
-  private. **If the database is ever published again, filter on `On Website` is
-  checked**, or client-specific and throwaway videos reach the site. Adding a
-  recording to the playlist ticks it on the next run.
-- **Playlists column = the other public playlists** (the topic ones). They don't
-  decide what syncs. A Website recording in no topic playlist syncs with an
-  empty category, and the run log warns about it.
-- The gate is matched by **id, not name**, so renaming it is safe. The worker
-  warns if it is not public: the Supercut API can create a playlist but not
-  make it public, so that is a manual toggle in the Supercut UI.
+  November 2026). A recording deleted in Supercut is swept on the next run.
+  Before 2026-11-20 the row set was a Supercut "Website" playlist (and before
+  2026-10-05, "in any public playlist").
+- **No Website gate (since 2026-11-20).** The worker used to read
+  `WEBSITE_PLAYLIST_ID` and set an **On Website** checkbox from it. Once the
+  database went private, Dennis deleted the Website playlist, every run threw
+  because the id was gone, and the gate was removed: the env var is no longer
+  read and On Website is no longer declared. The undeclared column stays in
+  Notion with its last values (no longer read-only) until it is deleted by
+  hand. **If the database is ever published again, it needs a new publish
+  filter first**, or client-specific and throwaway videos reach the site.
+- **Playlists column = the public topic playlists.** They don't decide what
+  syncs; a recording in none of them syncs with an empty category.
 - **Cover** = the recording's preview thumbnail from oEmbed, set via
   `Builder.imageCover()` on the upsert. oEmbed is unauthenticated, so it may
   fail for private recordings; the run log summarises failures in one line and
@@ -111,9 +109,7 @@ to see them (observed 2026-09-03 with a freshly minted workspace token).
 
 That silent-empty behaviour is why `execute` **throws when Supercut returns no
 recordings at all** instead of returning an empty batch: in replace mode an
-empty batch would archive every row. It also throws if the token cannot see the
-Website playlist. An empty Website playlist is allowed now (every row just has
-`On Website` unticked).
+empty batch would archive every row.
 
 ## Playlists is a multi-select with a fixed option list
 
@@ -121,8 +117,7 @@ A multi-select value whose option is not declared in `worker.database()` is
 **silently dropped** on write — the row saves, the property is just empty
 (observed 2026-09-03: five public playlists, one seeded option, and only that
 one survived on any row). Every public playlist therefore has to be listed in
-`PLAYLIST_OPTIONS` in `src/index.ts` (except the Website gate, which is never a
-category). When a new topic playlist is made public, add
+`PLAYLIST_OPTIONS` in `src/index.ts`. When a new topic playlist is made public, add
 it there and redeploy; the run log warns
 `playlist "…" is not a declared Playlists option` until you do.
 
@@ -132,7 +127,6 @@ it there and redeploy; the run log warns
 | --- | --- |
 | `SUPERCUT_API_TOKEN` | **Must be a personal token (`sk_u_…`)**, from Supercut Settings → Personal API Tokens. 1Password `supercut-api` (Private vault). See "Token type is load-bearing" below. |
 | `NOTION_API_TOKEN` | For the body pass only. 1Password `supercut-worker-notion-api` (Private vault). The integration must be shared with the Supercut Recordings database. Listed in the root `CLAUDE.md` rotation table. |
-| `WEBSITE_PLAYLIST_ID` | `KNa7tQVRfXvdwBqqj6M1Jj`. `public_id` of the Supercut **Website** playlist — sets `On Website`. Required; the run throws if unset or not visible to the token. |
 | `RECORDINGS_DATA_SOURCE_ID` | `0f3fea21-11be-4158-ba98-9bb26936db89`. Data source id of the managed database, only knowable **after** the first deploy (`ntn workers databases list` prints it). Not `NOTION_`-prefixed because that prefix is reserved by `ntn workers env set`. |
 
 ## Human-owned columns
@@ -159,7 +153,7 @@ videos uploaded by hand on 2026-11-20 were backfilled into YouTube Video ID.
 
 ```shell
 npm run check --workspace=notion-worker-supercut-sync   # from repo root
-./scripts/deploy.sh supercut-sync                        # from repo root
+./scripts/deploy.sh supercut-sync                        # from repo root (add --yes for schema changes)
 ntn workers sync trigger recordingsSync --preview        # from this directory
 ntn workers sync trigger recordingsSync
 ntn workers logs
