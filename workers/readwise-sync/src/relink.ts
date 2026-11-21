@@ -2,6 +2,7 @@ import {
 	queryDataSource,
 	updatePage,
 } from "@work-flowers/notion-worker-shared";
+import { fetchHighlightBooks } from "./readwise.js";
 
 // Readwise Library (managed by this worker) and the Readwise Highlights
 // database written by Readwise's own Notion export integration.
@@ -63,22 +64,40 @@ function push(map: Map<string, string[]>, key: string, id: string) {
 }
 
 /**
- * Points each Readwise Library book at its page(s) in Readwise Highlights.
- * Join: the ASIN in the highlight page's Amazon URL, falling back to
- * normalised title + author (Kobo and manual books have no ASIN).
+ * Points each Readwise Library book that has highlights at its page(s) in
+ * Readwise Highlights. The book's highlights record (via its `Readwise ID`)
+ * supplies the join: the ASIN in the highlight page's Amazon URL, falling back
+ * to normalised title + author (Kobo and manual books have no ASIN). These are
+ * the highlights API's own title and author, the same ones Readwise's export
+ * writes, so they match better than the tracker's.
  * Only writes rows whose relation differs from the match, and never clears a
  * relation when there is no match, so hand-made links on unmatched books stay.
  * Returns how many rows still differ after this call.
  */
 export async function relinkHighlights(wait: Wait): Promise<number> {
-	const [highlights, library] = await Promise.all([
+	const [highlights, library, highlightBooks] = await Promise.all([
 		queryAll(
 			HIGHLIGHTS_DATA_SOURCE_ID,
 			{ filter: { property: "Category", select: { equals: "Books" } } },
 			wait,
 		),
-		queryAll(LIBRARY_DATA_SOURCE_ID, {}, wait),
+		// Rows without a Book ID predate the switch to the tracker and are
+		// swept at the end of the cycle; don't spend writes on them.
+		queryAll(
+			LIBRARY_DATA_SOURCE_ID,
+			{
+				filter: {
+					and: [
+						{ property: "Book ID", rich_text: { is_not_empty: true } },
+						{ property: "Readwise ID", rich_text: { is_not_empty: true } },
+					],
+				},
+			},
+			wait,
+		),
+		fetchHighlightBooks(),
 	]);
+	const bookById = new Map(highlightBooks.map((b) => [String(b.id), b]));
 
 	const byAsin = new Map<string, string[]>();
 	const byTitleAuthor = new Map<string, string[]>();
@@ -90,17 +109,18 @@ export async function relinkHighlights(wait: Wait): Promise<number> {
 	}
 
 	const pending: { pageId: string; ids: string[] }[] = [];
-	for (const book of library) {
-		const p = book.properties;
-		const asin = plain(p.ASIN);
+	for (const row of library) {
+		const p = row.properties;
+		const book = bookById.get(plain(p["Readwise ID"]));
+		if (!book) continue;
 		const ids =
-			(asin && byAsin.get(asin)) ||
-			byTitleAuthor.get(`${norm(plain(p.Title))}|${norm(plain(p.Author))}`);
+			(book.asin && byAsin.get(book.asin)) ||
+			byTitleAuthor.get(`${norm(book.title)}|${norm(book.author ?? "")}`);
 		if (!ids) continue;
 		const current = (p[RELATION_PROPERTY]?.relation ?? []).map((r: any) => r.id);
 		const same =
 			current.length === ids.length && ids.every((id) => current.includes(id));
-		if (!same) pending.push({ pageId: book.id, ids });
+		if (!same) pending.push({ pageId: row.id, ids });
 	}
 
 	const batch = pending.slice(0, MAX_WRITES_PER_CALL);
@@ -113,7 +133,7 @@ export async function relinkHighlights(wait: Wait): Promise<number> {
 		});
 	}
 	console.log(
-		`relink: ${highlights.length} highlight pages, ${library.length} books, wrote ${batch.length}, ${pending.length - batch.length} left`,
+		`relink: ${highlights.length} highlight pages, ${library.length} books with highlights, wrote ${batch.length}, ${pending.length - batch.length} left`,
 	);
 	return pending.length - batch.length;
 }
