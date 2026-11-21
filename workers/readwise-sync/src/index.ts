@@ -26,6 +26,18 @@ const SHELVES = {
 	did_not_finish: "Did Not Finish",
 } as const;
 
+const SHELF_COLORS = {
+	Unsorted: "gray",
+	"Want to Read": "blue",
+	"Currently Reading": "yellow",
+	Finished: "green",
+	"Did Not Finish": "red",
+} as const;
+
+// Closest built-in display format to ISO 8601: Notion date columns have no
+// YYYY-MM-DD option. Every date is written as a calendar date with no time.
+const DATE_FORMAT = "YYYY/MM/DD";
+
 // Select options must be declared up front, and an undeclared value would be
 // dropped, so anything outside these lists is written as "other".
 const ORIGINS = [
@@ -59,24 +71,26 @@ const books = worker.database("readwiseBooks", {
 			"Book ID": Schema.richText(),
 			Author: Schema.richText(),
 			// From the Readwise Books tracker.
-			Shelf: Schema.select(Object.values(SHELVES).map((name) => ({ name }))),
-			Started: Schema.date(),
-			Finished: Schema.date(),
+			Shelf: Schema.select(
+				Object.values(SHELVES).map((name) => ({ name, color: SHELF_COLORS[name] })),
+			),
+			Started: Schema.date(DATE_FORMAT),
+			Finished: Schema.date(DATE_FORMAT),
 			Rating: Schema.number(),
 			Review: Schema.richText(),
 			Progress: Schema.number("percent"),
 			Pages: Schema.number(),
-			Published: Schema.date(),
+			Published: Schema.date(DATE_FORMAT),
 			ISBN: Schema.richText(),
 			ASIN: Schema.richText(),
 			Origin: Schema.select(ORIGINS.map((name) => ({ name }))),
 			Private: Schema.checkbox(),
 			"Book URL": Schema.url(),
-			"Updated in Readwise": Schema.date(),
+			"Updated in Readwise": Schema.date(DATE_FORMAT),
 			// From Readwise highlights, when the book has any.
 			"Readwise ID": Schema.richText(),
 			Highlights: Schema.number(),
-			"Last Highlight": Schema.date(),
+			"Last Highlight": Schema.date(DATE_FORMAT),
 			Source: Schema.select(SOURCES.map((name) => ({ name }))),
 			Tags: Schema.richText(),
 			"Document Note": Schema.richText(),
@@ -105,9 +119,7 @@ function highlightProps(h: HighlightBook) {
 	return {
 		"Readwise ID": Builder.richText(String(h.id)),
 		Highlights: Builder.number(h.num_highlights),
-		...(h.last_highlight_at
-			? { "Last Highlight": Builder.dateTime(h.last_highlight_at) }
-			: {}),
+		...dateProp("Last Highlight", h.last_highlight_at),
 		Source: Builder.select(oneOf(SOURCES, h.source)),
 		Tags: Builder.richText(h.tags.map((t) => t.name).join(", ")),
 		"Document Note": Builder.richText(h.document_note ?? ""),
@@ -143,7 +155,11 @@ function trackerChange(b: TrackerBook, h: HighlightBook | undefined) {
 			...dateProp("Finished", b.finished_reading_at),
 			...(b.rating != null ? { Rating: Builder.number(b.rating) } : {}),
 			Review: Builder.richText(b.review ?? ""),
-			...(b.progress != null ? { Progress: Builder.number(b.progress) } : {}),
+			// Rounded to whole percentage points (0.7936 → 79%); Notion's display
+			// rounding can't be set from the SDK.
+			...(b.progress != null
+				? { Progress: Builder.number(Math.round(b.progress * 100) / 100) }
+				: {}),
 			...(pages != null ? { Pages: Builder.number(pages) } : {}),
 			...(p?.publishing_date ? { Published: Builder.date(p.publishing_date) } : {}),
 			ISBN: Builder.richText(p?.isbn ?? ""),
@@ -151,7 +167,7 @@ function trackerChange(b: TrackerBook, h: HighlightBook | undefined) {
 			Origin: Builder.select(oneOf(ORIGINS, b.creation_origin)),
 			Private: Builder.checkbox(b.is_private),
 			...(p?.store_url ? { "Book URL": Builder.url(p.store_url) } : {}),
-			...(updated ? { "Updated in Readwise": Builder.dateTime(updated) } : {}),
+			...dateProp("Updated in Readwise", updated),
 			...(h ? highlightProps(h) : {}),
 		},
 	};
@@ -168,7 +184,7 @@ function highlightOnlyChange(h: HighlightBook) {
 			"Book ID": Builder.richText(key),
 			Author: Builder.richText(h.author ?? ""),
 			ASIN: Builder.richText(h.asin ?? ""),
-			...(h.updated ? { "Updated in Readwise": Builder.dateTime(h.updated) } : {}),
+			...dateProp("Updated in Readwise", h.updated),
 			...highlightProps(h),
 		},
 	};
