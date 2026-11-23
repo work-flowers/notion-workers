@@ -1,17 +1,11 @@
 import "@notionhq/custom-blocks/nds.css"
-import type { UseDataSourceResult } from "@notionhq/custom-blocks"
-import {
-	NotionCustomBlock,
-	NotionTokenScope,
-	useDataSource,
-	usePage,
-	useTheme,
-} from "@notionhq/custom-blocks/react"
+import { NotionCustomBlock, NotionTokenScope, useContainingPage, useTheme } from "@notionhq/custom-blocks/react"
 import { StrictMode, useMemo, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { summarize } from "./aggregate.ts"
 import { App, type AppProps } from "./App.tsx"
+import { useDataSource, type DataSourceView } from "./notion.ts"
 import { toPayoutRow, toProgramRow, toRewardRow } from "./rows.ts"
 import "./block.css"
 
@@ -30,14 +24,16 @@ function Shell({ theme, children }: { theme: "light" | "dark"; children: ReactNo
 }
 
 /** Which required keys of a data source are not mapped. */
-function missing(label: string, ds: UseDataSourceResult, required: string[]): string[] {
+function missing(label: string, ds: DataSourceView, required: string[]): string[] {
 	if (!ds.collectionSchema) return [`the ${label} data source`]
 	return required.filter((k) => !ds.propertyIdsByKey[k]).map((k) => `${label} → ${k}`)
 }
 
 function Block() {
 	const theme = useTheme()
-	const page = usePage()
+	const containing = useContainingPage()
+	const pageId =
+		containing.status === "success" && containing.value.type === "page" ? containing.value.page.getKey() : null
 	const programs = useDataSource("programs", QUERY)
 	const rewards = useDataSource("rewards", QUERY)
 	const payouts = useDataSource("payouts", QUERY)
@@ -59,11 +55,11 @@ function Block() {
 				programs.items.map(toProgramRow),
 				rewards.items.map(toRewardRow),
 				payouts.items.map(toPayoutRow),
-				page.id,
+				pageId,
 			),
 			truncated: all.some((d) => d.hasMore),
 		}
-	}, [programs, rewards, payouts, page.id])
+	}, [programs, rewards, payouts, pageId])
 
 	return (
 		<Shell theme={theme}>
@@ -93,7 +89,6 @@ if (isMock) {
 	ReactDOM.createRoot(root).render(
 		<StrictMode>
 			<NotionCustomBlock
-				autoResize
 				fallback={
 					<Shell theme={fallbackTheme}>
 						<App status="loading" />

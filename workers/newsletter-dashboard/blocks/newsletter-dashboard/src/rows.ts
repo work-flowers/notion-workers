@@ -1,4 +1,4 @@
-import type { NotionDataSourcePage, NotionDateValue } from "@notionhq/custom-blocks"
+import type { FlatDate, Row } from "./notion.ts"
 
 import type { Send } from "./aggregate.ts"
 
@@ -7,7 +7,7 @@ import type { Send } from "./aggregate.ts"
  * everything is checked rather than cast — a half-filled row should degrade to
  * zeroes, not crash the block.
  */
-export function toSend(row: NotionDataSourcePage): Send {
+export function toSend(row: Row): Send {
 	const props = row.propertiesByKey
 	return {
 		id: row.id,
@@ -37,7 +37,7 @@ function count(value: unknown): number {
  */
 function day(value: unknown): string | null {
 	if (value == null || typeof value !== "object") return null
-	const date = value as NotionDateValue
+	const date = value as FlatDate
 	const start = (date as { start_date?: unknown }).start_date
 	if (typeof start === "string" && start.length >= 10) return start.slice(0, 10)
 	return null

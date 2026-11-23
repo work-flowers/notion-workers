@@ -5,11 +5,7 @@
  * omitted key leaves the old value in place, so clearing a field depends on it.
  */
 
-import type {
-	NotionDataSourcePage,
-	NotionDataSourceValue,
-	NotionPagePropertyInputMap,
-} from "@notionhq/custom-blocks"
+import type { FlatValue, NotionPagePropertyInputMap, Row } from "./notion.ts"
 
 import {
 	isStage,
@@ -27,23 +23,23 @@ import type { LineDraft, OrderDraft } from "./store.ts"
 // Reading
 // ---------------------------------------------------------------------------
 
-function asText(value: NotionDataSourceValue | undefined): string | null {
+function asText(value: FlatValue | undefined): string | null {
 	if (typeof value !== "string") return null
 	const trimmed = value.trim()
 	return trimmed.length > 0 ? trimmed : null
 }
 
-function asNumber(value: NotionDataSourceValue | undefined): number | null {
+function asNumber(value: FlatValue | undefined): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
 /** `start_date` is already a plain calendar day; don't slice a UTC timestamp instead. */
-function asDate(value: NotionDataSourceValue | undefined): string | null {
+function asDate(value: FlatValue | undefined): string | null {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return null
 	return "start_date" in value ? value.start_date : null
 }
 
-function asDateTime(value: NotionDataSourceValue | undefined): string | null {
+function asDateTime(value: FlatValue | undefined): string | null {
 	if (typeof value === "string") return value
 	if (value !== null && typeof value === "object" && !Array.isArray(value) && "start_date" in value) {
 		return value.start_date
@@ -52,7 +48,7 @@ function asDateTime(value: NotionDataSourceValue | undefined): string | null {
 }
 
 /** Relation values arrive as `{ id, table }` pointers. */
-function asFirstId(value: NotionDataSourceValue | undefined): string | null {
+function asFirstId(value: FlatValue | undefined): string | null {
 	if (!Array.isArray(value)) return null
 	for (const item of value) {
 		if (typeof item === "string") return item
@@ -62,7 +58,7 @@ function asFirstId(value: NotionDataSourceValue | undefined): string | null {
 }
 
 /** Returns null for a stage the rules don't know — an ungoverned order shouldn't look governed. */
-export function toOrder(row: NotionDataSourcePage): Order | null {
+export function toOrder(row: Row): Order | null {
 	const p = row.propertiesByKey
 	const stage = asText(p.stage)
 	if (!isStage(stage)) return null
@@ -85,7 +81,7 @@ export function toOrder(row: NotionDataSourcePage): Order | null {
 	}
 }
 
-export function toLine(row: NotionDataSourcePage): Line {
+export function toLine(row: Row): Line {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -97,12 +93,12 @@ export function toLine(row: NotionDataSourcePage): Line {
 	}
 }
 
-export function toCustomer(row: NotionDataSourcePage): Customer {
+export function toCustomer(row: Row): Customer {
 	const p = row.propertiesByKey
 	return { id: row.id, name: asText(p.name) ?? "Untitled", licence: asText(p.licence), terms: asText(p.terms) }
 }
 
-export function toSite(row: NotionDataSourcePage): Site {
+export function toSite(row: Row): Site {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -113,7 +109,7 @@ export function toSite(row: NotionDataSourcePage): Site {
 	}
 }
 
-export function toIngredient(row: NotionDataSourcePage): Ingredient {
+export function toIngredient(row: Row): Ingredient {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -126,7 +122,7 @@ export function toIngredient(row: NotionDataSourcePage): Ingredient {
 	}
 }
 
-export function toPriceEntry(row: NotionDataSourcePage): PriceEntry {
+export function toPriceEntry(row: Row): PriceEntry {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,

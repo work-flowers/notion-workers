@@ -9,8 +9,8 @@ otherwise — the published alpha overview is out of date in at least one place
 **The alpha makes breaking changes.** A deployed block can stop working until it
 is rebuilt against a newer SDK. Notion says so in the block's own config panel.
 
-**Pin `@notionhq/custom-blocks` to an exact version** (currently `0.1.44`, since
-2026-09-15) in every block worker, for the same reason `@notionhq/workers` is
+**Pin `@notionhq/custom-blocks` to an exact version** (currently `0.6.0`, since
+2026-11-23) in every block worker, for the same reason `@notionhq/workers` is
 pinned: the cloud build runs its own `npm install` in the worker directory, so a
 caret range means production builds against whatever is latest while the repo
 typechecks against the root lockfile. Until 2026-09-15 all three blocks carried
@@ -18,6 +18,12 @@ typechecks against the root lockfile. Until 2026-09-15 all three blocks carried
 against 0.1.4x for weeks. Renames between 0.1.8 and 0.1.44: `pages.delete` →
 `pages.archive` / `unarchive`, `archived` → `is_archived`, `*Input` arg types →
 `*Args`; rows gain `archive()` / `unarchive()` / `is_archived` / `in_trash`.
+
+**Notion requires 0.6.0 from 2026-12-01; older blocks stop working.** The jump
+from 0.1.44 is a rewrite of the client API — see *The 0.6 API* below. Much of
+the rest of this guide was written against 0.1 and names its calls
+(`useDataSource`, `pages.get`, `pages.create`, `usePage()`); the findings still
+hold, the names map as that section says.
 
 **Pin `vite` and `@vitejs/plugin-react` exactly too** (currently `8.3.1` /
 `6.1.1`, since 2026-09-30). They're devDependencies, but the deploy sandbox runs
@@ -53,9 +59,56 @@ Two SDK surfaces, and they are disjoint:
 
 - `@notionhq/workers` — declares how the block is built and what data-source
   schema it expects.
-- `@notionhq/custom-blocks` — the iframe's runtime client (`useDataSource`,
-  `useTheme`, `pages`, …). Read `node_modules/@notionhq/custom-blocks/docs/*.md`;
+- `@notionhq/custom-blocks` — the iframe's runtime client (`useQuerySubscription`,
+  `createPage`, `useTheme`, …, one subpath per domain since 0.6). Read `node_modules/@notionhq/custom-blocks/docs/*.md`;
   it is the authoritative reference and ships with the version you have.
+
+## The 0.6 API (migrated 2026-11-23, TKT-1072)
+
+Every block moved from 0.1.44 to 0.6.0 in one PR. What changed, and how the
+blocks absorbed it:
+
+- **Subpath imports.** `pages`, `users`, `customBlock` and `links` namespaces
+  are gone. `createPage` / `NotionPage` come from `/pages`, `NotionDataSource`
+  from `/data-sources`, `listUsers` / `NotionUser` from `/users`, `openPage` /
+  `openExternalUrl` from `/navigation`, hooks from `/react`. The root keeps
+  init, location, manifest and shared types.
+- **No Vite plugin.** `@notionhq/custom-blocks/vite` no longer exists; it was a
+  no-op stub by 0.1.44 anyway. `plugins: [react()]` is the whole config.
+- **No `autoResize` prop.** `<NotionCustomBlock>` sizes the iframe from `#root`
+  on its own.
+- **Queries.** `useDataSource(key, opts)` → `useQuerySubscription(
+  NotionDataSource.fromKey(key).createQuery({ filter, sorts }), { limit })`.
+  Rows are `{ page, data }` with **typed property values**
+  (`{ type: "title", title: [...] }`), not 0.1's flattened ones (plain strings,
+  option names, `{ start_date }`, `{ id, table }`). Schemas are no longer on the
+  snapshot: read them from `NotionDataSource.fromKey(key).get()` /
+  `.subscribe()` (`value.schema.propertiesById`).
+- **Every block carries `src/notion.ts` + `src/notion-rows.ts`**, byte-identical
+  copies. They rebuild the 0.1 row (`{ id, propertiesByKey, propertiesById,
+  update, archive }`, values flattened the 0.1 way) and the 0.1 `useDataSource`
+  snapshot (`items`, `propertyIdsByKey`, `propertySchemasByKey`,
+  `collectionSchema`, …), so each block's `rows.ts` readers and their tests
+  didn't change. `stage-gate/test/notion.test.ts` covers the conversion.
+  Change one copy, then copy it to the rest (`md5 -q workers/*/blocks/*/src/notion*.ts`
+  should show two hashes). New blocks should read `item.data` directly instead.
+- **Dates with a time** flatten to `start_date` = the calendar day as written
+  and `start_time` = everything after the `T`, offset included, so code that
+  rebuilds `${start_date}T${start_time}` gets the original ISO string back.
+- **Creating.** `pages.create({ parent: { type: "data_source_key", key } })` →
+  `createPage({ parent: { type: "data_source_key", dataSourceKey } })`, which
+  returns `{ page, data }`; the id is `page.getKey()`.
+- **Reading one page.** `pages.get(id)` → `NotionPage.fromKey(id).get()`. The
+  result's `properties` is keyed by display name with typed values — close to
+  the public-API shape `crm-deal-desk`'s `linked.ts` already parsed. The
+  reference is unbound, so `updateByKey` won't work on it; use `updateById`.
+- **Location and users.** `usePage()` (the containing page) →
+  `useContainingPage()`, which can be `{ type: "unavailable" }`. `users.list` →
+  `listUsers` with camelCase `nextCursor` / `hasMore`; `users.get(id)` →
+  `NotionUser.fromId(id).getName()` / `getEmail()` / `getAvatarUrl()`.
+- **Stricter at runtime.** Queries time out after 30 s, and a filter naming a
+  select/status option the bound schema doesn't contain now fails the whole
+  query up front instead of matching nothing.
 
 ## Project shape
 
@@ -123,7 +176,8 @@ Failed to resolve "@notionhq/custom-blocks/vite". This package is ESM only but i
 was tried to load by `require`.
 ```
 
-The error names the SDK, so it reads like a broken dependency rather than a
+(That was with 0.1's Vite plugin; since 0.6 the same failure names
+`@vitejs/plugin-react`, also ESM-only.) The error names a dependency, so it reads like a broken dependency rather than a
 module-system mismatch two directories up. `newsletter-dashboard` never hits it
 because it is a block-only worker and its package is already `"type": "module"`.
 

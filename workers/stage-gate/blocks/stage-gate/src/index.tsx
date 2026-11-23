@@ -1,17 +1,13 @@
 import "@notionhq/custom-blocks/nds.css"
-import { pages, users, type NotionDataSourcePage } from "@notionhq/custom-blocks"
-import {
-	NotionCustomBlock,
-	NotionTokenScope,
-	useDataSource,
-	usePage,
-	useTheme,
-} from "@notionhq/custom-blocks/react"
+import { createPage } from "@notionhq/custom-blocks/pages"
+import { NotionCustomBlock, NotionTokenScope, useContainingPage, useTheme } from "@notionhq/custom-blocks/react"
+import { listUsers } from "@notionhq/custom-blocks/users"
 import { StrictMode, useEffect, useMemo, useState } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
 import { MOCK_PROJECT_IDS, useMockStore } from "./mock.ts"
+import { useDataSource, type Row } from "./notion.ts"
 import {
 	bindingProblems,
 	newItemProperties,
@@ -57,15 +53,15 @@ function usePeople(): Person[] {
 			let cursor: string | undefined
 			for (let page = 0; page < 10; page++) {
 				const result = await Promise.race([
-					users.list({ pageSize: 100, ...(cursor ? { startCursor: cursor } : {}) }),
+					listUsers({ pageSize: 100, ...(cursor ? { startCursor: cursor } : {}) }),
 					new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
 				])
 				if (!result || result.status === "error") break
 				for (const u of result.list.results) {
 					found.push({ id: u.id, name: u.name ?? u.person.email, email: u.person.email ?? null })
 				}
-				if (!result.list.has_more || !result.list.next_cursor) break
-				cursor = result.list.next_cursor
+				if (!result.list.hasMore || !result.list.nextCursor) break
+				cursor = result.list.nextCursor
 			}
 			if (!cancelled) setPeople(found.sort((a, b) => a.name.localeCompare(b.name)))
 		}
@@ -83,8 +79,8 @@ function useNotionStore(): Store {
 	const people = usePeople()
 
 	return useMemo<Store>(() => {
-		const projectRows = new Map<string, NotionDataSourcePage>(projects.items.map((r) => [r.id, r]))
-		const deliverableRows = new Map<string, NotionDataSourcePage>(deliverables.items.map((r) => [r.id, r]))
+		const projectRows = new Map<string, Row>(projects.items.map((r) => [r.id, r]))
+		const deliverableRows = new Map<string, Row>(deliverables.items.map((r) => [r.id, r]))
 		const problems = [
 			...(projects.error ? [`Projects: ${projects.error.message}`] : []),
 			...(deliverables.error ? [`Deliverables: ${deliverables.error.message}`] : []),
@@ -124,19 +120,19 @@ function useNotionStore(): Store {
 
 			// Make, model and variant are optional bindings: unmapped ones are simply not written.
 			async createProject(name, details) {
-				const result = await pages.create({
-					parent: { type: "data_source_key", key: "projects" },
+				const result = await createPage({
+					parent: { type: "data_source_key", dataSourceKey: "projects" },
 					properties: onlyBound(newProjectProperties(name, details), projects.propertyIdsByKey),
 				})
-				return result.status === "success" ? { ok: true, id: result.page.id } : failed(result.error.message)
+				return result.status === "success" ? { ok: true, id: result.page.getKey() } : failed(result.error.message)
 			},
 
 			// Sequential, so a failure part-way leaves a prefix of the checklist
 			// that `missingItems` can complete on a retry (matched by Item key).
 			async createItems(project, items, onProgress) {
 				for (const [i, c] of items.entries()) {
-					const result = await pages.create({
-						parent: { type: "data_source_key", key: "deliverables" },
+					const result = await createPage({
+						parent: { type: "data_source_key", dataSourceKey: "deliverables" },
 						properties: onlyBound(newItemProperties(project.id, c), deliverables.propertyIdsByKey),
 					})
 					if (result.status === "error") {
@@ -152,11 +148,12 @@ function useNotionStore(): Store {
 
 function NotionGate() {
 	const theme = useTheme()
-	const page = usePage()
+	const page = useContainingPage()
 	const store = useNotionStore()
+	const contextProjectId = page.status === "success" && page.value.type === "page" ? page.value.page.getKey() : null
 	return (
 		<Shell theme={theme}>
-			<App store={store} contextProjectId={page.id} />
+			<App store={store} contextProjectId={contextProjectId} />
 		</Shell>
 	)
 }
@@ -178,7 +175,6 @@ function NotionRoot() {
 	const fallbackTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={<Shell theme={fallbackTheme}><div className="sg-empty">Loading…</div></Shell>}
 			errorFallback={(error) => (
 				<Shell theme={fallbackTheme}>

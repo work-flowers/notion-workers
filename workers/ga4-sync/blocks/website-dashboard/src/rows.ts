@@ -1,4 +1,4 @@
-import type { NotionDataSourcePage, NotionDateValue } from "@notionhq/custom-blocks"
+import type { FlatDate, Row } from "./notion.ts"
 
 import type { ChannelRow, DailyRow, PageDayRow, PageRow } from "./aggregate.ts"
 
@@ -11,7 +11,7 @@ import type { ChannelRow, DailyRow, PageDayRow, PageRow } from "./aggregate.ts"
  * hint, not throw inside a chart.
  */
 
-export function toDailyRow(row: NotionDataSourcePage): DailyRow {
+export function toDailyRow(row: Row): DailyRow {
 	const props = row.propertiesByKey
 	return {
 		id: row.id,
@@ -27,7 +27,7 @@ export function toDailyRow(row: NotionDataSourcePage): DailyRow {
 	}
 }
 
-export function toChannelRow(row: NotionDataSourcePage): ChannelRow {
+export function toChannelRow(row: Row): ChannelRow {
 	const props = row.propertiesByKey
 	return {
 		id: row.id,
@@ -42,7 +42,7 @@ export function toChannelRow(row: NotionDataSourcePage): ChannelRow {
 	}
 }
 
-export function toPageRow(row: NotionDataSourcePage): PageRow {
+export function toPageRow(row: Row): PageRow {
 	const props = row.propertiesByKey
 	return {
 		id: row.id,
@@ -59,7 +59,7 @@ export function toPageRow(row: NotionDataSourcePage): PageRow {
 	}
 }
 
-export function toPageDayRow(row: NotionDataSourcePage): PageDayRow {
+export function toPageDayRow(row: Row): PageDayRow {
 	const props = row.propertiesByKey
 	return {
 		id: row.id,
@@ -97,7 +97,7 @@ function flag(value: unknown): boolean {
  */
 function day(value: unknown): string | null {
 	if (value == null || typeof value !== "object") return null
-	const start = (value as NotionDateValue & { start_date?: unknown }).start_date
+	const start = (value as FlatDate & { start_date?: unknown }).start_date
 	if (typeof start === "string" && start.length >= 10) return start.slice(0, 10)
 	return null
 }
@@ -109,7 +109,7 @@ function day(value: unknown): string | null {
  * real parse. Built-ins live on `propertiesById` only; they have no manifest
  * key, so this is the one place `propertiesByKey` can't be used.
  */
-function createdAt(row: NotionDataSourcePage): string | null {
+function createdAt(row: Row): string | null {
 	const value = row.propertiesById?.created_time
 	if (value == null || typeof value !== "object") return null
 	const date = value as { start_date?: unknown; start_time?: unknown }

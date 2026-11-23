@@ -10,12 +10,11 @@
 
 import { useState } from "react"
 
-import type { UseDataSourceResult } from "@notionhq/custom-blocks"
-
+import type { DataSourceView } from "./notion.ts"
 import { asRelationIds } from "./rows.ts"
 import type { PageFetchResult } from "./store.ts"
 
-type Sources = Record<string, UseDataSourceResult>
+type Sources = Record<string, DataSourceView>
 
 export function DebugPanel({
 	open,

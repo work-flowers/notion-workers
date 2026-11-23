@@ -1,15 +1,11 @@
 import "@notionhq/custom-blocks/nds.css"
-import {
-	NotionCustomBlock,
-	NotionTokenScope,
-	useDataSource,
-	useTheme,
-} from "@notionhq/custom-blocks/react"
+import { NotionCustomBlock, NotionTokenScope, useTheme } from "@notionhq/custom-blocks/react"
 import { StrictMode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App, type AppState } from "./App.tsx"
 import { MOCK_SENDS } from "./mock.ts"
+import { useDataSource } from "./notion.ts"
 import { toSend } from "./rows.ts"
 import "./dashboard.css"
 
@@ -89,7 +85,6 @@ function NotionRoot() {
 	const fallbackTheme = prefersDark() ? "dark" : "light"
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={
 				<Shell theme={fallbackTheme}>
 					<App sends={[]} today={today()} status="loading" />

@@ -1,12 +1,13 @@
 import "@notionhq/custom-blocks/nds.css"
 
-import { pages, type NotionDataSourcePage } from "@notionhq/custom-blocks"
-import { NotionCustomBlock, NotionTokenScope, useDataSource, useTheme } from "@notionhq/custom-blocks/react"
+import { createPage } from "@notionhq/custom-blocks/pages"
+import { NotionCustomBlock, NotionTokenScope, useTheme } from "@notionhq/custom-blocks/react"
 import { StrictMode, useMemo, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
 import { useMockStore } from "./mock.ts"
+import { useDataSource, type Row } from "./notion.ts"
 import {
 	bindingProblems,
 	lineProperties,
@@ -73,7 +74,7 @@ function settle<T>(write: Promise<WriteResult<T>>): Promise<WriteResult<T>> {
 	])
 }
 
-const live = (rows: readonly NotionDataSourcePage[]) => rows.filter((r) => r.is_archived !== true)
+const live = (rows: readonly Row[]) => rows.filter((r) => r.is_archived !== true)
 
 function useNotionStore(): Store {
 	const orders = useDataSource("orders", QUERY)
@@ -84,8 +85,8 @@ function useNotionStore(): Store {
 	const priceList = useDataSource("priceList", QUERY)
 
 	return useMemo<Store>(() => {
-		const orderRows = new Map<string, NotionDataSourcePage>(orders.items.map((r) => [r.id, r]))
-		const lineRows = new Map<string, NotionDataSourcePage>(lines.items.map((r) => [r.id, r]))
+		const orderRows = new Map<string, Row>(orders.items.map((r) => [r.id, r]))
+		const lineRows = new Map<string, Row>(lines.items.map((r) => [r.id, r]))
 		const ingredientList = live(ingredients.items).map(toIngredient)
 		const loading = [orders, lines, customers, sites, ingredients, priceList].some((s) => s.isLoading)
 
@@ -112,14 +113,14 @@ function useNotionStore(): Store {
 				let id = orderId
 				if (id === null) {
 					const created = await settle(
-						pages.create({
-							parent: { type: "data_source_key", key: "orders" },
+						createPage({
+							parent: { type: "data_source_key", dataSourceKey: "orders" },
 							properties: onlyBound(orderProperties(draft, true), orders.propertyIdsByKey),
 						}),
 					)
 					if (created.status === "error") return { ok: false, message: created.error.message }
 					if (created.page === undefined) return { ok: false, message: "Notion created the order but returned no id." }
-					id = created.page.id
+					id = created.page.getKey()
 				} else {
 					const row = orderRows.get(id)
 					if (row === undefined) return { ok: false, message: "That order is no longer loaded. Reload the block." }
@@ -139,9 +140,9 @@ function useNotionStore(): Store {
 					const properties = onlyBound(lineProperties(d, id, title), lines.propertyIdsByKey)
 					if (isNewId(d.id)) {
 						if (d.removed) continue
-						const created = await settle(pages.create({ parent: { type: "data_source_key", key: "lines" }, properties }))
+						const created = await settle(createPage({ parent: { type: "data_source_key", dataSourceKey: "lines" }, properties }))
 						if (created.status === "error") return { ok: false, message: `Order saved, but a line failed: ${created.error.message}` }
-						if (created.page !== undefined) lineIds[d.id] = created.page.id
+						if (created.page !== undefined) lineIds[d.id] = created.page.getKey()
 						continue
 					}
 					const row = lineRows.get(d.id)
@@ -191,7 +192,6 @@ function NotionRoot() {
 	const fallbackTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={
 				<Shell theme={fallbackTheme}>
 					<div className="od-empty">Loading…</div>

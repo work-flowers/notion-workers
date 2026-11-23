@@ -1,4 +1,3 @@
-import { notionCustomBlock } from "@notionhq/custom-blocks/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
@@ -9,5 +8,5 @@ export default defineConfig({
 	// with UNRESOLVED_ENTRY. Notion's deploy sandbox builds from this directory,
 	// where the two agree anyway.
 	root: import.meta.dirname,
-	plugins: [react(), notionCustomBlock()],
+	plugins: [react()],
 })

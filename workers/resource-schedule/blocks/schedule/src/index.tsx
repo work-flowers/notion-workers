@@ -1,12 +1,13 @@
 import "@notionhq/custom-blocks/nds.css"
 
-import { pages, type NotionDataSourcePage } from "@notionhq/custom-blocks"
-import { NotionCustomBlock, NotionTokenScope, useDataSource, useTheme } from "@notionhq/custom-blocks/react"
+import { createPage } from "@notionhq/custom-blocks/pages"
+import { NotionCustomBlock, NotionTokenScope, useTheme } from "@notionhq/custom-blocks/react"
 import { StrictMode, useMemo, useState, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { App } from "./App.tsx"
 import { useMockStore } from "./mock.ts"
+import { useDataSource, type Row } from "./notion.ts"
 import { sortPeople } from "./model.ts"
 import {
 	bindingProblems,
@@ -68,7 +69,7 @@ function settle<T>(write: Promise<WriteResult<T>>): Promise<WriteResult<T>> {
 	])
 }
 
-const live = (rows: readonly NotionDataSourcePage[]) => rows.filter((r) => r.is_archived !== true)
+const live = (rows: readonly Row[]) => rows.filter((r) => r.is_archived !== true)
 
 function useNotionStore(): Store {
 	const bookings = useDataSource("bookings", QUERY)
@@ -89,8 +90,8 @@ function useNotionStore(): Store {
 	const people = useMemo(() => sortPeople(live(team.items).map(toPerson)), [team.items])
 
 	return useMemo<Store>(() => {
-		const rows = new Map<string, NotionDataSourcePage>(bookings.items.map((r) => [r.id, r]))
-		const teamRows = new Map<string, NotionDataSourcePage>(team.items.map((r) => [r.id, r]))
+		const rows = new Map<string, Row>(bookings.items.map((r) => [r.id, r]))
+		const teamRows = new Map<string, Row>(team.items.map((r) => [r.id, r]))
 		const loading = [bookings, team, jobs, clients, templates].some((s) => s.isLoading)
 
 		return {
@@ -125,18 +126,18 @@ function useNotionStore(): Store {
 
 			async createJob(j) {
 				const created = await settle(
-					pages.create({
-						parent: { type: "data_source_key", key: "jobs" },
+					createPage({
+						parent: { type: "data_source_key", dataSourceKey: "jobs" },
 						properties: onlyBound(newJobProperties(j), jobs.propertyIdsByKey),
 					}),
 				)
 				if (created.status === "error") return { ok: false, message: created.error.message }
-				const jobId = created.page?.id
+				const jobId = created.page?.getKey()
 				if (jobId === undefined) return { ok: false, message: "Notion created the job but returned no id." }
 				for (const r of j.rounds) {
 					const b = await settle(
-						pages.create({
-							parent: { type: "data_source_key", key: "bookings" },
+						createPage({
+							parent: { type: "data_source_key", dataSourceKey: "bookings" },
 							properties: onlyBound(newBookingProperties(jobId, `${j.title} · R${r.round}`, r), bookings.propertyIdsByKey),
 						}),
 					)
@@ -179,7 +180,6 @@ function NotionRoot() {
 	const fallbackTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={
 				<Shell theme={fallbackTheme}>
 					<div className="rs-empty">Loading…</div>
