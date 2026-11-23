@@ -5,12 +5,7 @@
  * omitted key leaves the old value in place, so clearing a field depends on it.
  */
 
-import type {
-	NotionDataSourcePage,
-	NotionDataSourceValue,
-	NotionPagePropertyInputMap,
-	NotionPropertySchema,
-} from "@notionhq/custom-blocks"
+import type { FlatValue, NotionPagePropertyInputMap, PropertySchema, Row } from "./notion.ts"
 
 import { DEFAULT_WEEKLY_CAPACITY, type Booking, type Client, type Job, type Person, type PlannedRound, type Template } from "./model.ts"
 import type { BookingDraft, PersonProfile } from "./store.ts"
@@ -19,18 +14,18 @@ import type { BookingDraft, PersonProfile } from "./store.ts"
 // Reading
 // ---------------------------------------------------------------------------
 
-function asText(value: NotionDataSourceValue | undefined): string | null {
+function asText(value: FlatValue | undefined): string | null {
 	if (typeof value !== "string") return null
 	const trimmed = value.trim()
 	return trimmed.length > 0 ? trimmed : null
 }
 
-function asNumber(value: NotionDataSourceValue | undefined): number | null {
+function asNumber(value: FlatValue | undefined): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
 /** `start_date` / `end_date` are plain calendar days; don't slice a UTC timestamp instead. */
-function asRange(value: NotionDataSourceValue | undefined): { start: string | null; end: string | null } {
+function asRange(value: FlatValue | undefined): { start: string | null; end: string | null } {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return { start: null, end: null }
 	const start = "start_date" in value ? value.start_date : null
 	const end = "end_date" in value ? value.end_date : start
@@ -38,7 +33,7 @@ function asRange(value: NotionDataSourceValue | undefined): { start: string | nu
 }
 
 /** Relation and people values arrive as `{ id, table }` pointers (or plain ids). */
-function asIds(value: NotionDataSourceValue | undefined): string[] {
+function asIds(value: FlatValue | undefined): string[] {
 	if (!Array.isArray(value)) return []
 	const out: string[] = []
 	for (const item of value) {
@@ -49,13 +44,13 @@ function asIds(value: NotionDataSourceValue | undefined): string[] {
 }
 
 /** Multi-select values arrive as option names. */
-function asNames(value: NotionDataSourceValue | undefined): string[] {
+function asNames(value: FlatValue | undefined): string[] {
 	if (typeof value === "string") return value.split(",").map((s) => s.trim()).filter(Boolean)
 	if (!Array.isArray(value)) return []
 	return value.filter((v): v is string => typeof v === "string")
 }
 
-export function toBooking(row: NotionDataSourcePage): Booking {
+export function toBooking(row: Row): Booking {
 	const p = row.propertiesByKey
 	const { start, end } = asRange(p.dates)
 	return {
@@ -72,7 +67,7 @@ export function toBooking(row: NotionDataSourcePage): Booking {
 	}
 }
 
-export function toJob(row: NotionDataSourcePage): Job {
+export function toJob(row: Row): Job {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -84,12 +79,12 @@ export function toJob(row: NotionDataSourcePage): Job {
 	}
 }
 
-export function toClient(row: NotionDataSourcePage): Client {
+export function toClient(row: Row): Client {
 	const p = row.propertiesByKey
 	return { id: row.id, name: asText(p.name) ?? "Untitled" }
 }
 
-export function toPerson(row: NotionDataSourcePage): Person {
+export function toPerson(row: Row): Person {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -101,7 +96,7 @@ export function toPerson(row: NotionDataSourcePage): Person {
 	}
 }
 
-export function toTemplate(row: NotionDataSourcePage): Template {
+export function toTemplate(row: Row): Template {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -112,7 +107,7 @@ export function toTemplate(row: NotionDataSourcePage): Template {
 	}
 }
 
-export function optionNames(schema: NotionPropertySchema | undefined): string[] {
+export function optionNames(schema: PropertySchema | undefined): string[] {
 	if (schema === undefined || !("options" in schema) || !Array.isArray(schema.options)) return []
 	return schema.options.map((o: { name: string }) => o.name)
 }

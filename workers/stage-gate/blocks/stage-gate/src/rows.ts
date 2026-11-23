@@ -4,31 +4,27 @@
  * nothing else.
  */
 
-import type {
-	NotionDataSourcePage,
-	NotionDataSourceValue,
-	NotionPagePropertyInputMap,
-} from "@notionhq/custom-blocks"
+import type { FlatValue, NotionPagePropertyInputMap, Row } from "./notion.ts"
 
 import { CHECKLIST, FINAL_PHASE, PHASES, STATUS, type ChecklistItem } from "./checklist.ts"
 import { sameIds, type Deliverable, type Project } from "./gate.ts"
 
-function asText(value: NotionDataSourceValue | undefined): string | null {
+function asText(value: FlatValue | undefined): string | null {
 	if (typeof value !== "string") return null
 	const trimmed = value.trim()
 	return trimmed.length > 0 ? trimmed : null
 }
 
-function asNumber(value: NotionDataSourceValue | undefined): number | null {
+function asNumber(value: FlatValue | undefined): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-function asDate(value: NotionDataSourceValue | undefined): string | null {
+function asDate(value: FlatValue | undefined): string | null {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return null
 	return "start_date" in value ? value.start_date : null
 }
 
-function asIds(value: NotionDataSourceValue | undefined): string[] {
+function asIds(value: FlatValue | undefined): string[] {
 	if (!Array.isArray(value)) return []
 	const ids: string[] = []
 	for (const item of value) {
@@ -38,7 +34,7 @@ function asIds(value: NotionDataSourceValue | undefined): string[] {
 	return ids
 }
 
-export function toProject(row: NotionDataSourcePage): Project {
+export function toProject(row: Row): Project {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -48,7 +44,7 @@ export function toProject(row: NotionDataSourcePage): Project {
 	}
 }
 
-export function toDeliverable(row: NotionDataSourcePage): Deliverable {
+export function toDeliverable(row: Row): Deliverable {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,

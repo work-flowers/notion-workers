@@ -8,6 +8,20 @@ block-vs-view placement, manifest binding, filter/sort support, what the
 sandbox forbids — lives in [`docs/custom-blocks.md`](../../docs/custom-blocks.md).**
 Read that first; this file records only what is specific to *this* block.
 
+## custom-blocks 0.6 (2026-11-23)
+
+The block was migrated from 0.1.44 to 0.6.0 (TKT-1072); the general mapping is
+in the guide's *The 0.6 API*. Below, the 0.1 names still appear. In this block:
+`pages.get(id)` is now `NotionPage.fromKey(id).get()` (in `getPage`,
+`index.tsx`), whose `properties` keep the by-name, typed shape `linked.ts`
+parses; `users.get` is now three `NotionUser.fromId(id)` field reads (in
+`getUser`); `pages.create` is `createPage` with `dataSourceKey`; rows come from
+`src/notion.ts`. 0.6 fails a status filter up front if an option name is
+missing, so `OPEN_STAGES` / `CLOSED_STAGES` must stay a subset of the bound
+Status options (all seven present on the live Deals schema, checked
+2026-11-23). **Not yet verified live on 0.6:** the linked Meeting Note / Email
+fetch and the Owner chip — use the Diagnostics probe after deploying.
+
 ## Shape
 
 - `src/index.ts` — the `worker.customBlock()` declaration. Capability key is

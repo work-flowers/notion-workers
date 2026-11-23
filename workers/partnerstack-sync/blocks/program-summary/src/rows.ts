@@ -1,4 +1,4 @@
-import type { NotionDataSourcePage } from "@notionhq/custom-blocks"
+import type { Row } from "./notion.ts"
 
 import type { PayoutRow, ProgramRow, RewardRow } from "./aggregate.ts"
 
@@ -7,11 +7,11 @@ import type { PayoutRow, ProgramRow, RewardRow } from "./aggregate.ts"
  * and any property may be left unmapped, so everything is checked, not cast.
  */
 
-export function toProgramRow(row: NotionDataSourcePage): ProgramRow {
+export function toProgramRow(row: Row): ProgramRow {
 	return { id: row.id, name: text(row.propertiesByKey.name) || "Untitled program" }
 }
 
-export function toRewardRow(row: NotionDataSourcePage): RewardRow {
+export function toRewardRow(row: Row): RewardRow {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -25,7 +25,7 @@ export function toRewardRow(row: NotionDataSourcePage): RewardRow {
 	}
 }
 
-export function toPayoutRow(row: NotionDataSourcePage): PayoutRow {
+export function toPayoutRow(row: Row): PayoutRow {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,

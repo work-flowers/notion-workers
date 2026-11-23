@@ -13,11 +13,7 @@
  * those are never clobbered.
  */
 
-import type {
-	NotionDataSourcePage,
-	NotionDataSourceValue,
-	NotionPagePropertyInputMap,
-} from "@notionhq/custom-blocks"
+import type { FlatValue, NotionPagePropertyInputMap, Row } from "./notion.ts"
 
 import type { LinkedKind, LinkedRecord } from "./linked.ts"
 import { toLinkedRecordFromRow } from "./linked.ts"
@@ -35,13 +31,13 @@ import {
 // Reading
 // ---------------------------------------------------------------------------
 
-function asText(value: NotionDataSourceValue | undefined): string | null {
+function asText(value: FlatValue | undefined): string | null {
 	if (typeof value !== "string") return null
 	const trimmed = value.trim()
 	return trimmed.length > 0 ? trimmed : null
 }
 
-function asNumber(value: NotionDataSourceValue | undefined): number | null {
+function asNumber(value: FlatValue | undefined): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
@@ -51,7 +47,7 @@ function asNumber(value: NotionDataSourceValue | undefined): number | null {
  * `start_date` is already a plain local calendar day; slicing a UTC timestamp
  * instead would shift late-evening rows into the next day.
  */
-function asDate(value: NotionDataSourceValue | undefined): string | null {
+function asDate(value: FlatValue | undefined): string | null {
 	if (value === null || typeof value !== "object") return null
 	if (Array.isArray(value)) return null
 	if (!("start_date" in value)) return null
@@ -63,7 +59,7 @@ function asDate(value: NotionDataSourceValue | undefined): string | null {
  * also been seen as bare id strings; accept both so the Owner chip survives a
  * host change.
  */
-export function asRelationIds(value: NotionDataSourceValue | undefined): string[] {
+export function asRelationIds(value: FlatValue | undefined): string[] {
 	if (!Array.isArray(value)) return []
 	const ids: string[] = []
 	for (const item of value) {
@@ -74,11 +70,11 @@ export function asRelationIds(value: NotionDataSourceValue | undefined): string[
 }
 
 /** We only ever want the first of a limit-1 relation. */
-function asSingleRelationId(value: NotionDataSourceValue | undefined): string | null {
+function asSingleRelationId(value: FlatValue | undefined): string | null {
 	return asRelationIds(value)[0] ?? null
 }
 
-export function toCompany(row: NotionDataSourcePage): Company {
+export function toCompany(row: Row): Company {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -95,7 +91,7 @@ export function toCompany(row: NotionDataSourcePage): Company {
 	}
 }
 
-export function toContact(row: NotionDataSourcePage): Contact {
+export function toContact(row: Row): Contact {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -125,7 +121,7 @@ export function toContact(row: NotionDataSourcePage): Contact {
  * caller surfaces the count instead, which is also the fastest way to notice
  * that the Stage binding points at the wrong property.
  */
-export function toDeal(row: NotionDataSourcePage): Deal | null {
+export function toDeal(row: Row): Deal | null {
 	const p = row.propertiesByKey
 	const stage = asText(p.stage)
 	if (!isStage(stage)) return null
@@ -151,7 +147,7 @@ export function toDeal(row: NotionDataSourcePage): Deal | null {
 	}
 }
 
-export function toFxRate(row: NotionDataSourcePage): FxRate {
+export function toFxRate(row: Row): FxRate {
 	const p = row.propertiesByKey
 	return {
 		id: row.id,
@@ -163,7 +159,7 @@ export function toFxRate(row: NotionDataSourcePage): FxRate {
 
 /** The optional cache bindings, as a lookup the linked-activity loader consults first. */
 export function toLinkedCache(
-	rows: readonly NotionDataSourcePage[],
+	rows: readonly Row[],
 	kind: LinkedKind,
 ): Map<string, LinkedRecord> {
 	return new Map(rows.map((row) => [row.id, toLinkedRecordFromRow(row, kind)]))

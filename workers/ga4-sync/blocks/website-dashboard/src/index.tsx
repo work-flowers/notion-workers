@@ -1,16 +1,11 @@
 import "@notionhq/custom-blocks/nds.css"
-import type { UseDataSourceOptions } from "@notionhq/custom-blocks"
-import {
-	NotionCustomBlock,
-	NotionTokenScope,
-	useDataSource,
-	useTheme,
-} from "@notionhq/custom-blocks/react"
+import { NotionCustomBlock, NotionTokenScope, useTheme } from "@notionhq/custom-blocks/react"
 import { StrictMode, useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import ReactDOM from "react-dom/client"
 
 import { mergeWindows, monthWindows, type ChannelRow, type DateWindow } from "./aggregate.ts"
 import { App, type AppState } from "./App.tsx"
+import { useDataSource, type DataSourceOptions } from "./notion.ts"
 import { PeriodPagesContext, type PeriodPagesResult, type UsePeriodPages } from "./periodPages.ts"
 import { toChannelRow, toDailyRow, toPageDayRow, toPageRow } from "./rows.ts"
 import "./dashboard.css"
@@ -83,7 +78,7 @@ function isBound(propertyIdsByKey: Record<string, string | undefined>): boolean 
 function useDateWindow(key: string, from: string, to: string, sortKey: string) {
 	const [sortRejected, setSortRejected] = useState(false)
 	const [filterRejected, setFilterRejected] = useState(false)
-	const query = useMemo<UseDataSourceOptions>(
+	const query = useMemo<DataSourceOptions>(
 		() => ({
 			limit: ROW_LIMIT,
 			...(filterRejected
@@ -316,7 +311,6 @@ function NotionRoot() {
 
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={
 				<Shell theme={fallbackTheme}>
 					<App {...blank} />

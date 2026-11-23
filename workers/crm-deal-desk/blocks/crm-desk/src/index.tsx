@@ -4,15 +4,10 @@ import "@fontsource-variable/inter"
 import "@fontsource/jetbrains-mono/400.css"
 import "@fontsource/jetbrains-mono/500.css"
 
-import {
-	pages,
-	users,
-	type NotionDataSourceFilter,
-	type NotionPageId,
-	type NotionUserId,
-	type UseDataSourceOptions,
-} from "@notionhq/custom-blocks"
-import { NotionCustomBlock, useDataSource } from "@notionhq/custom-blocks/react"
+import type { NotionDataSourceFilter } from "@notionhq/custom-blocks/data-sources"
+import { createPage, NotionPage, type NotionPageData } from "@notionhq/custom-blocks/pages"
+import { NotionCustomBlock } from "@notionhq/custom-blocks/react"
+import { NotionUser, type NotionUserId } from "@notionhq/custom-blocks/users"
 import { StrictMode, useCallback, useEffect, useMemo, useState } from "react"
 import ReactDOM from "react-dom/client"
 
@@ -28,6 +23,7 @@ import {
 	MOCK_USERS,
 } from "./mock.ts"
 import { MOCK_LINKED_PAGES } from "./mock-linked.ts"
+import { useDataSource, type DataSourceOptions } from "./notion.ts"
 import type { Company, CompanyDraft, Contact, ContactDraft } from "./records.ts"
 import {
 	onlyBound,
@@ -92,7 +88,7 @@ const COMPANIES_QUERY = {
 }
 const PROBE_QUERY = { limit: 1 }
 
-type Query = UseDataSourceOptions
+type Query = DataSourceOptions
 
 /**
  * A 999-row window sorted newest-created first — when the host lets us.
@@ -171,16 +167,28 @@ function CrmDesk() {
 	const emails = useDataSource("emails", CACHE_QUERY)
 
 	const getPage = useCallback(async (id: string): Promise<PageFetchResult> => {
-		const result = await pages.get(id as NotionPageId)
+		// An unbound reference: `properties` is keyed by display name, values
+		// carry `type`, which is the shape `toLinkedRecord` reads.
+		const result = await NotionPage.fromKey(id).get()
 		if (result.status === "error") return { status: "error", message: result.error.message }
-		return { status: "success", page: result.page as unknown as PageLike }
+		const properties: PageLike["properties"] = {}
+		for (const [name, value] of Object.entries(result.page.properties)) {
+			if (value) properties[name] = value
+		}
+		return { status: "success", page: { id: result.page.pageKey, properties } }
 	}, [])
 
 	const getUser = useCallback(async (id: string): Promise<UserSummary | null> => {
-		const result = await users.get(id as NotionUserId)
-		if (result.status === "error") return null
-		const u = result.user
-		return { id: u.id, name: u.name ?? null, email: u.person?.email ?? null, avatarUrl: u.avatar_url }
+		// One profile read per field; `users.ts` memoises per id, so it's once per owner.
+		const user = NotionUser.fromId(id as NotionUserId)
+		const [name, email, avatarUrl] = await Promise.all([user.getName(), user.getEmail(), user.getAvatarUrl()])
+		if (name.status === "error" && email.status === "error") return null
+		return {
+			id,
+			name: name.status === "success" ? name.value : null,
+			email: email.status === "success" ? email.value : null,
+			avatarUrl: avatarUrl.status === "success" ? avatarUrl.value : null,
+		}
 	}, [])
 
 	// Optional bindings report an error when unbound; that is not a failure of the block.
@@ -254,8 +262,8 @@ function CrmDesk() {
 
 			createDeal: async (draft) =>
 				report(
-					await pages.create({
-						parent: { type: "data_source_key", key: "deals" },
+					await createPage({
+						parent: { type: "data_source_key", dataSourceKey: "deals" },
 						properties: onlyBound(toProperties(draft), openDeals.propertyIdsByKey),
 					}),
 				),
@@ -263,7 +271,7 @@ function CrmDesk() {
 				const row = rowsById.get(id)
 				if (row === undefined) return gone("deal")
 				// `row.update` resolves manifest keys to raw property ids for us;
-				// the top-level `pages.update` would need the raw ids spelled out.
+				// an unbound `NotionPage.updateById` would need the raw ids spelled out.
 				return report(
 					await row.update({
 						properties: onlyBound(toProperties(draft), openDeals.propertyIdsByKey),
@@ -272,8 +280,8 @@ function CrmDesk() {
 			},
 			createContact: async (draft) =>
 				report(
-					await pages.create({
-						parent: { type: "data_source_key", key: "contacts" },
+					await createPage({
+						parent: { type: "data_source_key", dataSourceKey: "contacts" },
 						properties: onlyBound(toContactProperties(draft), contacts.propertyIdsByKey),
 					}),
 				),
@@ -288,8 +296,8 @@ function CrmDesk() {
 			},
 			createCompany: async (draft) =>
 				report(
-					await pages.create({
-						parent: { type: "data_source_key", key: "companies" },
+					await createPage({
+						parent: { type: "data_source_key", dataSourceKey: "companies" },
 						properties: onlyBound(toCompanyProperties(draft), companies.propertyIdsByKey),
 					}),
 				),
@@ -348,13 +356,14 @@ function gone(noun: string): SaveResult {
 	}
 }
 
+/** `createPage` returns a page reference, an update returns the page's data; both carry its id. */
 function report(
 	result:
-		| { status: "success"; page?: { id: string } }
+		| { status: "success"; page: NotionPage | NotionPageData }
 		| { status: "error"; error: { message: string } },
 ): SaveResult {
 	if (result.status === "success") {
-		return result.page === undefined ? { ok: true } : { ok: true, id: result.page.id }
+		return { ok: true, id: "pageKey" in result.page ? result.page.pageKey : result.page.getKey() }
 	}
 	return { ok: false, message: result.error.message }
 }
@@ -510,7 +519,6 @@ function MockRoot() {
 function NotionRoot() {
 	return (
 		<NotionCustomBlock
-			autoResize
 			fallback={
 				<Shell>
 					<App status="loading" />
