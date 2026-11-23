@@ -10,7 +10,7 @@ Keeps **🎯 Outbound Leads** in step with Apollo (who is in it) and, from Stage
 |---|---|
 | Outbound Leads | data source `61a01f87-741b-4dbd-a98e-ada01e07eb3b` (database `92d79468-07fa-4aee-8d54-99e60b3dbd5e`), attached |
 | Smartlead Campaigns | data source `5484e931-dbc6-45a5-84bb-3622ed5bab0e`, managed (created by this worker, moved under CRM > Databases by hand) |
-| Contacts (webhooks) | data source `21991b07-11ac-81a6-a894-000be4a09a67` |
+| Contacts (`autoEnrol` pre-flight, `promoteToContact`) | data source `21991b07-11ac-81a6-a894-000be4a09a67` |
 
 ## Two campaign relations, on purpose
 
@@ -111,13 +111,21 @@ Auto-enrolment on arrival (decided 20 Nov 2026 at the weekly sync with Seth). Se
 
 - **A sync that writes nothing through the sync.** It's registered as an hourly incremental sync on Outbound Leads only to get a schedule. It returns no changes and writes through the REST API instead, because Status and Push blocked are human columns and must stay undeclared.
 - **Candidates:** Status = Backlog, Apollo ID set, Smartlead Lead ID empty, Push blocked empty. The 20 hand-made rows from before the worker (formerly Status Sent) are Backlog now but have no Apollo ID, so they're never picked.
-- **Pre-flight:** Email, Lead name and Company set; the email not already a Contact (Primary or Secondary Email); exactly one campaign (see *List → campaign mapping*; **Push to campaign** overrides).
+- **Pre-flight:** Email, Lead name and Company set; if the email matches a Contact (Primary or Secondary Email), that Contact isn't warm, do-not-sequence or unsubscribed (see *Existing Contacts* below); exactly one campaign (see *List → campaign mapping*; **Push to campaign** overrides).
+- **Existing Contacts** (TKT-1073, 23 Nov 2026). Being in Contacts used to block a lead outright, which also blocked people Dennis had only cold-emailed (Gladys Lim, Zapier People List). Now a matched Contact blocks only if:
+  - **Unsubscribed on** is set → `unsubscribed: …`
+  - **Do not sequence** (checkbox) is ticked → `do not sequence: …`
+  - **Warm** (formula) is true → `warm contact: …`. Warm is true when the Contact has any Meeting Notes, Deals, Deals Referred, Event attendees, Contact Form, Signed Legal Agreements or Customer Reviews; is on the Mailing List; has sent us an email (a sender in the **Email senders** rollup of 📥 Emails that isn't @work.flowers); or has a Lead Source other than Outbound or LinkedIn. The rule lives in the formula, not here, so tune it in Notion without a redeploy. If Warm can't be read (renamed, deleted, not a boolean), the lead is blocked as warm: it fails closed.
+  - Otherwise the Contact is cold and the lead is enrolled. **Email senders** is a helper rollup (From of each linked email): Notion rejected a formula that read From through the 📥 Emails relation directly, so Warm reads the rollup instead. Don't delete it.
+  - All three Contacts columns are human-owned and read by exact name in `src/enrol.ts`; a rename silently changes behaviour.
+  - Known gap: a reply only counts if it reached the Emails database. Someone who answered from another address, or only on LinkedIn or Slack, looks cold. Tick **Do not sequence** for them.
+- **Contacts link:** whenever the email matches a Contact, the lead's **Contacts** relation is set to it in the same page update as the outcome (enrolled, blocked, or waiting on an unmapped list), keeping any existing links. `promoteToContact` then finds and links the same Contact instead of creating a duplicate, and leaves its Lead Source alone.
 - **Enrolling:** one `POST /campaigns/{id}/leads` per campaign per batch of 25 leads (Smartlead takes up to 400), with `notion_page_id`, `apollo_id` and `job_title` (Role) as custom fields alongside first and last name, company, location and LinkedIn. **Copy lives in Smartlead** (decided 30 Oct 2026). Smartlead returns 200 even when it skips leads and reports only totals, so a batch whose `upload_count + already_added_to_campaign` falls short is redone lead by lead to find which were refused and why. Already being in the campaign counts as success, so a re-run is harmless.
 - **On success:** Status → Sequenced and a `Done: added to <campaign>` comment. `smartleadLeads` fills in the Smartlead columns within the hour (its `created_at_gt` pass).
-- **Blocked** (missing data, already a Contact, lists mapping to different campaigns, Smartlead refused it): one `Blocked:` comment and the reason in **Push blocked**, and Status stays Backlog. It isn't retried until someone clears Push blocked. A lead blocked for a missing email (Apollo hadn't revealed it) needs that clearing by hand once the email arrives.
+- **Blocked** (missing data, a warm / do-not-sequence / unsubscribed Contact, lists mapping to different campaigns, Smartlead refused it): one `Blocked:` comment and the reason in **Push blocked**, and Status stays Backlog. It isn't retried until someone clears Push blocked. A lead blocked for a missing email (Apollo hadn't revealed it) needs that clearing by hand once the email arrives.
 - **Unmapped:** no comment, no Push blocked; it's picked up once its list is mapped.
 - **The go-live gate is the Smartlead campaign.** Enrolled leads in a campaign that hasn't been started get no email, so keep a campaign unstarted until its copy is signed off. The first deploy enrols every waiting lead on a mapped list at once (122 on the Zapier People List as of 20 Nov 2026).
-- Pacing: Smartlead calls share the `smartlead` pacer; the two Notion writes per lead go through `notionWrites` (120/min).
+- Pacing: Smartlead calls share the `smartlead` pacer; the two Notion writes per lead (one page update, one comment) go through `notionWrites` (120/min). A waiting lead with a Contact to link costs one write, once.
 
 ## Webhook
 
