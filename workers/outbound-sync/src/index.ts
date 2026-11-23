@@ -458,12 +458,14 @@ worker.sync("autoEnrol", {
 		const batch = candidates.slice(0, ENROL_BATCH);
 
 		const outcomes = await enrol(batch, () => smartlead.wait());
-		for (const [pageId, outcome] of outcomes) {
-			if (outcome.kind === "waiting") continue;
+		for (const lead of batch) {
+			const outcome = outcomes.get(lead.pageId);
+			// A waiting lead is only written when it has a Contact to link (one page update, no comment).
+			if (!outcome || (outcome.kind === "waiting" && !outcome.contactId)) continue;
 			await notionWrites.wait();
-			await notionWrites.wait();
-			await record(pageId, outcome).catch((err) =>
-				console.log(`[autoEnrol] ${pageId}: recording ${outcome.kind} failed: ${(err as Error).message}`),
+			if (outcome.kind !== "waiting") await notionWrites.wait();
+			await record(lead, outcome).catch((err) =>
+				console.log(`[autoEnrol] ${lead.pageId}: recording ${outcome.kind} failed: ${(err as Error).message}`),
 			);
 		}
 		for (const l of batch) tried.add(l.pageId);
