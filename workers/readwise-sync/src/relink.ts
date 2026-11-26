@@ -7,7 +7,7 @@ import { fetchHighlightBooks } from "./readwise.js";
 // Readwise Library (managed by this worker) and the Readwise Highlights
 // database written by Readwise's own Notion export integration.
 export const LIBRARY_DATA_SOURCE_ID = "41f91b07-11ac-81d1-9128-000b796f69f2";
-export const HIGHLIGHTS_DATA_SOURCE_ID = "2d791b07-11ac-814b-af18-000b6272383c";
+export const HIGHLIGHTS_DATA_SOURCE_ID = "52791b07-11ac-8314-bade-07f8c9276aa2";
 
 // Hand-added two-way relation on Readwise Library (reverse column on
 // Highlights: "Readwise Library"). Deliberately not in the worker schema:
